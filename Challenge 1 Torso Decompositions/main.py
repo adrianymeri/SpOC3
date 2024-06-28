@@ -224,9 +224,12 @@ def hill_climbing_single_restart(
         elif neighbor_generation_method == "hybrid_ml":
             if i % ml_switch_interval < ml_switch_interval // 2:
                 model = lgbm_model
+                model_name = "LGBM"
             else:
                 model = xgboost_model
+                model_name = "XGBoost"
             neighbor = generate_neighbor_ml(decision_vector, edges, model)
+            print(f"Iteration {i+1}: Used {model_name} to generate neighbor.")  # Indicate which model was used
         else:  # Default to 'swap'
             neighbor = generate_neighbor_swap(decision_vector, perturbation_rate)
 
