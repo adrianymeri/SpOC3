@@ -26,6 +26,7 @@ def torso_scorer(y_true, y_pred):
     width_weight = -0.5  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
+
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
@@ -152,9 +153,11 @@ def train_model(X, y, model_type='lgbm'):
                     scoring="neg_mean_squared_error",
                 )
                 mean_score = -cv_scores.mean()  # Use negative mean for minimization
+                print(f"Model with {n_estimators}, {learning_rate}, {max_depth}: {mean_score}") # Verbose output
                 if mean_score < best_score:
                     best_score = mean_score
                     best_model = model
+    print(f"Best {model_type} model: {best_model}") # Verbose output
     print(f"{model_type} training completed.")
     return best_model
 
@@ -207,6 +210,7 @@ def hill_climbing_single_restart(
 
     # Evaluate initial solution
     current_score = evaluate_solution(decision_vector, edges)
+    print(f"Restart {restart+1} - Initial solution: {decision_vector}, Score: {current_score}")
 
     best_decision_vector = decision_vector[:]
     best_score = current_score[:]
@@ -233,12 +237,15 @@ def hill_climbing_single_restart(
         if dominates(neighbor_score, current_score) or neighbor_score == current_score:
             decision_vector = neighbor[:]
             current_score = neighbor_score[:]
+            print(f"Restart {restart+1} - Iteration {i+1}: Found better solution - {decision_vector}, Score: {current_score}")
 
         # Update best solution if current solution is better
         if dominates(current_score, best_score):
             best_decision_vector = decision_vector[:]
             best_score = current_score[:]
+            print(f"Restart {restart+1} - Iteration {i+1}: New best solution found -  {best_decision_vector}, Score: {best_score}")
 
+    print(f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}")
     return best_decision_vector, best_score
 
 def hill_climbing(
