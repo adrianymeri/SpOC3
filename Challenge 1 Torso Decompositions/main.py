@@ -201,6 +201,7 @@ def hill_climbing_single_restart(
     lgbm_model=None,
     xgboost_model=None,
     ml_switch_interval: int = 5,
+    save_interval: int = 50, # Save every 50 iterations
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the hill climbing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -248,6 +249,10 @@ def hill_climbing_single_restart(
             best_score = current_score[:]
             print(f"Restart {restart+1} - Iteration {i+1}: New best solution found -  {best_decision_vector}, Score: {best_score}")
 
+        # Save intermediate solutions
+        if (i + 1) % save_interval == 0:
+            create_submission_file(best_decision_vector, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json")
+
     print(f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}")
     return best_decision_vector, best_score
 
@@ -259,6 +264,7 @@ def hill_climbing(
     neighbor_generation_method: str = "swap",
     use_hybrid_ml: bool = False,
     ml_switch_interval: int = 5,
+    save_interval: int = 50, # Save every 50 iterations
     n_jobs: int = -1,  # Use all available cores for parallelization
 ) -> List[List[int]]:
     """Performs hill climbing to find a set of Pareto optimal solutions."""
@@ -294,6 +300,7 @@ def hill_climbing(
             lgbm_model,
             xgboost_model,
             ml_switch_interval,
+            save_interval,
         )
         for restart in range(num_restarts)
     )
@@ -319,6 +326,16 @@ def hill_climbing(
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
     return filtered_pareto_front
 
+def create_submission_file(decision_vector, problem_id, filename="submission.json"):
+    """Creates a valid submission file."""
+    submission = {
+        "decisionVector": [decision_vector], # Wrap in a list for multiple solutions
+        "problem": problem_id,
+        "challenge": "spoc-3-torso-decompositions",
+    }
+    with open(filename, "w") as f:
+        json.dump(submission, f, indent=4)
+    print(f"Submission file '{filename}' created successfully!")
 
 if __name__ == "__main__":
     random.seed(42)
@@ -332,6 +349,7 @@ if __name__ == "__main__":
         neighbor_generation_method="swap",
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
+        save_interval=50, # Save every 50 iterations
     )
 
     # Hill Climbing with LGBM
@@ -341,6 +359,7 @@ if __name__ == "__main__":
         neighbor_generation_method="lgbm_ml",
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
+        save_interval=50, # Save every 50 iterations
     )
 
     # Hill Climbing with XGBoost
@@ -350,6 +369,7 @@ if __name__ == "__main__":
         neighbor_generation_method="xgboost_ml",
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
+        save_interval=50, # Save every 50 iterations
     )
 
     # Hill Climbing with Hybrid LGBM/XGBoost
@@ -360,18 +380,13 @@ if __name__ == "__main__":
         ml_switch_interval=25,  # Switch between models every 25 iterations
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
+        save_interval=50, # Save every 50 iterations
     )
 
-    # ... (Compare and select the best Pareto front)
     # Example: Select the Pareto front from the hybrid approach
     best_pareto_front = pareto_front_hybrid
 
-    # Create Submission File
-    submission = {
-        "decisionVector": best_pareto_front,
-        "problem": problem_id,
-        "challenge": "spoc-3-torso-decompositions",
-    }
-    with open(f"submission_{problem_id}.json", "w") as f:
-        json.dump([submission], f, indent=4)
-    print("Submission file created successfully!")
+    # Create Final Submission File
+    for i, solution in enumerate(best_pareto_front):
+        create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
+    print("All submission files created successfully!")
