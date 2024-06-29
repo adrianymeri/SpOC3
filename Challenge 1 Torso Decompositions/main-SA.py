@@ -26,6 +26,7 @@ def torso_scorer(y_true, y_pred):
     width_weight = -0.5  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
+
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
@@ -40,11 +41,13 @@ def load_graph(problem_id: str) -> List[List[int]]:
     print(f"Loaded graph with {len(edges)} edges.")
     return edges
 
+
 def calculate_torso_size(decision_vector: List[int]) -> int:
     """Calculates the size of the torso for the given decision vector."""
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     return n - t
+
 
 def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
     """Calculates the width of the torso for the given decision vector and edges."""
@@ -77,6 +80,7 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
 
     return max(outdegrees)
 
+
 def evaluate_solution(
     decision_vector: List[int], edges: List[List[int]]
 ) -> List[float]:
@@ -84,6 +88,7 @@ def evaluate_solution(
     torso_size = calculate_torso_size(decision_vector)
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
+
 
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
@@ -100,6 +105,7 @@ def generate_neighbor_swap(
         )
     return neighbor
 
+
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector."""
     neighbor = decision_vector[:]
@@ -108,6 +114,7 @@ def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     end = random.randint(start + 1, n)
     random.shuffle(neighbor[start:end])
     return neighbor
+
 
 def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor by shifting the torso position."""
@@ -118,6 +125,7 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     neighbor[-1] = new_t
     return neighbor
 
+
 def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution using 2-opt."""
     neighbor = decision_vector[:]
@@ -126,6 +134,7 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     j = random.randint(i + 2, n - 1)
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
+
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
@@ -145,7 +154,7 @@ def train_model(X, y, model_type='lgbm'):
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [3, 5, 7],
-            "estimator__num_leaves": [15, 31, 63], # Added num_leaves
+            "estimator__num_leaves": [15, 31, 63],  # Added num_leaves
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42))
@@ -202,6 +211,7 @@ def generate_neighbor_ml(
     )
     return neighbors[best_neighbor_idx]
 
+
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
@@ -228,10 +238,6 @@ def simulated_annealing_single_restart(
     temperature = initial_temperature
 
     # Adaptive parameters
-    # You can adjust these based on observed convergence 
-    # during initial runs for fine-tuning. 
-    # The idea is to make the search more explorative at the start 
-    # and then more exploitative towards the end.
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
@@ -254,7 +260,7 @@ def simulated_annealing_single_restart(
             # Adaptively adjust perturbation rate during the search
             neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
             initial_perturbation_rate *= perturbation_rate_decay
-        
+
         neighbor_score = evaluate_solution(neighbor, edges)
 
         # Calculate acceptance probability
@@ -287,6 +293,7 @@ def simulated_annealing_single_restart(
     print(f"Restart {restart+1} completed. Best solution: {best_solution}, Score: {best_score}")
     return best_solution, best_score
 
+
 def simulated_annealing(
     edges: List[List[int]],
     problem_id: str,  # Add problem_id as an argument
@@ -310,7 +317,7 @@ def simulated_annealing(
         print("Training models for the first time...")
         X = []
         y = []
-        for _ in range(2000):  # Increased data size for better model training
+        for _ in range(5000):  # Increased data size for better model training
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -340,7 +347,10 @@ def simulated_annealing(
         for restart in range(num_restarts)
     )
 
-    pareto_front = results  # Results now contain solutions from all restarts
+    # Aggregate results from all restarts
+    for result in results:
+        solution, score = result
+        pareto_front.append((solution, score))
 
     print(f"Pareto Front: {pareto_front}")
 
@@ -360,6 +370,7 @@ def simulated_annealing(
 
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
     return filtered_pareto_front
+
 
 def create_submission_file(decision_vector, problem_id, filename="submission.json"):
     """Creates a valid submission file."""
@@ -434,7 +445,7 @@ if __name__ == "__main__":
         save_interval=200,  # Increased save interval
     )
 
-    # You can choose how to select the "best" Pareto front.
+    # Choose how to select the "best" Pareto front.
     # Here, we'll just take the hybrid approach's results for demonstration
     best_pareto_front = pareto_front_hybrid
 
