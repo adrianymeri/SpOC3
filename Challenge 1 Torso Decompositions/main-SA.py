@@ -379,54 +379,57 @@ def create_submission_file(decision_vector, problem_id, filename="submission.jso
 
 if __name__ == "__main__":
     random.seed(42)
-    problem_id = "easy"  # You can change this to 'medium' or 'hard'
-    edges = load_graph(problem_id)
 
-    # Simulated Annealing with Swap
-    print("Starting Simulated Annealing with Swap...")
-    pareto_front_swap = simulated_annealing(
-        edges,
-        neighbor_generation_method="swap",
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50,
-    )
+    for problem_id in ["easy", "medium", "hard"]:
+        print(f"Processing problem: {problem_id}")
+        edges = load_graph(problem_id)
 
-    # Simulated Annealing with LGBM
-    print("Starting Simulated Annealing with LGBM...")
-    pareto_front_lgbm = simulated_annealing(
-        edges,
-        neighbor_generation_method="lgbm_ml",
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50,
-    )
+        # Simulated Annealing with Swap
+        print("Starting Simulated Annealing with Swap...")
+        pareto_front_swap = simulated_annealing(
+            edges,
+            neighbor_generation_method="swap",
+            max_iterations=1000,  # Adjust as needed
+            num_restarts=20,  # Adjust as needed
+            save_interval=50,
+        )
 
-    # Simulated Annealing with XGBoost
-    print("Starting Simulated Annealing with XGBoost...")
-    pareto_front_xgboost = simulated_annealing(
-        edges,
-        neighbor_generation_method="xgboost_ml",
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50,
-    )
+        # Simulated Annealing with LGBM
+        print("Starting Simulated Annealing with LGBM...")
+        pareto_front_lgbm = simulated_annealing(
+            edges,
+            neighbor_generation_method="lgbm_ml",
+            max_iterations=1000,  # Adjust as needed
+            num_restarts=20,  # Adjust as needed
+            save_interval=50,
+        )
 
-    # Simulated Annealing with Hybrid LGBM/XGBoost
-    print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
-    pareto_front_hybrid = simulated_annealing(
-        edges,
-        neighbor_generation_method="hybrid_ml",
-        ml_switch_interval=25,  # Switch between models every 25 iterations
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50,
-    )
+        # Simulated Annealing with XGBoost
+        print("Starting Simulated Annealing with XGBoost...")
+        pareto_front_xgboost = simulated_annealing(
+            edges,
+            neighbor_generation_method="xgboost_ml",
+            max_iterations=1000,  # Adjust as needed
+            num_restarts=20,  # Adjust as needed
+            save_interval=50,
+        )
 
-    # Example: Select the Pareto front from the hybrid approach
-    best_pareto_front = pareto_front_hybrid
+        # Simulated Annealing with Hybrid LGBM/XGBoost
+        print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
+        pareto_front_hybrid = simulated_annealing(
+            edges,
+            neighbor_generation_method="hybrid_ml",
+            ml_switch_interval=25,  # Switch between models every 25 iterations
+            max_iterations=1000,  # Adjust as needed
+            num_restarts=20,  # Adjust as needed
+            save_interval=50,
+        )
 
-    # Create Final Submission Files
-    for i, solution in enumerate(best_pareto_front):
-        create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
+        # Example: Select the Pareto front from the hybrid approach
+        best_pareto_front = pareto_front_hybrid
+
+        # Create Final Submission Files for the current problem
+        for i, solution in enumerate(best_pareto_front):
+            create_submission_file(solution, problem_id, f"{problem_id}_final_solution_{i+1}.json")
+
     print("All submission files created successfully!")
