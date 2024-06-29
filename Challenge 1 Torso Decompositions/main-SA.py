@@ -375,56 +375,63 @@ def create_submission_file(decision_vector, problem_id, filename="submission.jso
 if __name__ == "__main__":
     random.seed(42)
 
-    for problem_id in ["easy", "medium", "hard"]:
-        print(f"Processing problem: {problem_id}")
-        edges = load_graph(problem_id)
+    # Get problem difficulty from user input
+    chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower()
 
-        # Simulated Annealing with Swap
-        print("Starting Simulated Annealing with Swap...")
-        pareto_front_swap = simulated_annealing(
-            edges,
-            neighbor_generation_method="swap",
-            max_iterations=2000,  # Increased iterations
-            num_restarts=30,  # Increased restarts
-            save_interval=100, # Increased save interval
-        )
+    # Validate user input
+    while chosen_problem not in problems:
+        print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
+        chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower()
 
-        # Simulated Annealing with LGBM
-        print("Starting Simulated Annealing with LGBM...")
-        pareto_front_lgbm = simulated_annealing(
-            edges,
-            neighbor_generation_method="lgbm_ml",
-            max_iterations=2000,  # Increased iterations
-            num_restarts=30,  # Increased restarts
-            save_interval=100, # Increased save interval
-        )
+    print(f"Processing problem: {chosen_problem}")
+    edges = load_graph(chosen_problem)
 
-        # Simulated Annealing with XGBoost
-        print("Starting Simulated Annealing with XGBoost...")
-        pareto_front_xgboost = simulated_annealing(
-            edges,
-            neighbor_generation_method="xgboost_ml",
-            max_iterations=2000,  # Increased iterations
-            num_restarts=30,  # Increased restarts
-            save_interval=100, # Increased save interval
-        )
+    # Simulated Annealing with Swap
+    print("Starting Simulated Annealing with Swap...")
+    pareto_front_swap = simulated_annealing(
+        edges,
+        neighbor_generation_method="swap",
+        max_iterations=2000,  # Increased iterations
+        num_restarts=30,  # Increased restarts
+        save_interval=100, # Increased save interval
+    )
 
-        # Simulated Annealing with Hybrid LGBM/XGBoost
-        print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
-        pareto_front_hybrid = simulated_annealing(
-            edges,
-            neighbor_generation_method="hybrid_ml",
-            ml_switch_interval=25,  # Switch between models every 25 iterations
-            max_iterations=2000,  # Increased iterations
-            num_restarts=30,  # Increased restarts
-            save_interval=100, # Increased save interval
-        )
+    # Simulated Annealing with LGBM
+    print("Starting Simulated Annealing with LGBM...")
+    pareto_front_lgbm = simulated_annealing(
+        edges,
+        neighbor_generation_method="lgbm_ml",
+        max_iterations=2000,  # Increased iterations
+        num_restarts=30,  # Increased restarts
+        save_interval=100, # Increased save interval
+    )
 
-        # Example: Select the Pareto front from the hybrid approach
-        best_pareto_front = pareto_front_hybrid
+    # Simulated Annealing with XGBoost
+    print("Starting Simulated Annealing with XGBoost...")
+    pareto_front_xgboost = simulated_annealing(
+        edges,
+        neighbor_generation_method="xgboost_ml",
+        max_iterations=2000,  # Increased iterations
+        num_restarts=30,  # Increased restarts
+        save_interval=100, # Increased save interval
+    )
 
-        # Create Final Submission Files for the current problem
-        for i, solution in enumerate(best_pareto_front):
-            create_submission_file(solution, problem_id, f"{problem_id}_final_solution_{i+1}.json")
+    # Simulated Annealing with Hybrid LGBM/XGBoost
+    print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
+    pareto_front_hybrid = simulated_annealing(
+        edges,
+        neighbor_generation_method="hybrid_ml",
+        ml_switch_interval=25,  # Switch between models every 25 iterations
+        max_iterations=2000,  # Increased iterations
+        num_restarts=30,  # Increased restarts
+        save_interval=100, # Increased save interval
+    )
+
+    # Example: Select the Pareto front from the hybrid approach
+    best_pareto_front = pareto_front_hybrid
+
+    # Create Final Submission Files for the current problem
+    for i, solution in enumerate(best_pareto_front):
+        create_submission_file(solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json")
 
     print("All submission files created successfully!")
