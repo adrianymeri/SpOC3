@@ -85,7 +85,6 @@ def evaluate_solution(
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
 
-
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
 ) -> List[int]:
@@ -101,7 +100,6 @@ def generate_neighbor_swap(
         )
     return neighbor
 
-
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector."""
     neighbor = decision_vector[:]
@@ -110,7 +108,6 @@ def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     end = random.randint(start + 1, n)
     random.shuffle(neighbor[start:end])
     return neighbor
-
 
 def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor by shifting the torso position."""
@@ -121,7 +118,6 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     neighbor[-1] = new_t
     return neighbor
 
-
 def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution using 2-opt."""
     neighbor = decision_vector[:]
@@ -130,7 +126,6 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     j = random.randint(i + 2, n - 1)
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
-
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
@@ -150,6 +145,7 @@ def train_model(X, y, model_type='lgbm'):
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [3, 5, 7],
+            "estimator__num_leaves": [15, 31, 63], # Added num_leaves
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42))
@@ -179,7 +175,6 @@ def train_model(X, y, model_type='lgbm'):
     print(f"{model_type} training completed with best score: {best_score}")
     return best_model
 
-
 def generate_neighbor_ml(
     decision_vector: List[int],
     edges: List[List[int]],
@@ -207,8 +202,6 @@ def generate_neighbor_ml(
     )
     return neighbors[best_neighbor_idx]
 
-
-
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
@@ -234,6 +227,14 @@ def simulated_annealing_single_restart(
 
     temperature = initial_temperature
 
+    # Adaptive parameters
+    # You can adjust these based on observed convergence 
+    # during initial runs for fine-tuning. 
+    # The idea is to make the search more explorative at the start 
+    # and then more exploitative towards the end.
+    initial_perturbation_rate = 0.5
+    perturbation_rate_decay = 0.99
+
     for i in range(max_iterations):
         # Generate neighbor solution using the selected method
         if neighbor_generation_method == "lgbm_ml":
@@ -250,8 +251,10 @@ def simulated_annealing_single_restart(
             neighbor = generate_neighbor_ml(current_solution, edges, model)
             print(f"Iteration {i+1}: Used {model_name} to generate neighbor.")
         else:  # Default to 'swap'
-            neighbor = generate_neighbor_swap(current_solution)
-
+            # Adaptively adjust perturbation rate during the search
+            neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
+            initial_perturbation_rate *= perturbation_rate_decay
+        
         neighbor_score = evaluate_solution(neighbor, edges)
 
         # Calculate acceptance probability
@@ -270,7 +273,9 @@ def simulated_annealing_single_restart(
         if dominates(current_score, best_score):
             best_solution = current_solution[:]
             best_score = current_score[:]
-            print(f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_solution}, Score: {best_score}")
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_solution}, Score: {best_score}"
+            )
 
         # Decrease temperature
         temperature *= cooling_rate
@@ -305,7 +310,7 @@ def simulated_annealing(
         print("Training models for the first time...")
         X = []
         y = []
-        for _ in range(10000): # Increased data size
+        for _ in range(2000):  # Increased data size for better model training
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -335,10 +340,7 @@ def simulated_annealing(
         for restart in range(num_restarts)
     )
 
-    # --- Improved Pareto Front Handling ---
-    # Instead of overwriting, combine results from all restarts
-    for result in results:
-        pareto_front.extend(result) 
+    pareto_front = results  # Results now contain solutions from all restarts
 
     print(f"Pareto Front: {pareto_front}")
 
@@ -358,8 +360,6 @@ def simulated_annealing(
 
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
     return filtered_pareto_front
-
-
 
 def create_submission_file(decision_vector, problem_id, filename="submission.json"):
     """Creates a valid submission file."""
@@ -382,77 +382,66 @@ if __name__ == "__main__":
     # Validate user input
     while chosen_problem not in problems:
         print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
-        chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower()
+        chosen_problem = input(
+            "Choose problem difficulty (easy, medium, hard): "
+        ).lower()
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
-
-    # --- Improved Parameter Exploration ---
-    # You can adjust these parameters based on your observations and the problem difficulty
-    max_iterations = 5000  
-    num_restarts = 50       
-    initial_temperature = 100.0
-    cooling_rate = 0.95
-    save_interval = 200     
 
     # Simulated Annealing with Swap
     print("Starting Simulated Annealing with Swap...")
     pareto_front_swap = simulated_annealing(
         edges,
-        chosen_problem,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="swap",
-        max_iterations=max_iterations,
-        num_restarts=num_restarts,
-        initial_temperature=initial_temperature,
-        cooling_rate=cooling_rate,
-        save_interval=save_interval,
+        max_iterations=5000,  # Increased iterations
+        num_restarts=50,  # Increased restarts
+        save_interval=200,  # Increased save interval
     )
 
     # Simulated Annealing with LGBM
     print("Starting Simulated Annealing with LGBM...")
     pareto_front_lgbm = simulated_annealing(
         edges,
-        chosen_problem, 
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="lgbm_ml",
-        max_iterations=max_iterations,
-        num_restarts=num_restarts,
-        initial_temperature=initial_temperature,
-        cooling_rate=cooling_rate,
-        save_interval=save_interval,
+        max_iterations=5000,  # Increased iterations
+        num_restarts=50,  # Increased restarts
+        save_interval=200,  # Increased save interval
     )
 
     # Simulated Annealing with XGBoost
     print("Starting Simulated Annealing with XGBoost...")
     pareto_front_xgboost = simulated_annealing(
         edges,
-        chosen_problem,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="xgboost_ml",
-        max_iterations=max_iterations,
-        num_restarts=num_restarts,
-        initial_temperature=initial_temperature,
-        cooling_rate=cooling_rate,
-        save_interval=save_interval,
+        max_iterations=5000,  # Increased iterations
+        num_restarts=50,  # Increased restarts
+        save_interval=200,  # Increased save interval
     )
 
     # Simulated Annealing with Hybrid LGBM/XGBoost
     print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
     pareto_front_hybrid = simulated_annealing(
         edges,
-        chosen_problem, 
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="hybrid_ml",
-        ml_switch_interval=25, 
-        max_iterations=max_iterations,
-        num_restarts=num_restarts,
-        initial_temperature=initial_temperature,
-        cooling_rate=cooling_rate,
-        save_interval=save_interval,
+        ml_switch_interval=25,  # Switch between models every 25 iterations
+        max_iterations=5000,  # Increased iterations
+        num_restarts=50,  # Increased restarts
+        save_interval=200,  # Increased save interval
     )
 
-    # Example: Select the Pareto front from the hybrid approach
+    # You can choose how to select the "best" Pareto front.
+    # Here, we'll just take the hybrid approach's results for demonstration
     best_pareto_front = pareto_front_hybrid
 
     # Create Final Submission Files for the current problem
     for i, solution in enumerate(best_pareto_front):
-        create_submission_file(solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json")
+        create_submission_file(
+            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
+        )
 
     print("All submission files created successfully!")
