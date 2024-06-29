@@ -26,7 +26,6 @@ def torso_scorer(y_true, y_pred):
     width_weight = -0.5  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
-
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
@@ -41,13 +40,11 @@ def load_graph(problem_id: str) -> List[List[int]]:
     print(f"Loaded graph with {len(edges)} edges.")
     return edges
 
-
 def calculate_torso_size(decision_vector: List[int]) -> int:
     """Calculates the size of the torso for the given decision vector."""
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     return n - t
-
 
 def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
     """Calculates the width of the torso for the given decision vector and edges."""
@@ -79,7 +76,6 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
                             outdegrees[permutation[j]] += 1
 
     return max(outdegrees)
-
 
 def evaluate_solution(
     decision_vector: List[int], edges: List[List[int]]
@@ -141,7 +137,6 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     return all(x <= y for x, y in zip(score1, score2)) and any(
         x < y for x, y in zip(score1, score2)
     )
-
 
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
@@ -310,7 +305,7 @@ def simulated_annealing(
         print("Training models for the first time...")
         X = []
         y = []
-        for _ in range(1000): # Increased data size
+        for _ in range(10000): # Increased data size
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -340,7 +335,10 @@ def simulated_annealing(
         for restart in range(num_restarts)
     )
 
-    pareto_front = results  # Results now contain solutions from all restarts
+    # --- Improved Pareto Front Handling ---
+    # Instead of overwriting, combine results from all restarts
+    for result in results:
+        pareto_front.extend(result) 
 
     print(f"Pareto Front: {pareto_front}")
 
@@ -389,49 +387,65 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
 
+    # --- Improved Parameter Exploration ---
+    # You can adjust these parameters based on your observations and the problem difficulty
+    max_iterations = 5000  
+    num_restarts = 50       
+    initial_temperature = 100.0
+    cooling_rate = 0.95
+    save_interval = 200     
+
     # Simulated Annealing with Swap
     print("Starting Simulated Annealing with Swap...")
     pareto_front_swap = simulated_annealing(
         edges,
-        chosen_problem,  # Pass chosen_problem to the function
+        chosen_problem,
         neighbor_generation_method="swap",
-        max_iterations=2000,  # Increased iterations
-        num_restarts=30,  # Increased restarts
-        save_interval=100, # Increased save interval
+        max_iterations=max_iterations,
+        num_restarts=num_restarts,
+        initial_temperature=initial_temperature,
+        cooling_rate=cooling_rate,
+        save_interval=save_interval,
     )
 
     # Simulated Annealing with LGBM
     print("Starting Simulated Annealing with LGBM...")
     pareto_front_lgbm = simulated_annealing(
         edges,
-        chosen_problem,  # Pass chosen_problem to the function
+        chosen_problem, 
         neighbor_generation_method="lgbm_ml",
-        max_iterations=2000,  # Increased iterations
-        num_restarts=30,  # Increased restarts
-        save_interval=100, # Increased save interval
+        max_iterations=max_iterations,
+        num_restarts=num_restarts,
+        initial_temperature=initial_temperature,
+        cooling_rate=cooling_rate,
+        save_interval=save_interval,
     )
 
     # Simulated Annealing with XGBoost
     print("Starting Simulated Annealing with XGBoost...")
     pareto_front_xgboost = simulated_annealing(
         edges,
-        chosen_problem,  # Pass chosen_problem to the function
+        chosen_problem,
         neighbor_generation_method="xgboost_ml",
-        max_iterations=2000,  # Increased iterations
-        num_restarts=30,  # Increased restarts
-        save_interval=100, # Increased save interval
+        max_iterations=max_iterations,
+        num_restarts=num_restarts,
+        initial_temperature=initial_temperature,
+        cooling_rate=cooling_rate,
+        save_interval=save_interval,
     )
 
     # Simulated Annealing with Hybrid LGBM/XGBoost
     print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
     pareto_front_hybrid = simulated_annealing(
         edges,
-        chosen_problem,  # Pass chosen_problem to the function
+        chosen_problem, 
         neighbor_generation_method="hybrid_ml",
-        ml_switch_interval=25,  # Switch between models every 25 iterations
-        max_iterations=2000,  # Increased iterations
-        num_restarts=30,  # Increased restarts
-        save_interval=100, # Increased save interval
+        ml_switch_interval=25, 
+        max_iterations=max_iterations,
+        num_restarts=num_restarts,
+        initial_temperature=initial_temperature,
+        cooling_rate=cooling_rate,
+        save_interval=save_interval,
     )
 
     # Example: Select the Pareto front from the hybrid approach
