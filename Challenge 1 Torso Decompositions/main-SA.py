@@ -7,7 +7,7 @@ import numpy as np
 import urllib.request
 from lightgbm import LGBMRegressor
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import cross_val_score, KFold
+from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 from joblib import Parallel, delayed
@@ -115,6 +115,7 @@ def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     random.shuffle(neighbor[start:end])
     return neighbor
 
+
 def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor by shifting the torso position."""
     neighbor = decision_vector[:]
@@ -123,6 +124,7 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     new_t = random.randint(0, n - 1)
     neighbor[-1] = new_t
     return neighbor
+
 
 def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution using 2-opt."""
@@ -147,47 +149,39 @@ def train_model(X, y, model_type='lgbm'):
     best_model = None
     best_score = float("inf")
 
-    param_grid = {
-        "n_estimators": [100, 200],
-        "learning_rate": [0.01, 0.1],
-        "max_depth": [3, 5],
-    }
+    if model_type == 'lgbm':
+        model = MultiOutputRegressor(LGBMRegressor(random_state=42))
+        param_grid = {
+            "estimator__n_estimators": [100, 200, 300],
+            "estimator__learning_rate": [0.01, 0.05, 0.1],
+            "estimator__max_depth": [3, 5, 7],
+        }
+    else:  # XGBoost
+        model = MultiOutputRegressor(XGBRegressor(random_state=42))
+        param_grid = {
+            "estimator__n_estimators": [100, 200, 300],
+            "estimator__learning_rate": [0.01, 0.05, 0.1],
+            "estimator__max_depth": [3, 5, 7],
+            "estimator__subsample": [0.8, 0.9, 1.0],
+            "estimator__colsample_bytree": [0.8, 0.9, 1.0],
+        }
 
-    for n_estimators in param_grid["n_estimators"]:
-        for learning_rate in param_grid["learning_rate"]:
-            for max_depth in param_grid["max_depth"]:
-                if model_type == 'lgbm':
-                    model = MultiOutputRegressor(
-                        LGBMRegressor(
-                            n_estimators=n_estimators,
-                            learning_rate=learning_rate,
-                            max_depth=max_depth,
-                            random_state=42,
-                        )
-                    )
-                else: # XGBoost
-                    model = MultiOutputRegressor(
-                        XGBRegressor(
-                            n_estimators=n_estimators,
-                            learning_rate=learning_rate,
-                            max_depth=max_depth,
-                            random_state=42,
-                        )
-                    )
-                cv_scores = cross_val_score(
-                    model,
-                    X,
-                    y,
-                    cv=KFold(n_splits=3, shuffle=True, random_state=42),
-                    scoring="neg_mean_squared_error",
-                )
-                mean_score = -cv_scores.mean()  # Use negative mean for minimization
-                print(f"Model with {n_estimators}, {learning_rate}, {max_depth}: {mean_score}") # Verbose output
-                if mean_score < best_score:
-                    best_score = mean_score
-                    best_model = model
-    print(f"Best {model_type} model: {best_model}") # Verbose output
-    print(f"{model_type} training completed.")
+    # Use RandomizedSearchCV for more efficient hyperparameter search
+    random_search = RandomizedSearchCV(
+        estimator=model,
+        param_distributions=param_grid,
+        n_iter=10,  # Number of random combinations to try
+        scoring="neg_mean_squared_error",
+        cv=KFold(n_splits=3, shuffle=True, random_state=42),
+        random_state=42,
+        n_jobs=-1,  # Use all available cores for faster training
+    )
+
+    random_search.fit(X, y)
+    best_model = random_search.best_estimator_
+    best_score = -random_search.best_score_  # Use negative mean for minimization
+    print(f"Best {model_type} model: {best_model}")
+    print(f"{model_type} training completed with best score: {best_score}")
     return best_model
 
 
@@ -202,11 +196,12 @@ def generate_neighbor_ml(
 
     # Generate diverse neighbors using different operators
     neighbors = []
-    for _ in range(num_neighbors // 4):
+    for _ in range(num_neighbors // 5):
+        neighbors.append(generate_neighbor_swap(decision_vector.copy(), 0.1))  # Smaller perturbation
         neighbors.append(generate_neighbor_swap(decision_vector.copy(), 0.2))
         neighbors.append(generate_neighbor_shuffle(decision_vector.copy()))
         neighbors.append(generate_neighbor_torso_shift(decision_vector.copy()))
-        neighbors.append(generate_neighbor_2opt(decision_vector.copy())) 
+        neighbors.append(generate_neighbor_2opt(decision_vector.copy()))
 
     # Predict scores for potential neighbors
     predictions = model.predict(np.array(neighbors))
@@ -313,7 +308,7 @@ def simulated_annealing(
         print("Training models for the first time...")
         X = []
         y = []
-        for _ in range(100):
+        for _ in range(1000): # Increased data size
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -389,9 +384,9 @@ if __name__ == "__main__":
         pareto_front_swap = simulated_annealing(
             edges,
             neighbor_generation_method="swap",
-            max_iterations=1000,  # Adjust as needed
-            num_restarts=20,  # Adjust as needed
-            save_interval=50,
+            max_iterations=2000,  # Increased iterations
+            num_restarts=30,  # Increased restarts
+            save_interval=100, # Increased save interval
         )
 
         # Simulated Annealing with LGBM
@@ -399,9 +394,9 @@ if __name__ == "__main__":
         pareto_front_lgbm = simulated_annealing(
             edges,
             neighbor_generation_method="lgbm_ml",
-            max_iterations=1000,  # Adjust as needed
-            num_restarts=20,  # Adjust as needed
-            save_interval=50,
+            max_iterations=2000,  # Increased iterations
+            num_restarts=30,  # Increased restarts
+            save_interval=100, # Increased save interval
         )
 
         # Simulated Annealing with XGBoost
@@ -409,9 +404,9 @@ if __name__ == "__main__":
         pareto_front_xgboost = simulated_annealing(
             edges,
             neighbor_generation_method="xgboost_ml",
-            max_iterations=1000,  # Adjust as needed
-            num_restarts=20,  # Adjust as needed
-            save_interval=50,
+            max_iterations=2000,  # Increased iterations
+            num_restarts=30,  # Increased restarts
+            save_interval=100, # Increased save interval
         )
 
         # Simulated Annealing with Hybrid LGBM/XGBoost
@@ -420,9 +415,9 @@ if __name__ == "__main__":
             edges,
             neighbor_generation_method="hybrid_ml",
             ml_switch_interval=25,  # Switch between models every 25 iterations
-            max_iterations=1000,  # Adjust as needed
-            num_restarts=20,  # Adjust as needed
-            save_interval=50,
+            max_iterations=2000,  # Increased iterations
+            num_restarts=30,  # Increased restarts
+            save_interval=100, # Increased save interval
         )
 
         # Example: Select the Pareto front from the hybrid approach
