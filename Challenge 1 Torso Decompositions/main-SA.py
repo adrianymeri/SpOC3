@@ -217,6 +217,7 @@ def generate_neighbor_ml(
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
+    problem_id: str,  # Add problem_id here
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
@@ -288,6 +289,7 @@ def simulated_annealing_single_restart(
 
 def simulated_annealing(
     edges: List[List[int]],
+    problem_id: str,  # Add problem_id as an argument
     max_iterations: int = 1000,
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
@@ -325,6 +327,7 @@ def simulated_annealing(
         delayed(simulated_annealing_single_restart)(
             edges,
             restart,
+            problem_id,  # Pass problem_id to the function
             max_iterations,
             initial_temperature,
             cooling_rate,
@@ -390,6 +393,7 @@ if __name__ == "__main__":
     print("Starting Simulated Annealing with Swap...")
     pareto_front_swap = simulated_annealing(
         edges,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="swap",
         max_iterations=2000,  # Increased iterations
         num_restarts=30,  # Increased restarts
@@ -400,6 +404,7 @@ if __name__ == "__main__":
     print("Starting Simulated Annealing with LGBM...")
     pareto_front_lgbm = simulated_annealing(
         edges,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="lgbm_ml",
         max_iterations=2000,  # Increased iterations
         num_restarts=30,  # Increased restarts
@@ -410,6 +415,7 @@ if __name__ == "__main__":
     print("Starting Simulated Annealing with XGBoost...")
     pareto_front_xgboost = simulated_annealing(
         edges,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="xgboost_ml",
         max_iterations=2000,  # Increased iterations
         num_restarts=30,  # Increased restarts
@@ -420,6 +426,7 @@ if __name__ == "__main__":
     print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
     pareto_front_hybrid = simulated_annealing(
         edges,
+        chosen_problem,  # Pass chosen_problem to the function
         neighbor_generation_method="hybrid_ml",
         ml_switch_interval=25,  # Switch between models every 25 iterations
         max_iterations=2000,  # Increased iterations
