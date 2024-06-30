@@ -142,6 +142,7 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
+
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
@@ -169,9 +170,9 @@ def train_model(X, y, model_type='lgbm'):
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10, 
+        n_iter=3,  # Reduced iterations for faster training
         scoring="neg_mean_squared_error",
-        cv=KFold(n_splits=3, shuffle=True, random_state=42),
+        cv=KFold(n_splits=2, shuffle=True, random_state=42), # Reduced folds
         random_state=42,
         n_jobs=-1, 
     )
@@ -221,7 +222,7 @@ def simulated_annealing_single_restart(
     xgboost_model=None,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
-    operator_change_interval: int = 100,  
+    operator_change_interval: int = 100, 
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -242,7 +243,7 @@ def simulated_annealing_single_restart(
 
     for i in range(max_iterations):
         # Change the neighbor generation method every operator_change_interval
-        if i % operator_change_interval == 0 and i > 0: 
+        if i % operator_change_interval == 0 and i > 0:  
             neighbor_generation_method = random.choice(neighbor_generation_methods)
             print(f"Restart {restart+1} - Iteration {i+1}: Switching to {neighbor_generation_method} operator.")
 
@@ -278,7 +279,7 @@ def simulated_annealing_single_restart(
         delta_score = (
             (neighbor_score[0] - current_score[0])
             + 0.5 * (neighbor_score[1] - current_score[1])
-        ) 
+        )  
         acceptance_probability = np.exp(min(0, delta_score) / temperature)
 
         if delta_score < 0 or random.random() < acceptance_probability:
@@ -328,7 +329,7 @@ def simulated_annealing(
         print("Training models...")
         X = []
         y = []
-        for _ in range(5000): 
+        for _ in range(1000): # Reduced training data size
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -345,7 +346,7 @@ def simulated_annealing(
             max_iterations,
             initial_temperature,
             cooling_rate,
-            neighbor_generation_methods,  
+            neighbor_generation_methods, 
             lgbm_model,
             xgboost_model,
             ml_switch_interval,
@@ -410,10 +411,10 @@ if __name__ == "__main__":
         edges,
         chosen_problem,
         neighbor_generation_methods=methods, 
-        max_iterations=5000,
-        num_restarts=50,
-        save_interval=200,
-        operator_change_interval=100, 
+        max_iterations=500, # Reduced iterations
+        num_restarts=10,
+        save_interval=100,
+        operator_change_interval=50, 
     )
 
     for i, solution in enumerate(pareto_front):
