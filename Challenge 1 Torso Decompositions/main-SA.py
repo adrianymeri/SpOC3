@@ -5,12 +5,12 @@ from typing import List, Tuple
 
 import numpy as np
 import urllib.request
-from joblib import Parallel, delayed
 from lightgbm import LGBMRegressor
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import KFold, RandomizedSearchCV
+from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
+from joblib import Parallel, delayed
 
 # Define the problem instances
 problems = {
@@ -25,7 +25,6 @@ def torso_scorer(y_true, y_pred):
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
-
 
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
@@ -142,11 +141,11 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
     best_model = None
+    best_score = float("inf")
 
     if model_type == 'lgbm':
         model = MultiOutputRegressor(LGBMRegressor(random_state=42))
@@ -154,7 +153,7 @@ def train_model(X, y, model_type='lgbm'):
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [3, 5, 7],
-            "estimator__num_leaves": [15, 31, 63],
+            "estimator__num_leaves": [15, 31, 63], 
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42))
@@ -166,20 +165,21 @@ def train_model(X, y, model_type='lgbm'):
             "estimator__colsample_bytree": [0.8, 0.9, 1.0],
         }
 
-    scorer = make_scorer(torso_scorer)
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=5,  # Increased iterations 
-        scoring=scorer,
-        cv=KFold(n_splits=5, shuffle=True, random_state=42),  # Increased folds
+        n_iter=3,  # Reduced iterations for faster training
+        scoring="neg_mean_squared_error",
+        cv=KFold(n_splits=2, shuffle=True, random_state=42),  # Reduced folds
         random_state=42,
-        n_jobs=-1,
+        n_jobs=-1, 
     )
 
     random_search.fit(X, y)
     best_model = random_search.best_estimator_
+    best_score = -random_search.best_score_ 
     print(f"Best {model_type} model: {best_model}")
+    print(f"{model_type} training completed with best score: {best_score}")
     return best_model
 
 
@@ -211,17 +211,13 @@ def generate_neighbor_ml(
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
-    problem_id: str,
+    problem_id: str, 
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_generation_methods: List[str] = ["swap"],
-    lgbm_model=None,
-    xgboost_model=None,
+    initial_exploration_iterations: int = 20,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
-    operator_change_interval: int = 100,
-    ml_start_iteration: int = 20,  # Iteration to start using ML
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -237,35 +233,39 @@ def simulated_annealing_single_restart(
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
-    # Initially only use basic operators
-    basic_operators = ["swap", "shuffle", "torso_shift", "2opt"]
-    neighbor_generation_method = random.choice(basic_operators)
+    # Data collection for ML models
+    X_train = []
+    y_train = []
+    lgbm_model = None
+    xgboost_model = None
 
     for i in range(max_iterations):
-        # Introduce ML methods after ml_start_iteration
-        if i >= ml_start_iteration:
-            neighbor_generation_methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml",
-                                         "hybrid_ml"] 
-
-        # Change the neighbor generation method every operator_change_interval
-        if i % operator_change_interval == 0 and i > 0:
-            neighbor_generation_method = random.choice(neighbor_generation_methods)
-            print(f"Restart {restart+1} - Iteration {i+1}: Switching to {neighbor_generation_method} operator.")
-
-        # Generate neighbor solution using the selected method
-        if neighbor_generation_method == "lgbm_ml":
-            neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
-        elif neighbor_generation_method == "xgboost_ml":
-            neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
-        elif neighbor_generation_method == "hybrid_ml":
+        if i < initial_exploration_iterations:
+            # Use basic operators for initial exploration
+            neighbor_generation_method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+        else:
+            # Switch between basic operators and ML-based methods
             if i % ml_switch_interval < ml_switch_interval // 2:
-                model = lgbm_model
-                model_name = "LGBM"
+                # Use basic operators
+                neighbor_generation_method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
             else:
-                model = xgboost_model
-                model_name = "XGBoost"
-            neighbor = generate_neighbor_ml(current_solution, edges, model)
-            print(f"Restart {restart+1} - Iteration {i+1}: Used {model_name} to generate neighbor.")
+                # Use ML models
+                neighbor_generation_method = random.choice(["lgbm_ml", "xgboost_ml"])
+
+        print(f"Restart {restart+1} - Iteration {i+1}: Using {neighbor_generation_method} operator.")
+
+        if neighbor_generation_method == "lgbm_ml":
+            if lgbm_model is None:
+                print(f"Restart {restart+1} - Iteration {i+1}: Not enough data for LGBM, using basic operator.")
+                neighbor_generation_method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+            else:
+                neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
+        elif neighbor_generation_method == "xgboost_ml":
+            if xgboost_model is None:
+                print(f"Restart {restart+1} - Iteration {i+1}: Not enough data for XGBoost, using basic operator.")
+                neighbor_generation_method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+            else:
+                neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
         elif neighbor_generation_method == "swap":
             neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
             initial_perturbation_rate *= perturbation_rate_decay
@@ -284,7 +284,7 @@ def simulated_annealing_single_restart(
         delta_score = (
             (neighbor_score[0] - current_score[0])
             + 0.5 * (neighbor_score[1] - current_score[1])
-        )
+        )  
         acceptance_probability = np.exp(min(0, delta_score) / temperature)
 
         if delta_score < 0 or random.random() < acceptance_probability:
@@ -301,6 +301,18 @@ def simulated_annealing_single_restart(
 
         temperature *= cooling_rate
 
+        # Collect data for ML models
+        X_train.append(current_solution)
+        y_train.append(current_score)
+
+        # Train/retrain ML models after initial exploration and every ml_switch_interval iterations
+        if i >= initial_exploration_iterations and (i - initial_exploration_iterations) % ml_switch_interval == 0:
+            print("Training/retraining ML models...")
+            X_train_np = np.array(X_train)
+            y_train_np = np.array(y_train)
+            lgbm_model = train_model(X_train_np, y_train_np, 'lgbm')
+            xgboost_model = train_model(X_train_np, y_train_np, 'xgboost')
+
         # Save intermediate solutions
         if (i + 1) % save_interval == 0:
             create_submission_file(best_solution, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json")
@@ -311,17 +323,14 @@ def simulated_annealing_single_restart(
 
 def simulated_annealing(
     edges: List[List[int]],
-    problem_id: str,
+    problem_id: str, 
     max_iterations: int = 1000,
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_generation_methods: List[str] = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml",
-                                             "hybrid_ml"],
+    initial_exploration_iterations: int = 20, 
     ml_switch_interval: int = 25,
     save_interval: int = 50,
-    operator_change_interval: int = 100,
-    ml_start_iteration: int = 20,  # Iteration to start using ML
     n_jobs: int = -1,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
@@ -329,46 +338,17 @@ def simulated_annealing(
     pareto_front = []
     start_time = time.time()
 
-    # Generate initial training data with basic operators
-    print("Generating initial training data...")
-    X = []
-    y = []
-    for _ in range(1000):  # Increased training data size
-        decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
-        for _ in range(ml_start_iteration):  # Apply basic operators for ml_start_iteration steps
-            operator = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
-            if operator == "swap":
-                decision_vector = generate_neighbor_swap(decision_vector.copy())
-            elif operator == "shuffle":
-                decision_vector = generate_neighbor_shuffle(decision_vector.copy())
-            elif operator == "torso_shift":
-                decision_vector = generate_neighbor_torso_shift(decision_vector.copy())
-            elif operator == "2opt":
-                decision_vector = generate_neighbor_2opt(decision_vector.copy())
-        X.append(decision_vector)
-        y.append(evaluate_solution(decision_vector, edges))
-    X = np.array(X)
-    y = np.array(y)
-
-    # Train models outside the loop
-    lgbm_model = train_model(X, y, 'lgbm')
-    xgboost_model = train_model(X, y, 'xgboost')
-
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
             edges,
             restart,
-            problem_id,
+            problem_id, 
             max_iterations,
             initial_temperature,
             cooling_rate,
-            neighbor_generation_methods,
-            lgbm_model,
-            xgboost_model,
+            initial_exploration_iterations,
             ml_switch_interval,
             save_interval,
-            operator_change_interval,
-            ml_start_iteration,
         )
         for restart in range(num_restarts)
     )
@@ -393,7 +373,6 @@ def simulated_annealing(
             filtered_pareto_front.append(solution1)
 
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
-    print(f"Total execution time: {time.time() - start_time} seconds")
     return filtered_pareto_front
 
 
@@ -423,22 +402,19 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
 
-    methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml", "hybrid_ml"]
-
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        neighbor_generation_methods=methods,
-        max_iterations=1000,  # Increased iterations
-        num_restarts=10,  # Increased restarts
-        save_interval=100,
-        operator_change_interval=50,
-        ml_start_iteration=50,
+        max_iterations=500,      # Significantly reduced iterations for faster initial results
+        num_restarts=3,         # Reduced restarts for faster testing
+        save_interval=10,         # Save more frequently to track progress
+        initial_exploration_iterations=20,  # Initial iterations with basic operators
+        ml_switch_interval=25,     # Switch between basic and ML every 25 iterations
     )
 
     for i, solution in enumerate(pareto_front):
         create_submission_file(
-            solution, chosen_problem, f"{chosen_problem}_all_methods_final_solution_{i+1}.json"
+            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
         )
 
     print(f"All submission files created successfully!")
