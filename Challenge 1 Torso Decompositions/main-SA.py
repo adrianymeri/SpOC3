@@ -142,7 +142,6 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
@@ -226,6 +225,7 @@ def simulated_annealing_single_restart(
     xgboost_model=None,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
+    operator_change_interval: int = 100,  # Change operator every 100 iterations
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -244,8 +244,10 @@ def simulated_annealing_single_restart(
     perturbation_rate_decay = 0.99
 
     for i in range(max_iterations):
-        # Choose a neighbor generation method randomly from the list
-        neighbor_generation_method = random.choice(neighbor_generation_methods)
+        # Change the neighbor generation method every operator_change_interval
+        if i % operator_change_interval == 0:
+            neighbor_generation_method = random.choice(neighbor_generation_methods)
+            print(f"Iteration {i+1}: Switching to {neighbor_generation_method} operator.")
 
         # Generate neighbor solution using the selected method
         if neighbor_generation_method == "lgbm_ml":
@@ -318,16 +320,19 @@ def simulated_annealing(
     use_hybrid_ml: bool = False,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
+    operator_change_interval: int = 100,  # Change operator every 100 iterations
     n_jobs: int = -1,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     n = max(node for edge in edges for node in edge) + 1
     pareto_front = []
     start_time = time.time()
-
-    # Train models only once at the beginning if using ML
+    
+    # Train models outside the loop if using ML
+    lgbm_model = None
+    xgboost_model = None
     if any(method.endswith("ml") for method in neighbor_generation_methods):
-        print("Training models for the first time...")
+        print("Training models...")
         X = []
         y = []
         for _ in range(5000):  # Increased data size for better model training
@@ -338,9 +343,6 @@ def simulated_annealing(
         y = np.array(y)
         lgbm_model = train_model(X, y, 'lgbm')
         xgboost_model = train_model(X, y, 'xgboost')
-    else:
-        lgbm_model = None
-        xgboost_model = None
 
     # Run simulated annealing with multiple restarts in parallel
     results = Parallel(n_jobs=n_jobs)(
@@ -356,6 +358,7 @@ def simulated_annealing(
             xgboost_model,
             ml_switch_interval,
             save_interval,
+            operator_change_interval,  # Pass the operator change interval
         )
         for restart in range(num_restarts)
     )
@@ -414,7 +417,7 @@ if __name__ == "__main__":
     edges = load_graph(chosen_problem)
 
     # Define the neighbor generation methods to use
-    methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml", "hybrid_ml"]
+    methods = ["swap", "shuffle", "torso_shift", "2opt"]  # Only local search methods
 
     # Run simulated annealing with all methods
     pareto_front = simulated_annealing(
@@ -424,6 +427,7 @@ if __name__ == "__main__":
         max_iterations=5000,
         num_restarts=50,
         save_interval=200,
+        operator_change_interval=100,  # Change operator every 100 iterations
     )
 
     # Create final submission files for the current problem and all methods
