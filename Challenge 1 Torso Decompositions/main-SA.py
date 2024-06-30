@@ -258,10 +258,19 @@ def simulated_annealing_single_restart(
                 model_name = "XGBoost"
             neighbor = generate_neighbor_ml(current_solution, edges, model)
             print(f"Iteration {i+1}: Used {model_name} to generate neighbor.")
-        else:  # Default to 'swap'
+        elif neighbor_generation_method == "swap": # Explicitly check for 'swap'
             # Adaptively adjust perturbation rate during the search
             neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
             initial_perturbation_rate *= perturbation_rate_decay
+        else: # Use other methods 
+            if neighbor_generation_method == "shuffle":
+                neighbor = generate_neighbor_shuffle(current_solution)
+            elif neighbor_generation_method == "torso_shift":
+                neighbor = generate_neighbor_torso_shift(current_solution)
+            elif neighbor_generation_method == "2opt":
+                neighbor = generate_neighbor_2opt(current_solution) 
+            else:
+                raise ValueError(f"Invalid neighbor_generation_method: {neighbor_generation_method}")
 
         neighbor_score = evaluate_solution(neighbor, edges)
 
