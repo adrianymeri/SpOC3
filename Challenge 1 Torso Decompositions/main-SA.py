@@ -142,7 +142,6 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
@@ -172,7 +171,7 @@ def train_model(X, y, model_type='lgbm'):
         param_distributions=param_grid,
         n_iter=3,  # Reduced iterations for faster training
         scoring="neg_mean_squared_error",
-        cv=KFold(n_splits=2, shuffle=True, random_state=42), # Reduced folds
+        cv=KFold(n_splits=2, shuffle=True, random_state=42),  # Reduced folds
         random_state=42,
         n_jobs=-1, 
     )
@@ -183,7 +182,6 @@ def train_model(X, y, model_type='lgbm'):
     print(f"Best {model_type} model: {best_model}")
     print(f"{model_type} training completed with best score: {best_score}")
     return best_model
-
 
 def generate_neighbor_ml(
     decision_vector: List[int],
@@ -209,7 +207,6 @@ def generate_neighbor_ml(
     )
     return neighbors[best_neighbor_idx]
 
-
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
@@ -217,12 +214,13 @@ def simulated_annealing_single_restart(
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_generation_methods: List[str] = ["swap"],  
+    neighbor_generation_methods: List[str] = ["swap"], 
     lgbm_model=None,
     xgboost_model=None,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
-    operator_change_interval: int = 100, 
+    operator_change_interval: int = 100,
+    ml_start_iteration: int = 20, # Iteration to start using ML
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -238,10 +236,14 @@ def simulated_annealing_single_restart(
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
-    # Choose the initial neighbor generation method randomly
-    neighbor_generation_method = random.choice(neighbor_generation_methods) 
+    # Choose the initial neighbor generation method randomly from non-ML methods
+    neighbor_generation_method = random.choice([m for m in neighbor_generation_methods if not m.endswith("ml")])
 
     for i in range(max_iterations):
+        # Introduce ML methods after ml_start_iteration
+        if i >= ml_start_iteration:
+            neighbor_generation_methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml", "hybrid_ml"]
+
         # Change the neighbor generation method every operator_change_interval
         if i % operator_change_interval == 0 and i > 0:  
             neighbor_generation_method = random.choice(neighbor_generation_methods)
@@ -306,7 +308,7 @@ def simulated_annealing_single_restart(
 
 def simulated_annealing(
     edges: List[List[int]],
-    problem_id: str,  
+    problem_id: str, 
     max_iterations: int = 1000,
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
@@ -315,6 +317,7 @@ def simulated_annealing(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
+    ml_start_iteration: int = 20,  # Iteration to start using ML 
     n_jobs: int = -1,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
@@ -329,7 +332,7 @@ def simulated_annealing(
         print("Training models...")
         X = []
         y = []
-        for _ in range(1000): # Reduced training data size
+        for _ in range(1000):  # Reduced training data size
             decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
             X.append(decision_vector)
             y.append(evaluate_solution(decision_vector, edges))
@@ -352,6 +355,7 @@ def simulated_annealing(
             ml_switch_interval,
             save_interval,
             operator_change_interval,
+            ml_start_iteration, # Pass the parameter here
         )
         for restart in range(num_restarts)
     )
@@ -411,10 +415,11 @@ if __name__ == "__main__":
         edges,
         chosen_problem,
         neighbor_generation_methods=methods, 
-        max_iterations=500, # Reduced iterations
-        num_restarts=10,
-        save_interval=100,
-        operator_change_interval=50, 
+        max_iterations=50,      # Significantly reduced iterations for faster initial results
+        num_restarts=3,          # Reduced restarts for faster testing
+        save_interval=10,        # Save more frequently to track progress
+        operator_change_interval=10, # Change operators more frequently
+        ml_start_iteration=20,   # Iteration to start using ML methods
     )
 
     for i, solution in enumerate(pareto_front):
