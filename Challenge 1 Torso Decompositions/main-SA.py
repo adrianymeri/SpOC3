@@ -221,7 +221,7 @@ def simulated_annealing_single_restart(
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_generation_method: str = "swap",
+    neighbor_generation_methods: List[str] = ["swap"],  # Allow multiple methods
     lgbm_model=None,
     xgboost_model=None,
     ml_switch_interval: int = 25,
@@ -244,6 +244,9 @@ def simulated_annealing_single_restart(
     perturbation_rate_decay = 0.99
 
     for i in range(max_iterations):
+        # Choose a neighbor generation method randomly from the list
+        neighbor_generation_method = random.choice(neighbor_generation_methods)
+
         # Generate neighbor solution using the selected method
         if neighbor_generation_method == "lgbm_ml":
             neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
@@ -258,19 +261,18 @@ def simulated_annealing_single_restart(
                 model_name = "XGBoost"
             neighbor = generate_neighbor_ml(current_solution, edges, model)
             print(f"Iteration {i+1}: Used {model_name} to generate neighbor.")
-        elif neighbor_generation_method == "swap": # Explicitly check for 'swap'
+        elif neighbor_generation_method == "swap":
             # Adaptively adjust perturbation rate during the search
             neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
             initial_perturbation_rate *= perturbation_rate_decay
-        else: # Use other methods 
-            if neighbor_generation_method == "shuffle":
-                neighbor = generate_neighbor_shuffle(current_solution)
-            elif neighbor_generation_method == "torso_shift":
-                neighbor = generate_neighbor_torso_shift(current_solution)
-            elif neighbor_generation_method == "2opt":
-                neighbor = generate_neighbor_2opt(current_solution) 
-            else:
-                raise ValueError(f"Invalid neighbor_generation_method: {neighbor_generation_method}")
+        elif neighbor_generation_method == "shuffle":
+            neighbor = generate_neighbor_shuffle(current_solution)
+        elif neighbor_generation_method == "torso_shift":
+            neighbor = generate_neighbor_torso_shift(current_solution)
+        elif neighbor_generation_method == "2opt":
+            neighbor = generate_neighbor_2opt(current_solution)
+        else:
+            raise ValueError(f"Invalid neighbor_generation_method: {neighbor_generation_method}")
 
         neighbor_score = evaluate_solution(neighbor, edges)
 
@@ -312,7 +314,7 @@ def simulated_annealing(
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_generation_method: str = "swap",
+    neighbor_generation_methods: List[str] = ["swap"],  # Allow multiple methods
     use_hybrid_ml: bool = False,
     ml_switch_interval: int = 25,
     save_interval: int = 50,
@@ -324,7 +326,7 @@ def simulated_annealing(
     start_time = time.time()
 
     # Train models only once at the beginning if using ML
-    if neighbor_generation_method.endswith("ml"):
+    if any(method.endswith("ml") for method in neighbor_generation_methods):
         print("Training models for the first time...")
         X = []
         y = []
@@ -349,7 +351,7 @@ def simulated_annealing(
             max_iterations,
             initial_temperature,
             cooling_rate,
-            neighbor_generation_method,
+            neighbor_generation_methods,  # Pass the list of methods
             lgbm_model,
             xgboost_model,
             ml_switch_interval,
@@ -414,22 +416,20 @@ if __name__ == "__main__":
     # Define the neighbor generation methods to use
     methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml", "hybrid_ml"]
 
-    # Iterate over the methods and run simulated annealing
-    for method in methods:
-        print(f"Starting Simulated Annealing with {method}...")
-        pareto_front = simulated_annealing(
-            edges,
-            chosen_problem,  # Pass chosen_problem to the function
-            neighbor_generation_method=method,
-            max_iterations=5000,  # Increased iterations
-            num_restarts=50,  # Increased restarts
-            save_interval=200,  # Increased save interval
+    # Run simulated annealing with all methods
+    pareto_front = simulated_annealing(
+        edges,
+        chosen_problem,
+        neighbor_generation_methods=methods,  # Pass all methods here
+        max_iterations=5000,
+        num_restarts=50,
+        save_interval=200,
+    )
+
+    # Create final submission files for the current problem and all methods
+    for i, solution in enumerate(pareto_front):
+        create_submission_file(
+            solution, chosen_problem, f"{chosen_problem}_all_methods_final_solution_{i+1}.json"
         )
 
-        # Create Final Submission Files for the current problem and method
-        for i, solution in enumerate(pareto_front):
-            create_submission_file(
-                solution, chosen_problem, f"{chosen_problem}_{method}_final_solution_{i+1}.json"
-            )
-
-        print(f"All submission files for {method} created successfully!")
+    print(f"All submission files created successfully!")
