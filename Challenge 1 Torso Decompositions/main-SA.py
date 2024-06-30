@@ -183,6 +183,7 @@ def train_model(X, y, model_type='lgbm'):
     print(f"{model_type} training completed with best score: {best_score}")
     return best_model
 
+
 def generate_neighbor_ml(
     decision_vector: List[int],
     edges: List[List[int]],
@@ -220,7 +221,7 @@ def simulated_annealing_single_restart(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    ml_start_iteration: int = 20, # Iteration to start using ML
+    ml_start_iteration: int = 200,  # Iteration to start using ML
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -236,8 +237,9 @@ def simulated_annealing_single_restart(
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
-    # Choose the initial neighbor generation method randomly from non-ML methods
-    neighbor_generation_method = random.choice([m for m in neighbor_generation_methods if not m.endswith("ml")])
+    # Initially only use basic operators
+    neighbor_generation_methods = ["swap", "shuffle", "torso_shift", "2opt"]
+    neighbor_generation_method = random.choice(neighbor_generation_methods)
 
     for i in range(max_iterations):
         # Introduce ML methods after ml_start_iteration
@@ -317,7 +319,7 @@ def simulated_annealing(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    ml_start_iteration: int = 20,  # Iteration to start using ML 
+    ml_start_iteration: int = 200,  # Iteration to start using ML 
     n_jobs: int = -1,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
@@ -328,18 +330,6 @@ def simulated_annealing(
     # Train models outside the loop 
     lgbm_model = None
     xgboost_model = None
-    if any(method.endswith("ml") for method in neighbor_generation_methods):
-        print("Training models...")
-        X = []
-        y = []
-        for _ in range(1000):  # Reduced training data size
-            decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
-            X.append(decision_vector)
-            y.append(evaluate_solution(decision_vector, edges))
-        X = np.array(X)
-        y = np.array(y)
-        lgbm_model = train_model(X, y, 'lgbm')
-        xgboost_model = train_model(X, y, 'xgboost')
 
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
@@ -355,10 +345,25 @@ def simulated_annealing(
             ml_switch_interval,
             save_interval,
             operator_change_interval,
-            ml_start_iteration, # Pass the parameter here
+            ml_start_iteration,  # Pass the parameter here
         )
         for restart in range(num_restarts)
     )
+
+    # Train models after initial exploration with basic operators
+    if any(method.endswith("ml") for method in neighbor_generation_methods):
+        print("Training models...")
+        X = []
+        y = []
+        for _ in range(1000):  # Reduced training data size
+            decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
+            X.append(decision_vector)
+            y.append(evaluate_solution(decision_vector, edges))
+        X = np.array(X)
+        y = np.array(y)
+        lgbm_model = train_model(X, y, 'lgbm')
+        xgboost_model = train_model(X, y, 'xgboost')
+
 
     for result in results:
         solution, score = result
@@ -415,11 +420,11 @@ if __name__ == "__main__":
         edges,
         chosen_problem,
         neighbor_generation_methods=methods, 
-        max_iterations=50,      # Significantly reduced iterations for faster initial results
+        max_iterations=500,      # Significantly reduced iterations for faster initial results
         num_restarts=3,          # Reduced restarts for faster testing
-        save_interval=10,        # Save more frequently to track progress
+        save_interval=10,         # Save more frequently to track progress
         operator_change_interval=10, # Change operators more frequently
-        ml_start_iteration=20,   # Iteration to start using ML methods
+        ml_start_iteration=200,   # Iteration to start using ML methods
     )
 
     for i, solution in enumerate(pareto_front):
