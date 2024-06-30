@@ -142,6 +142,7 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
+
 def train_model(X, y, model_type='lgbm'):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
@@ -183,6 +184,7 @@ def train_model(X, y, model_type='lgbm'):
     print(f"Best {model_type} model: {best_model}")
     print(f"{model_type} training completed with best score: {best_score}")
     return best_model
+
 
 def generate_neighbor_ml(
     decision_vector: List[int],
@@ -400,59 +402,25 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
 
-    # Simulated Annealing with Swap
-    print("Starting Simulated Annealing with Swap...")
-    pareto_front_swap = simulated_annealing(
-        edges,
-        chosen_problem,  # Pass chosen_problem to the function
-        neighbor_generation_method="swap",
-        max_iterations=5000,  # Increased iterations
-        num_restarts=50,  # Increased restarts
-        save_interval=200,  # Increased save interval
-    )
+    # Define the neighbor generation methods to use
+    methods = ["swap", "shuffle", "torso_shift", "2opt", "lgbm_ml", "xgboost_ml", "hybrid_ml"]
 
-    # Simulated Annealing with LGBM
-    print("Starting Simulated Annealing with LGBM...")
-    pareto_front_lgbm = simulated_annealing(
-        edges,
-        chosen_problem,  # Pass chosen_problem to the function
-        neighbor_generation_method="lgbm_ml",
-        max_iterations=5000,  # Increased iterations
-        num_restarts=50,  # Increased restarts
-        save_interval=200,  # Increased save interval
-    )
-
-    # Simulated Annealing with XGBoost
-    print("Starting Simulated Annealing with XGBoost...")
-    pareto_front_xgboost = simulated_annealing(
-        edges,
-        chosen_problem,  # Pass chosen_problem to the function
-        neighbor_generation_method="xgboost_ml",
-        max_iterations=5000,  # Increased iterations
-        num_restarts=50,  # Increased restarts
-        save_interval=200,  # Increased save interval
-    )
-
-    # Simulated Annealing with Hybrid LGBM/XGBoost
-    print("Starting Simulated Annealing with Hybrid LGBM/XGBoost...")
-    pareto_front_hybrid = simulated_annealing(
-        edges,
-        chosen_problem,  # Pass chosen_problem to the function
-        neighbor_generation_method="hybrid_ml",
-        ml_switch_interval=25,  # Switch between models every 25 iterations
-        max_iterations=5000,  # Increased iterations
-        num_restarts=50,  # Increased restarts
-        save_interval=200,  # Increased save interval
-    )
-
-    # Choose how to select the "best" Pareto front.
-    # Here, we'll just take the hybrid approach's results for demonstration
-    best_pareto_front = pareto_front_hybrid
-
-    # Create Final Submission Files for the current problem
-    for i, solution in enumerate(best_pareto_front):
-        create_submission_file(
-            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
+    # Iterate over the methods and run simulated annealing
+    for method in methods:
+        print(f"Starting Simulated Annealing with {method}...")
+        pareto_front = simulated_annealing(
+            edges,
+            chosen_problem,  # Pass chosen_problem to the function
+            neighbor_generation_method=method,
+            max_iterations=5000,  # Increased iterations
+            num_restarts=50,  # Increased restarts
+            save_interval=200,  # Increased save interval
         )
 
-    print("All submission files created successfully!")
+        # Create Final Submission Files for the current problem and method
+        for i, solution in enumerate(pareto_front):
+            create_submission_file(
+                solution, chosen_problem, f"{chosen_problem}_{method}_final_solution_{i+1}.json"
+            )
+
+        print(f"All submission files for {method} created successfully!")
