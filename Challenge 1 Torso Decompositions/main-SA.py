@@ -25,8 +25,7 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Combines torso size and width into a single score for optimization."""
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    # Use np.sum to aggregate over multiple outputs
-    return np.sum(size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1])
+    return size_weight * y_pred[0] + width_weight * y_pred[1]
 
 
 def load_graph(problem_id: str) -> List[List[int]]:
@@ -90,10 +89,8 @@ def generate_neighbor_swap(
     t = decision_vector[-1]
     num_perturbations = max(1, int(perturbation_rate * (n - t)))
 
-    # Create a copy only once
-    neighbor = decision_vector.copy()
+    neighbor = decision_vector.copy()  # Create a copy only once
 
-    # Only swap elements within the torso
     for _ in range(num_perturbations):
         i = random.randint(t, n - 1)
         j = random.randint(t, n - 1)
@@ -145,7 +142,8 @@ def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> Multi
     print(f"Training {model_type} model...")
     best_model = None
     best_score = float("inf")
-
+    # Reshape y for multioutput regression
+    y_reshaped = y.reshape(-1, 2)
     if model_type == "lgbm":
         model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=-1))
         param_grid = {
@@ -164,18 +162,20 @@ def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> Multi
             "estimator__subsample": [0.8, 0.9, 1.0],
             "estimator__colsample_bytree": [0.8, 0.9, 1.0],
         }
-
+    
+    # Use k-fold cross-validation for more robust model selection
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,
+        n_iter=10,  # Reduce iterations if needed
         scoring=make_scorer(torso_scorer, greater_is_better=False),
-        cv=KFold(n_splits=5, shuffle=True, random_state=42),
+        cv=kfold,
         random_state=42,
         n_jobs=-1,
     )
-
-    random_search.fit(X, y)
+    # Fit the model on the data
+    random_search.fit(X, y_reshaped)
     best_model = random_search.best_estimator_
     best_score = -random_search.best_score_
     print(f"Best {model_type} model: {best_model}")
@@ -221,10 +221,8 @@ def choose_neighbor_generation_method(
     """Chooses the neighbor generation method based on exploration/exploitation strategy."""
 
     if current_iteration < initial_exploration_iterations:
-        # Exploration phase: Use all operators with equal probability
         return random.choice(["swap", "shuffle", "torso_shift", "2opt"])
     else:
-        # Exploitation phase: Use operator weights
         return random.choices(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
@@ -249,13 +247,14 @@ def simulated_annealing_single_restart(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    neighbor_batch_size: int = 10,  # Evaluate neighbors in batches
+    neighbor_batch_size: int = 10,
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
-    # Start with a random valid solution
-    current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+    current_solution = [i for i in range(n)] + [
+        random.randint(0, n - 1)
+    ]  # Start with a random valid solution
     current_score = evaluate_solution(current_solution, edges)
 
     best_solution = current_solution[:]
@@ -266,18 +265,15 @@ def simulated_annealing_single_restart(
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
-    # Data collection for ML models
-    X = []
+    X = []  # Data collection for ML models
     y = []
 
     lgbm_model = None
     xgboost_model = None
 
-    # Operator weights for exploitation phase
-    operator_weights = [1.0, 1.0, 1.0, 1.0]  # Initial weights are equal
+    operator_weights = [1.0, 1.0, 1.0, 1.0]
 
     for i in range(max_iterations):
-        # Choose neighbor generation method (exploration vs. exploitation)
         neighbor_generation_method = choose_neighbor_generation_method(
             i, initial_exploration_iterations, ml_switch_interval, operator_weights
         )
@@ -286,13 +282,12 @@ def simulated_annealing_single_restart(
         )
 
         if i >= initial_exploration_iterations and i % operator_change_interval == 0:
-            # Update operator weights based on their performance
             operator_weights = update_operator_weights(
                 X, y, operator_weights, initial_exploration_iterations, ml_switch_interval
             )
 
         neighbors = []
-        for _ in range(neighbor_batch_size):  # Generate a batch of neighbors
+        for _ in range(neighbor_batch_size):
             if neighbor_generation_method == "swap":
                 neighbor = generate_neighbor_swap(
                     current_solution, initial_perturbation_rate
@@ -306,25 +301,23 @@ def simulated_annealing_single_restart(
                 neighbor = generate_neighbor_2opt(current_solution)
             neighbors.append(neighbor)
 
-        # Evaluate the batch of neighbors in parallel
         neighbor_scores = evaluate_neighbors_parallel(neighbors, edges)
 
-        # Collect data for ML training
         X.extend(neighbors)
         y.extend(neighbor_scores)
-
-        # Phase 2: Alternate between basic operators and ML models
+        # Phase 2: Use ML models for neighbor generation
         if i >= initial_exploration_iterations and i % ml_switch_interval == 0:
-            # Train/retrain models
             if lgbm_model is None or i % (2 * ml_switch_interval) == 0:
-                lgbm_model = train_model(np.array(X), np.array(y), "lgbm")
-            if (
-                xgboost_model is None
-                or i % (2 * ml_switch_interval) == ml_switch_interval
-            ):
-                xgboost_model = train_model(np.array(X), np.array(y), "xgboost")
+                # Convert X and y to NumPy arrays before training
+                X_np = np.array(X)
+                y_np = np.array(y)
+                lgbm_model = train_model(X_np, y_np, "lgbm")
+            if xgboost_model is None or i % (2 * ml_switch_interval) == ml_switch_interval:
+                # Convert X and y to NumPy arrays before training
+                X_np = np.array(X)
+                y_np = np.array(y)
+                xgboost_model = train_model(X_np, y_np, "xgboost")
 
-            # Choose ML model (LGBM, XGBoost, or hybrid)
             model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
             print(f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model.")
 
@@ -332,7 +325,7 @@ def simulated_annealing_single_restart(
                 neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
             elif model_choice == "xgboost":
                 neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
-            else:  # hybrid
+            else:
                 neighbor = generate_neighbor_ml(
                     current_solution,
                     edges,
@@ -340,10 +333,7 @@ def simulated_annealing_single_restart(
                     if i % (2 * ml_switch_interval) < ml_switch_interval
                     else xgboost_model,
                 )
-
             neighbor_score = evaluate_solution(neighbor, edges)
-
-            # Calculate acceptance probability
             delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
                 neighbor_score[1] - current_score[1]
             )
@@ -353,7 +343,6 @@ def simulated_annealing_single_restart(
                 current_solution = neighbor[:]
                 current_score = neighbor_score[:]
 
-        # Update best solution (from the batch)
         for neighbor_score in neighbor_scores:
             if dominates(neighbor_score, best_score):
                 best_solution = neighbor[:]
@@ -364,7 +353,6 @@ def simulated_annealing_single_restart(
 
         temperature *= cooling_rate
 
-        # Save intermediate solutions
         if (i + 1) % save_interval == 0:
             create_submission_file(
                 best_solution,
@@ -408,11 +396,10 @@ def simulated_annealing(
             ml_switch_interval,
             save_interval,
             operator_change_interval,
-            neighbor_batch_size,  # Pass the batch size
+            neighbor_batch_size,
         )
         for restart in range(num_restarts)
     )
-
     for result in results:
         solution, score = result
         pareto_front.append((solution, score))
@@ -431,7 +418,6 @@ def simulated_annealing(
                     break
         if not dominated:
             filtered_pareto_front.append(solution1)
-
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
     end_time = time.time()
     print(f"Total execution time: {end_time - start_time:.2f} seconds")
@@ -473,21 +459,19 @@ def update_operator_weights(
 
             if X[i] != X[i - 1]:
                 if X[i][-1] != X[i - 1][-1]:
-                    operator_index = "torso_shift"
+                    operator_index = 2
                 elif is_shuffled(X[i], X[i - 1]):
-                    operator_index = "shuffle"
+                    operator_index = 1
                 elif is_2opt(X[i], X[i - 1]):
-                    operator_index = "2opt"
+                    operator_index = 3
                 else:
-                    operator_index = "swap"
+                    operator_index = 0
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index][
-                    "total_improvement"
-                ] += improvement
+                operator_improvements[operator_index]["total_improvement"] += improvement
 
-    for i, op_name in enumerate(["swap", "shuffle", "torso_shift", "2opt"]):
-        op_data = operator_improvements[op_name]
+    for i in range(4):
+        op_data = operator_improvements[i]
         if op_data["count"] > 0:
             operator_weights[i] = op_data["total_improvement"] / op_data["count"]
         else:
@@ -525,23 +509,20 @@ if __name__ == "__main__":
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
-
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        max_iterations=20000,  # Increased iterations for better exploration
-        num_restarts=50,  # Increased restarts for better exploration
-        save_interval=500,  # Save less frequently to reduce I/O
-        operator_change_interval=50,  # Change operators more frequently
-        initial_exploration_iterations=200,  # Increased iterations for initial exploration
-        ml_switch_interval=100,  # Adjusted interval for switching
-        n_jobs=-1,  # Use all available cores for parallel processing
-        neighbor_batch_size=50,  # Evaluate 50 neighbors in parallel
+        max_iterations=20000,
+        num_restarts=50,
+        save_interval=500,
+        operator_change_interval=50,
+        initial_exploration_iterations=200,
+        ml_switch_interval=100,
+        n_jobs=-1,
+        neighbor_batch_size=50,
     )
-
     for i, solution in enumerate(pareto_front):
         create_submission_file(
             solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
         )
-
     print(f"All submission files created successfully!")
