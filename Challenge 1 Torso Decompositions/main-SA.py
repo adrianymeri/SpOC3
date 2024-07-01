@@ -25,8 +25,8 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Combines torso size and width into a single score for optimization."""
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
-
+    # Use np.sum to aggregate over multiple outputs
+    return np.sum(size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1])
 
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
@@ -228,6 +228,7 @@ def choose_neighbor_generation_method(
         return random.choices(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
+
 
 def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
