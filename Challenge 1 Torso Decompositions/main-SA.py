@@ -244,8 +244,6 @@ def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
     problem_id: str,
-    X: List[List[int]],
-    y: List[List[float]],
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
@@ -275,6 +273,9 @@ def simulated_annealing_single_restart(
 
     # Operator weights for exploitation phase
     operator_weights = [1.0, 1.0, 1.0, 1.0]  # Initial weights are equal
+
+    X = []
+    y = []
 
     for i in range(max_iterations):
         # Choose neighbor generation method (exploration vs. exploitation)
@@ -396,16 +397,11 @@ def simulated_annealing(
     pareto_front = []
     start_time = time.time()
 
-    X = []
-    y = []
-
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
             edges,
             restart,
             problem_id,
-            X,  # Pass X and y as arguments
-            y,
             max_iterations,
             initial_temperature,
             cooling_rate,
@@ -549,8 +545,6 @@ if __name__ == "__main__":
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        X=X,
-        y=y,
         max_iterations=20000,  # Increased iterations for better exploration
         num_restarts=50,  # Increased restarts for better exploration
         save_interval=500,  # Save less frequently to reduce I/O
