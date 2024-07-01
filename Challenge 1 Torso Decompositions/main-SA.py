@@ -80,6 +80,7 @@ def evaluate_solution(
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
 
+
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
 ) -> List[int]:
@@ -127,7 +128,7 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     neighbor = decision_vector.copy()
     n = len(neighbor) - 1
     t = neighbor[-1]
-    i = random.randint(t, max(t, n - 3)) 
+    i = random.randint(t, max(t, n - 3))
     j = random.randint(i + 2, n - 1)
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
@@ -205,8 +206,7 @@ def generate_neighbor_ml(
 
     # Calculate the score for each prediction
     scores = [
-        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1))
-        for pred in predictions
+        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1)) for pred in predictions
     ]
 
     # Get the index of the best neighbor
@@ -231,6 +231,15 @@ def choose_neighbor_generation_method(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
 
+def evaluate_neighbors_parallel(
+    neighbors: List[List[int]], edges: List[List[int]]
+) -> List[List[float]]:
+    """Evaluates a list of neighbor solutions in parallel."""
+    results = Parallel(n_jobs=-1)(
+        delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
+    )
+    return results
+
 
 def simulated_annealing_single_restart(
     edges: List[List[int]],
@@ -243,6 +252,7 @@ def simulated_annealing_single_restart(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
+    neighbor_batch_size: int = 10,  # Evaluate neighbors in batches
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -284,28 +294,37 @@ def simulated_annealing_single_restart(
                 X, y, operator_weights, initial_exploration_iterations, ml_switch_interval
             )
 
-        if neighbor_generation_method == "swap":
-            neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
-            initial_perturbation_rate *= perturbation_rate_decay
-        elif neighbor_generation_method == "shuffle":
-            neighbor = generate_neighbor_shuffle(current_solution)
-        elif neighbor_generation_method == "torso_shift":
-            neighbor = generate_neighbor_torso_shift(current_solution)
-        elif neighbor_generation_method == "2opt":
-            neighbor = generate_neighbor_2opt(current_solution)
+        neighbors = []
+        for _ in range(neighbor_batch_size):  # Generate a batch of neighbors
+            if neighbor_generation_method == "swap":
+                neighbor = generate_neighbor_swap(
+                    current_solution, initial_perturbation_rate
+                )
+                initial_perturbation_rate *= perturbation_rate_decay
+            elif neighbor_generation_method == "shuffle":
+                neighbor = generate_neighbor_shuffle(current_solution)
+            elif neighbor_generation_method == "torso_shift":
+                neighbor = generate_neighbor_torso_shift(current_solution)
+            elif neighbor_generation_method == "2opt":
+                neighbor = generate_neighbor_2opt(current_solution)
+            neighbors.append(neighbor)
+        
+        # Evaluate the batch of neighbors in parallel
+        neighbor_scores = evaluate_neighbors_parallel(neighbors, edges)
 
-        neighbor_score = evaluate_solution(neighbor, edges)
-
-        # Collect data for ML training (even if not using ML in this iteration)
-        X.append(neighbor)
-        y.append(neighbor_score)
+        #  Collect data for ML training
+        X.extend(neighbors)
+        y.extend(neighbor_scores)
 
         # Phase 2: Alternate between basic operators and ML models
         if i >= initial_exploration_iterations and i % ml_switch_interval == 0:
             # Train/retrain models
             if lgbm_model is None or i % (2 * ml_switch_interval) == 0:
                 lgbm_model = train_model(np.array(X), np.array(y), "lgbm")
-            if xgboost_model is None or i % (2 * ml_switch_interval) == ml_switch_interval:
+            if (
+                xgboost_model is None
+                or i % (2 * ml_switch_interval) == ml_switch_interval
+            ):
                 xgboost_model = train_model(np.array(X), np.array(y), "xgboost")
 
             # Choose ML model (LGBM, XGBoost, or hybrid)
@@ -320,38 +339,45 @@ def simulated_annealing_single_restart(
                 neighbor = generate_neighbor_ml(
                     current_solution,
                     edges,
-                    lgbm_model if i % (2 * ml_switch_interval) < ml_switch_interval else xgboost_model,
+                    lgbm_model
+                    if i % (2 * ml_switch_interval) < ml_switch_interval
+                    else xgboost_model,
                 )
 
             neighbor_score = evaluate_solution(neighbor, edges)
 
-        # Calculate acceptance probability
-        delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
-            neighbor_score[1] - current_score[1]
-        )
-        acceptance_probability = np.exp(min(0, delta_score) / temperature)
-
-        if delta_score < 0 or random.random() < acceptance_probability:
-            current_solution = neighbor[:]
-            current_score = neighbor_score[:]
-
-        # Update best solution
-        if dominates(current_score, best_score):
-            best_solution = current_solution[:]
-            best_score = current_score[:]
-            print(
-                f"Restart {restart+1} - Iteration {i+1}: New best solution found - Score: {best_score}"
+            # Calculate acceptance probability
+            delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
+                neighbor_score[1] - current_score[1]
             )
+            acceptance_probability = np.exp(min(0, delta_score) / temperature)
+
+            if delta_score < 0 or random.random() < acceptance_probability:
+                current_solution = neighbor[:]
+                current_score = neighbor_score[:]
+
+        # Update best solution (from the batch)
+        for neighbor_score in neighbor_scores:
+            if dominates(neighbor_score, best_score):
+                best_solution = neighbor[:]  
+                best_score = neighbor_score[:]
+                print(
+                    f"Restart {restart+1} - Iteration {i+1}: New best solution found - Score: {best_score}"
+                )
 
         temperature *= cooling_rate
 
         # Save intermediate solutions
         if (i + 1) % save_interval == 0:
             create_submission_file(
-                best_solution, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json"
+                best_solution,
+                problem_id,
+                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
             )
 
-    print(f"Restart {restart+1} completed. Best solution: {best_solution}, Score: {best_score}")
+    print(
+        f"Restart {restart+1} completed. Best solution: {best_solution}, Score: {best_score}"
+    )
     return best_solution, best_score
 
 
@@ -367,6 +393,7 @@ def simulated_annealing(
     save_interval: int = 50,
     operator_change_interval: int = 100,
     n_jobs: int = -1,
+    neighbor_batch_size: int = 10,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     pareto_front = []
@@ -384,6 +411,7 @@ def simulated_annealing(
             ml_switch_interval,
             save_interval,
             operator_change_interval,
+            neighbor_batch_size,  # Pass the batch size
         )
         for restart in range(num_restarts)
     )
@@ -457,14 +485,16 @@ def update_operator_weights(
                     operator_index = "swap"
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index]["total_improvement"] += improvement
+                operator_improvements[operator_index][
+                    "total_improvement"
+                ] += improvement
 
     for i, op_name in enumerate(["swap", "shuffle", "torso_shift", "2opt"]):
         op_data = operator_improvements[op_name]
         if op_data["count"] > 0:
             operator_weights[i] = op_data["total_improvement"] / op_data["count"]
         else:
-            operator_weights[i] = 1.0 
+            operator_weights[i] = 1.0  
 
     total_weight = sum(operator_weights)
     operator_weights = [w / total_weight for w in operator_weights]
@@ -486,11 +516,15 @@ def is_2opt(list1: List[int], list2: List[int]) -> bool:
 if __name__ == "__main__":
     random.seed(42)
 
-    chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+    chosen_problem = (
+        input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+    )
 
     while chosen_problem not in problems:
         print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
-        chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+        chosen_problem = (
+            input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+        )
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
@@ -505,9 +539,12 @@ if __name__ == "__main__":
         initial_exploration_iterations=100,  # Increased iterations for initial exploration
         ml_switch_interval=50,  # Adjusted interval for switching
         n_jobs=-1,  # Use all available cores for parallel processing
+        neighbor_batch_size=20, # Evaluate 20 neighbors in parallel 
     )
 
     for i, solution in enumerate(pareto_front):
-        create_submission_file(solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json")
+        create_submission_file(
+            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
+        )
 
     print(f"All submission files created successfully!")
