@@ -269,6 +269,7 @@ def simulated_annealing_single_restart(
     perturbation_rate_decay = 0.99
 
     # Data collection for ML models
+    global X, y  # Declare X and y as global variables
     X = []
     y = []
 
