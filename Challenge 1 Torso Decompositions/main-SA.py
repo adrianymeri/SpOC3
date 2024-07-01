@@ -28,6 +28,7 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     # Use np.sum to aggregate over multiple outputs
     return np.sum(size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1])
 
+
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
@@ -140,7 +141,6 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-
 def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     best_model = None
@@ -229,7 +229,6 @@ def choose_neighbor_generation_method(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
 
-
 def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
@@ -238,7 +237,6 @@ def evaluate_neighbors_parallel(
         delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
     )
     return results
-
 
 def simulated_annealing_single_restart(
     edges: List[List[int]],
