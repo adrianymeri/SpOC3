@@ -11,6 +11,7 @@ from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 from joblib import Parallel, delayed
+from collections import defaultdict
 
 # Define the problem instances
 problems = {
@@ -41,7 +42,6 @@ def load_graph(problem_id: str) -> List[List[int]]:
     print(f"Loaded graph with {len(edges)} edges.")
     return edges
 
-
 def calculate_torso_size(decision_vector: List[int]) -> int:
     """Calculates the size of the torso for the given decision vector."""
     n = len(decision_vector) - 1
@@ -55,28 +55,18 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
     t = decision_vector[-1]
     permutation = decision_vector[:-1]
 
+    # Create adjacency list
     adj_list = [[] for _ in range(n)]
     for u, v in edges:
         adj_list[u].append(v)
         adj_list[v].append(u)
 
-    oriented_edges = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            if permutation[i] in adj_list[permutation[j]]:
-                oriented_edges.append((permutation[i], permutation[j]))
-
+    # Calculate outdegrees for nodes in the torso
     outdegrees = [0 for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if (permutation[i], permutation[j]) in oriented_edges:
-                for k in range(j + 1, n):
-                    if (
-                        (permutation[i], permutation[k]) in oriented_edges
-                        and (permutation[j], permutation[k]) not in oriented_edges
-                    ):
-                        if permutation[j] >= t and permutation[k] >= t:
-                            outdegrees[permutation[j]] += 1
+    for i in range(t, n):
+        for j in adj_list[permutation[i]]:
+            if j in permutation[t:] and permutation.index(j) > i:
+                outdegrees[i] += 1
 
     return max(outdegrees)
 
@@ -89,15 +79,17 @@ def evaluate_solution(
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
 
-
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
 ) -> List[int]:
-    """Generates a neighbor solution by swapping two random elements."""
+    """Generates a neighbor solution by swapping two random elements within the torso."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    num_perturbations = max(1, int(perturbation_rate * n))
-    swap_indices = random.sample(range(n), num_perturbations * 2)
+    t = neighbor[-1]
+    num_perturbations = max(1, int(perturbation_rate * (n - t)))
+    
+    # Only swap elements within the torso
+    swap_indices = random.sample(range(t, n), num_perturbations * 2) 
     for i in range(0, len(swap_indices), 2):
         neighbor[swap_indices[i]], neighbor[swap_indices[i + 1]] = (
             neighbor[swap_indices[i + 1]],
@@ -107,34 +99,35 @@ def generate_neighbor_swap(
 
 
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
-    """Generates a neighbor solution by shuffling a portion of the decision vector."""
+    """Generates a neighbor solution by shuffling a portion of the decision vector within the torso."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    start = random.randint(0, n - 2)
+    t = neighbor[-1]
+    start = random.randint(t, max(t, n - 2))  # Ensure start is within or at the beginning of the torso
     end = random.randint(start + 1, n)
     random.shuffle(neighbor[start:end])
     return neighbor
 
 
-def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
-    """Generates a neighbor by shifting the torso position."""
+def generate_neighbor_torso_shift(decision_vector: List[int], max_shift: int = 5) -> List[int]:
+    """Generates a neighbor by shifting the torso position within a limited range."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
     t = neighbor[-1]
-    new_t = random.randint(0, n - 1)
+    new_t = random.randint(max(0, t - max_shift), min(n - 1, t + max_shift))
     neighbor[-1] = new_t
     return neighbor
 
 
 def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
-    """Generates a neighbor solution using 2-opt."""
+    """Generates a neighbor solution using 2-opt within the torso."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    i = random.randint(0, n - 3)
+    t = neighbor[-1]
+    i = random.randint(t, max(t, n - 3))  # Ensure i is within or at the beginning of the torso
     j = random.randint(i + 2, n - 1)
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
-
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
@@ -246,6 +239,7 @@ def simulated_annealing_single_restart(
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
+    # Start with a random valid solution
     current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
     current_score = evaluate_solution(current_solution, edges)
 
@@ -489,12 +483,12 @@ if __name__ == "__main__":
         edges,
         chosen_problem,
         max_iterations=10000,  # Increased iterations for better exploration
-        num_restarts=20,      # Increased restarts for better exploration
-        save_interval=250,      # Save less frequently to reduce I/O
+        num_restarts=20,     # Increased restarts for better exploration
+        save_interval=250,     # Save less frequently to reduce I/O
         operator_change_interval=50,  # Change operators more frequently
         initial_exploration_iterations=100,  # Increased iterations for initial exploration
-        ml_switch_interval=50,      # Adjusted interval for switching
-        n_jobs=-1,            # Use all available cores for parallel processing
+        ml_switch_interval=50,     # Adjusted interval for switching
+        n_jobs=-1,          # Use all available cores for parallel processing
     )
 
     for i, solution in enumerate(pareto_front):
