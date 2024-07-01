@@ -244,6 +244,8 @@ def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
     problem_id: str,
+    X: List[List[int]],
+    y: List[List[float]],
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
@@ -267,11 +269,6 @@ def simulated_annealing_single_restart(
 
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
-
-    # Data collection for ML models
-    global X, y  # Declare X and y as global variables
-    X = []
-    y = []
 
     lgbm_model = None
     xgboost_model = None
@@ -399,11 +396,16 @@ def simulated_annealing(
     pareto_front = []
     start_time = time.time()
 
+    X = []
+    y = []
+
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
             edges,
             restart,
             problem_id,
+            X,  # Pass X and y as arguments
+            y,
             max_iterations,
             initial_temperature,
             cooling_rate,
@@ -521,7 +523,9 @@ if __name__ == "__main__":
     )
 
     while chosen_problem not in problems:
-        print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
+        print(
+            "Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'."
+        )
         chosen_problem = (
             input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
         )
@@ -536,12 +540,17 @@ if __name__ == "__main__":
         [i for i in range(n_easy)] + [random.randint(0, n_easy - 1)]
         for _ in range(100)
     ]  # Generate some initial solutions for 'easy.gr'
+
+    X = []
+    y = []
     X.extend(initial_solutions_easy)
     y.extend(evaluate_neighbors_parallel(initial_solutions_easy, easy_edges))
 
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
+        X=X,
+        y=y,
         max_iterations=20000,  # Increased iterations for better exploration
         num_restarts=50,  # Increased restarts for better exploration
         save_interval=500,  # Save less frequently to reduce I/O
