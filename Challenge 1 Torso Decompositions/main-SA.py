@@ -268,14 +268,15 @@ def simulated_annealing_single_restart(
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
 
+    # Data collection for ML models
+    X = []
+    y = []
+
     lgbm_model = None
     xgboost_model = None
 
     # Operator weights for exploitation phase
     operator_weights = [1.0, 1.0, 1.0, 1.0]  # Initial weights are equal
-
-    X = []
-    y = []
 
     for i in range(max_iterations):
         # Choose neighbor generation method (exploration vs. exploitation)
@@ -519,9 +520,7 @@ if __name__ == "__main__":
     )
 
     while chosen_problem not in problems:
-        print(
-            "Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'."
-        )
+        print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
         chosen_problem = (
             input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
         )
@@ -536,9 +535,6 @@ if __name__ == "__main__":
         [i for i in range(n_easy)] + [random.randint(0, n_easy - 1)]
         for _ in range(100)
     ]  # Generate some initial solutions for 'easy.gr'
-
-    X = []
-    y = []
     X.extend(initial_solutions_easy)
     y.extend(evaluate_neighbors_parallel(initial_solutions_easy, easy_edges))
 
