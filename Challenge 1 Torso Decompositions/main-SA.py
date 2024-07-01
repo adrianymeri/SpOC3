@@ -229,6 +229,7 @@ def choose_neighbor_generation_method(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
 
+
 def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
@@ -526,6 +527,16 @@ if __name__ == "__main__":
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
+
+    # Load the data for 'easy.gr' and add it to the training data (X and y)
+    easy_edges = load_graph("easy")
+    n_easy = max(node for edge in easy_edges for node in edge) + 1
+    initial_solutions_easy = [
+        [i for i in range(n_easy)] + [random.randint(0, n_easy - 1)]
+        for _ in range(100)
+    ]  # Generate some initial solutions for 'easy.gr'
+    X.extend(initial_solutions_easy)
+    y.extend(evaluate_neighbors_parallel(initial_solutions_easy, easy_edges))
 
     pareto_front = simulated_annealing(
         edges,
