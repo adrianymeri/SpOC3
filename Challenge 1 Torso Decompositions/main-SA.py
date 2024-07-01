@@ -56,7 +56,7 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
     t = decision_vector[-1]
     permutation = decision_vector[:-1]
 
-    # Create adjacency list
+    # Create adjacency list (outside the loop for efficiency)
     adj_list = [[] for _ in range(n)]
     for u, v in edges:
         adj_list[u].append(v)
@@ -80,34 +80,31 @@ def evaluate_solution(
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
 
-
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
 ) -> List[int]:
     """Generates a neighbor solution by swapping two random elements within the torso."""
-    neighbor = decision_vector[:]
-    n = len(neighbor) - 1
-    t = neighbor[-1]
+    n = len(decision_vector) - 1
+    t = decision_vector[-1]
     num_perturbations = max(1, int(perturbation_rate * (n - t)))
 
+    # Create a copy only once
+    neighbor = decision_vector.copy()
+
     # Only swap elements within the torso
-    swap_indices = random.sample(range(t, n), num_perturbations * 2)
-    for i in range(0, len(swap_indices), 2):
-        neighbor[swap_indices[i]], neighbor[swap_indices[i + 1]] = (
-            neighbor[swap_indices[i + 1]],
-            neighbor[swap_indices[i]],
-        )
+    for _ in range(num_perturbations):
+        i = random.randint(t, n - 1)
+        j = random.randint(t, n - 1)
+        neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
     return neighbor
 
 
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector within the torso."""
-    neighbor = decision_vector[:]
+    neighbor = decision_vector.copy()
     n = len(neighbor) - 1
     t = neighbor[-1]
-    start = random.randint(
-        t, max(t, n - 2)
-    )  # Ensure start is within or at the beginning of the torso
+    start = random.randint(t, max(t, n - 2))
     end = random.randint(start + 1, n)
     random.shuffle(neighbor[start:end])
     return neighbor
@@ -117,7 +114,7 @@ def generate_neighbor_torso_shift(
     decision_vector: List[int], max_shift: int = 5
 ) -> List[int]:
     """Generates a neighbor by shifting the torso position within a limited range."""
-    neighbor = decision_vector[:]
+    neighbor = decision_vector.copy()
     n = len(neighbor) - 1
     t = neighbor[-1]
     new_t = random.randint(max(0, t - max_shift), min(n - 1, t + max_shift))
@@ -127,12 +124,10 @@ def generate_neighbor_torso_shift(
 
 def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution using 2-opt within the torso."""
-    neighbor = decision_vector[:]
+    neighbor = decision_vector.copy()
     n = len(neighbor) - 1
     t = neighbor[-1]
-    i = random.randint(
-        t, max(t, n - 3)
-    )  # Ensure i is within or at the beginning of the torso
+    i = random.randint(t, max(t, n - 3)) 
     j = random.randint(i + 2, n - 1)
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
@@ -174,13 +169,9 @@ def train_model(
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,  # Increased iterations for better exploration
-        scoring=make_scorer(
-            torso_scorer, greater_is_better=False
-        ),  # Use custom scorer
-        cv=KFold(
-            n_splits=5, shuffle=True, random_state=42
-        ),  # Increased folds
+        n_iter=10,
+        scoring=make_scorer(torso_scorer, greater_is_better=False),
+        cv=KFold(n_splits=5, shuffle=True, random_state=42),
         random_state=42,
         n_jobs=-1,
     )
@@ -200,8 +191,6 @@ def generate_neighbor_ml(
     num_neighbors: int = 100,
 ) -> List[int]:
     """Generates neighbors using ML models for prediction and selects the best."""
-    n = len(decision_vector) - 1
-
     neighbors = []
     for _ in range(num_neighbors // 5):
         neighbors.append(generate_neighbor_swap(decision_vector.copy(), 0.1))
@@ -289,23 +278,14 @@ def simulated_annealing_single_restart(
             f"Restart {restart+1} - Iteration {i+1}: Using {neighbor_generation_method} operator."
         )
 
-        if (
-            i >= initial_exploration_iterations
-            and i % operator_change_interval == 0
-        ):
+        if i >= initial_exploration_iterations and i % operator_change_interval == 0:
             # Update operator weights based on their performance
             operator_weights = update_operator_weights(
-                X,
-                y,
-                operator_weights,
-                initial_exploration_iterations,
-                ml_switch_interval,
+                X, y, operator_weights, initial_exploration_iterations, ml_switch_interval
             )
 
         if neighbor_generation_method == "swap":
-            neighbor = generate_neighbor_swap(
-                current_solution, initial_perturbation_rate
-            )
+            neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
             initial_perturbation_rate *= perturbation_rate_decay
         elif neighbor_generation_method == "shuffle":
             neighbor = generate_neighbor_shuffle(current_solution)
@@ -325,33 +305,22 @@ def simulated_annealing_single_restart(
             # Train/retrain models
             if lgbm_model is None or i % (2 * ml_switch_interval) == 0:
                 lgbm_model = train_model(np.array(X), np.array(y), "lgbm")
-            if (
-                xgboost_model is None
-                or i % (2 * ml_switch_interval) == ml_switch_interval
-            ):
+            if xgboost_model is None or i % (2 * ml_switch_interval) == ml_switch_interval:
                 xgboost_model = train_model(np.array(X), np.array(y), "xgboost")
 
             # Choose ML model (LGBM, XGBoost, or hybrid)
             model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
-            print(
-                f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model."
-            )
+            print(f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model.")
 
             if model_choice == "lgbm":
-                neighbor = generate_neighbor_ml(
-                    current_solution, edges, lgbm_model
-                )
+                neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
             elif model_choice == "xgboost":
-                neighbor = generate_neighbor_ml(
-                    current_solution, edges, xgboost_model
-                )
+                neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
             else:  # hybrid
                 neighbor = generate_neighbor_ml(
                     current_solution,
                     edges,
-                    lgbm_model
-                    if i % (2 * ml_switch_interval) < ml_switch_interval
-                    else xgboost_model,
+                    lgbm_model if i % (2 * ml_switch_interval) < ml_switch_interval else xgboost_model,
                 )
 
             neighbor_score = evaluate_solution(neighbor, edges)
@@ -379,14 +348,10 @@ def simulated_annealing_single_restart(
         # Save intermediate solutions
         if (i + 1) % save_interval == 0:
             create_submission_file(
-                best_solution,
-                problem_id,
-                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
+                best_solution, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json"
             )
 
-    print(
-        f"Restart {restart+1} completed. Best solution: {best_solution}, Score: {best_score}"
-    )
+    print(f"Restart {restart+1} completed. Best solution: {best_solution}, Score: {best_score}")
     return best_solution, best_score
 
 
@@ -404,7 +369,6 @@ def simulated_annealing(
     n_jobs: int = -1,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
-    n = max(node for edge in edges for node in edge) + 1
     pareto_front = []
     start_time = time.time()
 
@@ -473,39 +437,35 @@ def update_operator_weights(
     ml_switch_interval: int,
 ) -> List[float]:
     """Updates the operator weights based on their past performance."""
-    # Calculate the improvement made by each operator
     operator_improvements = defaultdict(lambda: {"count": 0, "total_improvement": 0})
     for i in range(initial_exploration_iterations, len(X) - 1):
-        if i % ml_switch_interval != 0:  # Only consider iterations where basic operators were used
+        if i % ml_switch_interval != 0:
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
                 previous_score[1] - current_score[1]
             )
 
-            # Determine which operator was used
-            if X[i] != X[i - 1]:  # Operator was applied
+            if X[i] != X[i - 1]:
                 if X[i][-1] != X[i - 1][-1]:
-                    operator_index = "torso_shift" 
+                    operator_index = "torso_shift"
                 elif is_shuffled(X[i], X[i - 1]):
-                    operator_index = "shuffle" 
+                    operator_index = "shuffle"
                 elif is_2opt(X[i], X[i - 1]):
-                    operator_index = "2-opt"
+                    operator_index = "2opt"
                 else:
-                    operator_index = "swap" 
+                    operator_index = "swap"
 
                 operator_improvements[operator_index]["count"] += 1
                 operator_improvements[operator_index]["total_improvement"] += improvement
 
-    # Calculate average improvements and update weights
-    for i, op_name in enumerate(["swap", "shuffle", "torso_shift", "2-opt"]):
+    for i, op_name in enumerate(["swap", "shuffle", "torso_shift", "2opt"]):
         op_data = operator_improvements[op_name]
         if op_data["count"] > 0:
             operator_weights[i] = op_data["total_improvement"] / op_data["count"]
         else:
-            operator_weights[i] = 1.0  # Default weight if not used
+            operator_weights[i] = 1.0 
 
-    # Normalize weights
     total_weight = sum(operator_weights)
     operator_weights = [w / total_weight for w in operator_weights]
 
@@ -526,19 +486,11 @@ def is_2opt(list1: List[int], list2: List[int]) -> bool:
 if __name__ == "__main__":
     random.seed(42)
 
-    chosen_problem = (
-        input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
-    )
+    chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
 
     while chosen_problem not in problems:
-        print(
-            "Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'."
-        )
-        chosen_problem = (
-            input("Choose problem difficulty (easy, medium, hard): ")
-            .lower()
-            .strip()
-        )
+        print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
+        chosen_problem = input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
@@ -556,8 +508,6 @@ if __name__ == "__main__":
     )
 
     for i, solution in enumerate(pareto_front):
-        create_submission_file(
-            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
-        )
+        create_submission_file(solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json")
 
     print(f"All submission files created successfully!")
