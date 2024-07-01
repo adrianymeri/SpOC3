@@ -141,10 +141,7 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     )
 
 
-def train_model(
-    X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
-) -> MultiOutputRegressor:
-    """Trains an LGBM or XGBoost model with hyperparameter tuning."""
+def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     best_model = None
     best_score = float("inf")
@@ -154,8 +151,9 @@ def train_model(
         param_grid = {
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
-            "estimator__max_depth": [3, 5, 7],
-            "estimator__num_leaves": [15, 31, 63],
+            "estimator__max_depth": [3, 5, 7],  # Explicitly set max_depth
+            "estimator__num_leaves": [8, 16, 31], # Adjust based on max_depth
+            'estimator__min_data_in_leaf': [20, 30, 40] # Added to prevent overfitting
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=-1))
