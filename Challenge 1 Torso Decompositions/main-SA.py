@@ -152,8 +152,8 @@ def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> Multi
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [3, 5, 7],  # Explicitly set max_depth
-            "estimator__num_leaves": [8, 16, 31], # Adjust based on max_depth
-            'estimator__min_data_in_leaf': [20, 30, 40] # Added to prevent overfitting
+            "estimator__num_leaves": [8, 16, 31],  # Adjust based on max_depth
+            'estimator__min_data_in_leaf': [20, 30, 40]  # Added to prevent overfitting
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=-1))
@@ -306,11 +306,11 @@ def simulated_annealing_single_restart(
             elif neighbor_generation_method == "2opt":
                 neighbor = generate_neighbor_2opt(current_solution)
             neighbors.append(neighbor)
-        
+
         # Evaluate the batch of neighbors in parallel
         neighbor_scores = evaluate_neighbors_parallel(neighbors, edges)
 
-        #  Collect data for ML training
+        # Collect data for ML training
         X.extend(neighbors)
         y.extend(neighbor_scores)
 
@@ -357,7 +357,7 @@ def simulated_annealing_single_restart(
         # Update best solution (from the batch)
         for neighbor_score in neighbor_scores:
             if dominates(neighbor_score, best_score):
-                best_solution = neighbor[:]  
+                best_solution = neighbor[:]
                 best_score = neighbor_score[:]
                 print(
                     f"Restart {restart+1} - Iteration {i+1}: New best solution found - Score: {best_score}"
@@ -492,7 +492,7 @@ def update_operator_weights(
         if op_data["count"] > 0:
             operator_weights[i] = op_data["total_improvement"] / op_data["count"]
         else:
-            operator_weights[i] = 1.0  
+            operator_weights[i] = 1.0
 
     total_weight = sum(operator_weights)
     operator_weights = [w / total_weight for w in operator_weights]
@@ -530,14 +530,14 @@ if __name__ == "__main__":
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        max_iterations=10000,  # Increased iterations for better exploration
-        num_restarts=20,  # Increased restarts for better exploration
-        save_interval=250,  # Save less frequently to reduce I/O
+        max_iterations=20000,  # Increased iterations for better exploration
+        num_restarts=50,  # Increased restarts for better exploration
+        save_interval=500,  # Save less frequently to reduce I/O
         operator_change_interval=50,  # Change operators more frequently
-        initial_exploration_iterations=100,  # Increased iterations for initial exploration
-        ml_switch_interval=50,  # Adjusted interval for switching
+        initial_exploration_iterations=200,  # Increased iterations for initial exploration
+        ml_switch_interval=100,  # Adjusted interval for switching
         n_jobs=-1,  # Use all available cores for parallel processing
-        neighbor_batch_size=20, # Evaluate 20 neighbors in parallel 
+        neighbor_batch_size=50,  # Evaluate 50 neighbors in parallel
     )
 
     for i, solution in enumerate(pareto_front):
