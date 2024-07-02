@@ -25,7 +25,7 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Combines torso size and width into a single score for optimization."""
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    return size_weight * y_pred[0] + width_weight * y_pred[1]
+    return (size_weight * y_pred[0] + width_weight * y_pred[1]).item()
 
 
 def load_graph(problem_id: str) -> List[List[int]]:
