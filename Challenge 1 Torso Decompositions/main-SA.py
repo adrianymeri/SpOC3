@@ -28,6 +28,7 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     width_weight = -0.5  # Penalize width but less than size
     return (size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]).mean()
 
+
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
@@ -256,7 +257,6 @@ def evaluate_neighbors_parallel(
     )
     return results
 
-
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
@@ -295,12 +295,14 @@ def simulated_annealing_single_restart(
     operator_weights = [1.0, 1.0, 1.0, 1.0]
 
     for i in range(max_iterations):
+        if i % 1000 == 0:
+            print(f"Restart {restart + 1}, Iteration {i+1}...")
         neighbor_generation_method = choose_neighbor_generation_method(
             i, initial_exploration_iterations, ml_switch_interval, operator_weights
         )
-        print(
-            f"Restart {restart+1} - Iteration {i+1}: Using {neighbor_generation_method} operator."
-        )
+        #print(
+        #    f"Restart {restart+1} - Iteration {i+1}: Using {neighbor_generation_method} operator."
+        #)
 
         if (
             i >= initial_exploration_iterations
@@ -350,9 +352,9 @@ def simulated_annealing_single_restart(
                 xgboost_model = train_model(X_np, y_np, "xgboost")
 
             model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
-            print(
-                f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model."
-            )
+            #print(
+            #    f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model."
+            #)
 
             if model_choice == "lgbm":
                 neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
@@ -412,7 +414,7 @@ def simulated_annealing(
     ml_switch_interval: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    n_jobs: int = -1,
+    n_jobs: int = -1, #modified from -1 to 1 to avoid errors
     neighbor_batch_size: int = 10,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
@@ -555,14 +557,14 @@ if __name__ == "__main__":
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        max_iterations=20000,
-        num_restarts=50,
+        max_iterations=2000,
+        num_restarts=5,
         save_interval=500,
         operator_change_interval=50,
         initial_exploration_iterations=200,
         ml_switch_interval=100,
-        n_jobs=-1,
-        neighbor_batch_size=50,
+        n_jobs=1, #modified from -1 to 1 to avoid errors
+        neighbor_batch_size=10,
     )
     for i, solution in enumerate(pareto_front):
         create_submission_file(
