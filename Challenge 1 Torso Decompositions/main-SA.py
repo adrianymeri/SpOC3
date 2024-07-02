@@ -15,6 +15,7 @@ from xgboost import XGBRegressor
 
 # Define the problem instances
 problems = {
+    "supereasy": "data/supereasy.gr",  # Add your local path here
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
@@ -32,13 +33,22 @@ def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
     print(f"Loading graph data from: {url}")
-    with urllib.request.urlopen(url) as f:
-        edges = []
-        for line in f:
-            if line.startswith(b"#"):
-                continue
-            u, v = map(int, line.strip().split())
-            edges.append([u, v])
+    if url.startswith("http"):  # Load from URL
+        with urllib.request.urlopen(url) as f:
+            edges = []
+            for line in f:
+                if line.startswith(b"#"):
+                    continue
+                u, v = map(int, line.strip().split())
+                edges.append([u, v])
+    else:  # Load from local file
+        with open(url, "r") as f:
+            edges = []
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                u, v = map(int, line.strip().split())
+                edges.append([u, v])
     print(f"Loaded graph with {len(edges)} edges.")
     return edges
 
@@ -138,7 +148,10 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> MultiOutputRegressor:
+
+def train_model(
+    X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
+) -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     best_model = None
     best_score = float("inf")
@@ -150,8 +163,16 @@ def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> Multi
             "estimator__n_estimators": [100, 200, 300],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [3, 5, 7],  # Explicitly set max_depth
-            "estimator__num_leaves": [8, 16, 31],  # Adjust based on max_depth
-            'estimator__min_data_in_leaf': [20, 30, 40]  # Added to prevent overfitting
+            "estimator__num_leaves": [
+                8,
+                16,
+                31,
+            ],  # Adjust based on max_depth
+            "estimator__min_data_in_leaf": [
+                20,
+                30,
+                40,
+            ],  # Added to prevent overfitting
         }
     else:  # XGBoost
         model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=-1))
@@ -162,7 +183,7 @@ def train_model(X: np.ndarray, y: np.ndarray, model_type: str = "lgbm") -> Multi
             "estimator__subsample": [0.8, 0.9, 1.0],
             "estimator__colsample_bytree": [0.8, 0.9, 1.0],
         }
-    
+
     # Use k-fold cross-validation for more robust model selection
     kfold = KFold(n_splits=5, shuffle=True, random_state=42)
     random_search = RandomizedSearchCV(
@@ -227,6 +248,7 @@ def choose_neighbor_generation_method(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
 
+
 def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
@@ -235,6 +257,7 @@ def evaluate_neighbors_parallel(
         delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
     )
     return results
+
 
 def simulated_annealing_single_restart(
     edges: List[List[int]],
@@ -281,9 +304,16 @@ def simulated_annealing_single_restart(
             f"Restart {restart+1} - Iteration {i+1}: Using {neighbor_generation_method} operator."
         )
 
-        if i >= initial_exploration_iterations and i % operator_change_interval == 0:
+        if (
+            i >= initial_exploration_iterations
+            and i % operator_change_interval == 0
+        ):
             operator_weights = update_operator_weights(
-                X, y, operator_weights, initial_exploration_iterations, ml_switch_interval
+                X,
+                y,
+                operator_weights,
+                initial_exploration_iterations,
+                ml_switch_interval,
             )
 
         neighbors = []
@@ -312,19 +342,26 @@ def simulated_annealing_single_restart(
                 X_np = np.array(X)
                 y_np = np.array(y)
                 lgbm_model = train_model(X_np, y_np, "lgbm")
-            if xgboost_model is None or i % (2 * ml_switch_interval) == ml_switch_interval:
+            if (
+                xgboost_model is None
+                or i % (2 * ml_switch_interval) == ml_switch_interval
+            ):
                 # Convert X and y to NumPy arrays before training
                 X_np = np.array(X)
                 y_np = np.array(y)
                 xgboost_model = train_model(X_np, y_np, "xgboost")
 
             model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
-            print(f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model.")
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: Using {model_choice} model."
+            )
 
             if model_choice == "lgbm":
                 neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
             elif model_choice == "xgboost":
-                neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
+                neighbor = generate_neighbor_ml(
+                    current_solution, edges, xgboost_model
+                )
             else:
                 neighbor = generate_neighbor_ml(
                     current_solution,
@@ -468,7 +505,9 @@ def update_operator_weights(
                     operator_index = 0
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index]["total_improvement"] += improvement
+                operator_improvements[operator_index][
+                    "total_improvement"
+                ] += improvement
 
     for i in range(4):
         op_data = operator_improvements[i]
@@ -498,13 +537,19 @@ if __name__ == "__main__":
     random.seed(42)
 
     chosen_problem = (
-        input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+        input("Choose problem difficulty (supereasy, easy, medium, hard): ")
+        .lower()
+        .strip()
     )
 
     while chosen_problem not in problems:
-        print("Invalid problem difficulty. Please choose from 'easy', 'medium', or 'hard'.")
+        print(
+            "Invalid problem difficulty. Please choose from 'supereasy', 'easy', 'medium', or 'hard'."
+        )
         chosen_problem = (
-            input("Choose problem difficulty (easy, medium, hard): ").lower().strip()
+            input("Choose problem difficulty (supereasy, easy, medium, hard): ")
+            .lower()
+            .strip()
         )
 
     print(f"Processing problem: {chosen_problem}")
@@ -523,6 +568,8 @@ if __name__ == "__main__":
     )
     for i, solution in enumerate(pareto_front):
         create_submission_file(
-            solution, chosen_problem, f"{chosen_problem}_final_solution_{i+1}.json"
+            solution,
+            chosen_problem,
+            f"{chosen_problem}_final_solution_{i+1}.json",
         )
     print(f"All submission files created successfully!")
