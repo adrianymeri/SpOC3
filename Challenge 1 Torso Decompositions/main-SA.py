@@ -26,8 +26,7 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Combines torso size and width into a single score for optimization."""
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    return (size_weight * y_pred[0] + width_weight * y_pred[1]).item()
-
+    return (size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]).mean()
 
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
@@ -155,8 +154,7 @@ def train_model(
     print(f"Training {model_type} model...")
     best_model = None
     best_score = float("inf")
-    # Reshape y for multioutput regression
-    y_reshaped = y.reshape(-1, 2)
+
     if model_type == "lgbm":
         model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=-1))
         param_grid = {
@@ -185,18 +183,18 @@ def train_model(
         }
 
     # Use k-fold cross-validation for more robust model selection
-    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    kfold = KFold(n_splits=3, shuffle=True, random_state=42)  # Reduced splits
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,  # Reduce iterations if needed
+        n_iter=5,  # Reduced iterations
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
         n_jobs=-1,
     )
     # Fit the model on the data
-    random_search.fit(X, y_reshaped)
+    random_search.fit(X, y)
     best_model = random_search.best_estimator_
     best_score = -random_search.best_score_
     print(f"Best {model_type} model: {best_model}")
@@ -374,7 +372,7 @@ def simulated_annealing_single_restart(
             delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
                 neighbor_score[1] - current_score[1]
             )
-            acceptance_probability = np.exp(min(0, delta_score) / temperature)
+            acceptance_probability = np.exp(-delta_score / temperature)
 
             if delta_score < 0 or random.random() < acceptance_probability:
                 current_solution = neighbor[:]
