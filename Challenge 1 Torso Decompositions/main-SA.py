@@ -13,6 +13,15 @@ from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 
+# Try to import fcmaes and set a flag accordingly
+try:
+    from fcmaes import cma
+
+    fcmaes_available = True
+except ImportError:
+    fcmaes_available = False
+    print("Warning: fcmaes library not found. To use fcmaes, please install it (e.g., 'pip install fcmaes').")
+
 # Define the problem instances
 problems = {
     "supereasy": "data/supereasy.gr",  # Add your local path here
@@ -84,7 +93,7 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
 
 
 def evaluate_solution(
-        decision_vector: List[int], edges: List[List[int]]
+    decision_vector: List[int], edges: List[List[int]]
 ) -> List[float]:
     """Evaluates the given solution and returns the torso size and width."""
     torso_size = calculate_torso_size(decision_vector)
@@ -93,7 +102,7 @@ def evaluate_solution(
 
 
 def generate_neighbor_swap(
-        decision_vector: List[int], perturbation_rate: float = 0.2
+    decision_vector: List[int], perturbation_rate: float = 0.2
 ) -> List[int]:
     """Generates a neighbor solution by swapping two random elements within the torso."""
     n = len(decision_vector) - 1
@@ -121,7 +130,7 @@ def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
 
 
 def generate_neighbor_torso_shift(
-        decision_vector: List[int], max_shift: int = 5
+    decision_vector: List[int], max_shift: int = 5
 ) -> List[int]:
     """Generates a neighbor by shifting the torso position within a limited range."""
     neighbor = decision_vector.copy()
@@ -138,9 +147,7 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     n = len(neighbor) - 1
     t = neighbor[-1]
 
-    i = random.randint(t, max(t, n - 3))  # Original logic for i
-
-    # Adjusted logic for j to avoid empty range:
+    i = random.randint(t, max(t, n - 3))
     j = random.randint(i + 1, n)
 
     neighbor[i:j] = neighbor[i:j][::-1]
@@ -155,7 +162,7 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
 
 
 def train_model(
-        X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
+    X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
 ) -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     if model_type == "lgbm":
@@ -196,10 +203,10 @@ def train_model(
 
 
 def generate_neighbor_ml(
-        decision_vector: List[int],
-        edges: List[List[int]],
-        model: MultiOutputRegressor,
-        num_neighbors: int = 100,
+    decision_vector: List[int],
+    edges: List[List[int]],
+    model: MultiOutputRegressor,
+    num_neighbors: int = 100,
 ) -> List[int]:
     """Generates neighbors using ML models for prediction and selects the best."""
     neighbors = []
@@ -212,16 +219,18 @@ def generate_neighbor_ml(
 
     neighbors_np = np.array(neighbors)
     predictions = model.predict(neighbors_np)
-    scores = [torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1)) for pred in predictions]
+    scores = [
+        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1)) for pred in predictions
+    ]
     best_neighbor_idx = np.argmin(scores)
     return neighbors[best_neighbor_idx]
 
 
 def choose_neighbor_generation_method(
-        current_iteration: int,
-        initial_exploration_iterations: int,
-        ml_switch_iteration: int,
-        operator_weights: List[float],
+    current_iteration: int,
+    initial_exploration_iterations: int,
+    ml_switch_iteration: int,
+    operator_weights: List[float],
 ) -> str:
     """Chooses the neighbor generation method based on exploration/exploitation strategy."""
     if current_iteration < initial_exploration_iterations:
@@ -229,11 +238,13 @@ def choose_neighbor_generation_method(
     elif current_iteration >= ml_switch_iteration:
         return "ml"
     else:
-        return random.choices(["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights)[0]
+        return random.choices(
+            ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
+        )[0]
 
 
 def evaluate_neighbors_parallel(
-        neighbors: List[List[int]], edges: List[List[int]]
+    neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
     """Evaluates a list of neighbor solutions in parallel."""
     results = Parallel(n_jobs=-1)(
@@ -242,23 +253,53 @@ def evaluate_neighbors_parallel(
     return results
 
 
+def objective_function(x, edges=None):
+    """Objective function for fcmaes, adapted for your problem."""
+    decision_vector = [int(round(xi)) for xi in x]
+    score = evaluate_solution(decision_vector, edges)
+    return score[0] + 0.5 * score[1]  # Combine size and width
+
+
 def simulated_annealing_single_restart(
-        edges: List[List[int]],
-        restart: int,
-        problem_id: str,
-        max_iterations: int = 1000,
-        initial_temperature: float = 100.0,
-        cooling_rate: float = 0.95,
-        initial_exploration_iterations: int = 20,
-        ml_switch_iteration: int = 250,  # Iteration to start using ML model
-        save_interval: int = 50,
-        operator_change_interval: int = 100,
-        neighbor_batch_size: int = 10,
+    edges: List[List[int]],
+    restart: int,
+    problem_id: str,
+    max_iterations: int = 1000,
+    initial_temperature: float = 100.0,
+    cooling_rate: float = 0.95,
+    initial_exploration_iterations: int = 20,
+    ml_switch_iteration: int = 250,  # Iteration to start using ML model
+    save_interval: int = 50,
+    operator_change_interval: int = 100,
+    neighbor_batch_size: int = 10,
+    use_fcmaes: bool = True,  # Flag to enable/disable fcmaes
+    fcmaes_iterations: int = 50,  # Number of iterations for fcmaes
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
-    current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+    if use_fcmaes:
+        if fcmaes_available:
+            # Use fcmaes for initial solution generation
+            bounds = [(0, n - 1)] * n  # Define bounds for decision variables
+            optimizer = cma.CMA(
+                mean=np.array([n / 2] * n),
+                sigma=n / 4,
+                bounds=bounds,
+                population_size=fcmaes_iterations,
+            )
+
+            for _ in range(fcmaes_iterations):
+                solutions = optimizer.ask()
+                objective_values = [objective_function(x, edges) for x in solutions]
+                optimizer.tell(solutions, objective_values)
+            current_solution = [int(round(xi)) for xi in optimizer.mean]
+        else:
+            print("Warning: fcmaes is not available. Using a random initial solution.")
+            current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+    else:
+        current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+
     current_score = evaluate_solution(current_solution, edges)
 
     best_solution = current_solution[:]
@@ -278,7 +319,7 @@ def simulated_annealing_single_restart(
     operator_weights = [1.0, 1.0, 1.0, 1.0]
 
     for i in range(max_iterations):
-        if i % 1000 == 0:
+        if i % 100 == 0:
             print(f"Restart {restart + 1}, Iteration {i + 1}...")
 
         neighbor_generation_method = choose_neighbor_generation_method(
@@ -298,14 +339,20 @@ def simulated_annealing_single_restart(
         if neighbor_generation_method == "ml":
             if lgbm_model is None or xgboost_model is None:
                 # If models haven't been trained yet, use a regular operator
-                neighbor_generation_method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+                neighbor_generation_method = random.choice(
+                    ["swap", "shuffle", "torso_shift", "2opt"]
+                )
             else:
                 # Use ML models to generate a neighbor
                 model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
                 if model_choice == "lgbm":
-                    neighbor = generate_neighbor_ml(current_solution, edges, lgbm_model)
+                    neighbor = generate_neighbor_ml(
+                        current_solution, edges, lgbm_model
+                    )
                 elif model_choice == "xgboost":
-                    neighbor = generate_neighbor_ml(current_solution, edges, xgboost_model)
+                    neighbor = generate_neighbor_ml(
+                        current_solution, edges, xgboost_model
+                    )
                 else:  # Hybrid - choose model based on iteration
                     neighbor = generate_neighbor_ml(
                         current_solution,
@@ -315,7 +362,9 @@ def simulated_annealing_single_restart(
                 neighbor_score = evaluate_solution(neighbor, edges)
 
                 # Acceptance based on Metropolis Hastings (always accept better)
-                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (neighbor_score[1] - current_score[1])
+                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
+                    neighbor_score[1] - current_score[1]
+                )
                 acceptance_probability = np.exp(-delta_score / temperature)
                 if delta_score < 0 or random.random() < acceptance_probability:
                     current_solution = neighbor[:]
@@ -326,7 +375,9 @@ def simulated_annealing_single_restart(
             neighbors = []
             for _ in range(neighbor_batch_size):
                 if neighbor_generation_method == "swap":
-                    neighbor = generate_neighbor_swap(current_solution, initial_perturbation_rate)
+                    neighbor = generate_neighbor_swap(
+                        current_solution, initial_perturbation_rate
+                    )
                     initial_perturbation_rate *= perturbation_rate_decay
                 elif neighbor_generation_method == "shuffle":
                     neighbor = generate_neighbor_shuffle(current_solution)
@@ -349,14 +400,19 @@ def simulated_annealing_single_restart(
                     )
 
                 # Metropolis Hastings acceptance
-                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (neighbor_score[1] - current_score[1])
+                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
+                    neighbor_score[1] - current_score[1]
+                )
                 acceptance_probability = np.exp(-delta_score / temperature)
                 if delta_score < 0 or random.random() < acceptance_probability:
                     current_solution = neighbor[:]
                     current_score = neighbor_score[:]
 
         # Train ML models periodically after enough data is collected
-        if i >= initial_exploration_iterations and (i + 1) % ml_switch_iteration == 0:
+        if (
+            i >= initial_exploration_iterations
+            and (i + 1) % ml_switch_iteration == 0
+        ):
             X_np = np.array(X)
             y_np = np.array(y)
             lgbm_model = train_model(X_np, y_np, "lgbm")
@@ -378,18 +434,20 @@ def simulated_annealing_single_restart(
 
 
 def simulated_annealing(
-        edges: List[List[int]],
-        problem_id: str,
-        max_iterations: int = 1000,
-        num_restarts: int = 10,
-        initial_temperature: float = 100.0,
-        cooling_rate: float = 0.95,
-        initial_exploration_iterations: int = 20,
-        ml_switch_iteration: int = 25,  # When to switch to ML
-        save_interval: int = 50,
-        operator_change_interval: int = 100,
-        n_jobs: int = -1,
-        neighbor_batch_size: int = 10,
+    edges: List[List[int]],
+    problem_id: str,
+    max_iterations: int = 1000,
+    num_restarts: int = 10,
+    initial_temperature: float = 100.0,
+    cooling_rate: float = 0.95,
+    initial_exploration_iterations: int = 20,
+    ml_switch_iteration: int = 25,  # When to switch to ML
+    save_interval: int = 50,
+    operator_change_interval: int = 100,
+    n_jobs: int = -1,
+    neighbor_batch_size: int = 10,
+    use_fcmaes: bool = False,  # Flag to enable/disable fcmaes
+    fcmaes_iterations: int = 50,  # Number of iterations for fcmaes
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     pareto_front = []
@@ -408,6 +466,8 @@ def simulated_annealing(
             save_interval,
             operator_change_interval,
             neighbor_batch_size,
+            use_fcmaes,  # Pass the fcmaes flag
+            fcmaes_iterations,  # Pass the number of fcmaes iterations
         )
         for restart in range(num_restarts)
     )
@@ -436,9 +496,9 @@ def simulated_annealing(
 
 
 def create_submission_file(
-        decision_vector: List[int],
-        problem_id: str,
-        filename: str = "submission.json",
+    decision_vector: List[int],
+    problem_id: str,
+    filename: str = "submission.json",
 ):
     """Creates a valid submission file."""
     submission = {
@@ -452,11 +512,11 @@ def create_submission_file(
 
 
 def update_operator_weights(
-        X: List[List[int]],
-        y: List[List[float]],
-        operator_weights: List[float],
-        initial_exploration_iterations: int,
-        ml_switch_iteration: int,
+    X: List[List[int]],
+    y: List[List[float]],
+    operator_weights: List[float],
+    initial_exploration_iterations: int,
+    ml_switch_iteration: int,
 ) -> List[float]:
     """Updates the operator weights based on their past performance."""
     operator_improvements = defaultdict(lambda: {"count": 0, "total_improvement": 0})
@@ -465,7 +525,7 @@ def update_operator_weights(
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
-                    previous_score[1] - current_score[1]
+                previous_score[1] - current_score[1]
             )
 
             if X[i] != X[i - 1]:
@@ -479,7 +539,9 @@ def update_operator_weights(
                     operator_index = 0  # swap
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index]["total_improvement"] += improvement
+                operator_improvements[operator_index][
+                    "total_improvement"
+                ] += improvement
 
     for i in range(4):
         op_data = operator_improvements[i]
@@ -526,6 +588,27 @@ if __name__ == "__main__":
 
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
+
+    # Ask the user if they want to use fcmaes
+    use_fcmaes_input = (
+        input("Use fcmaes for initial solution generation? (yes/no): ")
+        .lower()
+        .strip()
+    )
+    use_fcmaes = use_fcmaes_input == "yes"
+
+    # Ask for fcmaes iterations only if fcmaes is available and the user wants to use it
+    if use_fcmaes and fcmaes_available:
+        try:
+            fcmaes_iterations = int(
+                input("Enter the desired population size for fcmaes (default: 50): ")
+            )
+        except ValueError:
+            print("Invalid input. Using default fcmaes population size (50).")
+            fcmaes_iterations = 50
+    else:
+        fcmaes_iterations = 0  # Set to 0 if not using fcmaes
+
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
@@ -537,7 +620,10 @@ if __name__ == "__main__":
         ml_switch_iteration=1000,  # Switch to ML after more exploration
         n_jobs=-1,
         neighbor_batch_size=20,  # Increased batch size
+        use_fcmaes=use_fcmaes,
+        fcmaes_iterations=fcmaes_iterations,
     )
+
     for i, solution in enumerate(pareto_front):
         create_submission_file(
             solution,
