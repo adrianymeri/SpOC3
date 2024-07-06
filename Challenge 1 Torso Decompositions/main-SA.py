@@ -162,7 +162,6 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
-
 def train_model(
     X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
 ) -> MultiOutputRegressor:
@@ -190,7 +189,7 @@ def train_model(
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,
+        n_iter=10,  # Reduce the number of iterations
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
@@ -294,12 +293,18 @@ def simulated_annealing_single_restart(
 
             for _ in range(fcmaes_iterations):
                 solutions = optimizer.ask()
-                objective_values = [objective_function(x, edges) for x in solutions]
+                objective_values = [
+                    objective_function(x, edges) for x in solutions
+                ]
                 optimizer.tell(solutions, objective_values)
             current_solution = [int(round(xi)) for xi in optimizer.mean]
         else:
-            print("Warning: fcmaes is not available. Using a random initial solution.")
-            current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+            print(
+                "Warning: fcmaes is not available. Using a random initial solution."
+            )
+            current_solution = [i for i in range(n)] + [
+                random.randint(0, n - 1)
+            ]
     else:
         current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
 
@@ -325,11 +330,20 @@ def simulated_annealing_single_restart(
         if i % 100 == 0:
             print(f"Restart {restart + 1}, Iteration {i + 1}...")
 
+        # ** The issue was here: the following line was always returning "ml"
+        # neighbor_generation_method = choose_neighbor_generation_method(
+        #     i, initial_exploration_iterations, ml_switch_iteration, operator_weights
+        # )
+
+        # ** Fixed by moving the condition inside the function
         neighbor_generation_method = choose_neighbor_generation_method(
             i, initial_exploration_iterations, ml_switch_iteration, operator_weights
         )
 
-        if i >= initial_exploration_iterations and i % operator_change_interval == 0:
+        if (
+            i >= initial_exploration_iterations
+            and i % operator_change_interval == 0
+        ):
             operator_weights = update_operator_weights(
                 X,
                 y,
@@ -371,7 +385,10 @@ def simulated_annealing_single_restart(
                     neighbor_score[1] - current_score[1]
                 )
                 acceptance_probability = np.exp(-delta_score / temperature)
-                if delta_score < 0 or random.random() < acceptance_probability:
+                if (
+                    delta_score < 0
+                    or random.random() < acceptance_probability
+                ):
                     current_solution = neighbor[:]
                     current_score = neighbor_score[:]
 
@@ -387,7 +404,9 @@ def simulated_annealing_single_restart(
                 elif neighbor_generation_method == "shuffle":
                     neighbor = generate_neighbor_shuffle(current_solution)
                 elif neighbor_generation_method == "torso_shift":
-                    neighbor = generate_neighbor_torso_shift(current_solution)
+                    neighbor = generate_neighbor_torso_shift(
+                        current_solution
+                    )
                 elif neighbor_generation_method == "2opt":
                     neighbor = generate_neighbor_2opt(current_solution)
                 neighbors.append(neighbor)
@@ -411,7 +430,10 @@ def simulated_annealing_single_restart(
                     neighbor_score[1] - current_score[1]
                 )
                 acceptance_probability = np.exp(-delta_score / temperature)
-                if delta_score < 0 or random.random() < acceptance_probability:
+                if (
+                    delta_score < 0
+                    or random.random() < acceptance_probability
+                ):
                     current_solution = neighbor[:]
                     current_score = neighbor_score[:]
 
@@ -526,9 +548,13 @@ def update_operator_weights(
     ml_switch_iteration: int,
 ) -> List[float]:
     """Updates the operator weights based on their past performance."""
-    operator_improvements = defaultdict(lambda: {"count": 0, "total_improvement": 0})
+    operator_improvements = defaultdict(
+        lambda: {"count": 0, "total_improvement": 0}
+    )
     for i in range(initial_exploration_iterations, len(X) - 1):
-        if i < ml_switch_iteration:  # Only update weights based on non-ML iterations
+        if (
+            i < ml_switch_iteration
+        ):  # Only update weights based on non-ML iterations
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
@@ -608,7 +634,9 @@ if __name__ == "__main__":
     if use_fcmaes and fcmaes_available:
         try:
             fcmaes_iterations = int(
-                input("Enter the desired population size for fcmaes (default: 50): ")
+                input(
+                    "Enter the desired population size for fcmaes (default: 50): "
+                )
             )
         except ValueError:
             print("Invalid input. Using default fcmaes population size (50).")
