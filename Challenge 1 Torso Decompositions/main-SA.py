@@ -237,8 +237,9 @@ def choose_neighbor_generation_method(
     """Chooses the neighbor generation method based on exploration/exploitation strategy."""
     if current_iteration < initial_exploration_iterations:
         return random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+    # **Condition moved outside the exploration block:**
     elif current_iteration >= ml_switch_iteration:
-        return "ml"
+        return "ml" 
     else:
         return random.choices(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
