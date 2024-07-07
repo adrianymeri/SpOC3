@@ -227,14 +227,18 @@ def choose_neighbor_generation_method(
 ) -> str:
     """Chooses the neighbor generation method based on exploration/exploitation strategy."""
     if current_iteration < initial_exploration_iterations:
-        return random.choice(["swap", "shuffle", "torso_shift", "2opt"])
-    # **Condition moved outside the exploration block:**
+        method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+        print(f"Iteration {current_iteration}: Exploring with {method}")
+        return method
     elif current_iteration >= ml_switch_iteration:
+        print(f"Iteration {current_iteration}: Exploiting with ML model")
         return "ml"
     else:
-        return random.choices(
+        method = random.choices(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
         )[0]
+        print(f"Iteration {current_iteration}: Using weighted operator: {method}")
+        return method
 
 
 def evaluate_neighbors_parallel(
@@ -247,7 +251,8 @@ def evaluate_neighbors_parallel(
     return results
 
 
-# Removed objective_function 
+# Removed objective_function
+
 
 def simulated_annealing_single_restart(
     edges: List[List[int]],
@@ -290,12 +295,6 @@ def simulated_annealing_single_restart(
         if i % 100 == 0:
             print(f"Restart {restart + 1}, Iteration {i + 1}...")
 
-        # ** The issue was here: the following line was always returning "ml"
-        # neighbor_generation_method = choose_neighbor_generation_method(
-        #     i, initial_exploration_iterations, ml_switch_iteration, operator_weights
-        # )
-
-        # ** Fixed by moving the condition inside the function
         neighbor_generation_method = choose_neighbor_generation_method(
             i, initial_exploration_iterations, ml_switch_iteration, operator_weights
         )
@@ -311,10 +310,13 @@ def simulated_annealing_single_restart(
                 initial_exploration_iterations,
                 ml_switch_iteration,
             )
+            print(f"Restart {restart + 1}, Iteration {i + 1}: Updated operator weights: {operator_weights}")
+
 
         # Generate neighbors based on the chosen method
         if neighbor_generation_method == "ml":
             if lgbm_model is None or xgboost_model is None:
+                print(f"Restart {restart + 1}, Iteration {i + 1}: ML models not ready yet, using random operator")
                 # If models haven't been trained yet, use a regular operator
                 neighbor_generation_method = random.choice(
                     ["swap", "shuffle", "torso_shift", "2opt"]
@@ -351,6 +353,7 @@ def simulated_annealing_single_restart(
                 ):
                     current_solution = neighbor[:]
                     current_score = neighbor_score[:]
+                    print(f"Restart {restart + 1}, Iteration {i + 1}: Accepted ML-generated neighbor with score {neighbor_score}")
 
         # If not using ML for neighbor generation in this iteration
         if neighbor_generation_method != "ml":
@@ -402,6 +405,7 @@ def simulated_annealing_single_restart(
             i >= initial_exploration_iterations
             and (i + 1) % ml_switch_iteration == 0
         ):
+            print(f"Restart {restart + 1}, Iteration {i + 1}: Training ML models...")
             X_np = np.array(X)
             y_np = np.array(y)
             lgbm_model = train_model(X_np, y_np, "lgbm")
