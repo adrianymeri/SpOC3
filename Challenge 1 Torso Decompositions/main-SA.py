@@ -14,11 +14,9 @@ from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 import os
 
-# Removed fcmaes import and flag
-
 # Determine the number of available cores
 num_cores = os.cpu_count()
-n_jobs = int(num_cores * 0.3) if num_cores else -1  # Use 50% or all if undetermined
+n_jobs = num_cores - 2 if num_cores else -1  # Use all cores except 2
 
 # Define the problem instances
 problems = {
@@ -115,6 +113,19 @@ def generate_neighbor_swap(
         neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
     return neighbor
 
+def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
+    """Generates a neighbor by randomly inserting an element from the torso to another position within the torso."""
+    n = len(decision_vector) - 1
+    t = decision_vector[-1]
+    neighbor = decision_vector.copy()
+
+    i = random.randint(t, n - 1)  # Index of element to move
+    j = random.randint(t, n)  # Target index (inclusive)
+
+    # Insert at j, shifting elements to the right
+    neighbor.insert(j, neighbor.pop(i))
+    return neighbor
+
 
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector within the torso."""
@@ -164,29 +175,29 @@ def train_model(
 ) -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     if model_type == "lgbm":
-        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=n_jobs))
+        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=n_jobs, verbose=-1))
         param_grid = {
-            "estimator__n_estimators": [200, 300, 500],
+            "estimator__n_estimators": [500, 750, 1000],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
-            "estimator__max_depth": [5, 7, 9],
-            "estimator__num_leaves": [20, 31, 50],
+            "estimator__max_depth": [7, 9, 11],
+            "estimator__num_leaves": [31, 50, 75],
             "estimator__min_data_in_leaf": [10, 20, 30],
         }
     else:  # XGBoost
-        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=n_jobs))
+        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=n_jobs, verbose=-1))
         param_grid = {
-            "estimator__n_estimators": [200, 300, 500],
+            "estimator__n_estimators": [500, 750, 1000],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
-            "estimator__max_depth": [5, 7, 9],
+            "estimator__max_depth": [7, 9, 11],
             "estimator__subsample": [0.7, 0.8, 0.9, 1.0],
             "estimator__colsample_bytree": [0.7, 0.8, 0.9, 1.0],
         }
 
-    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    kfold = KFold(n_splits=3, shuffle=True, random_state=42)  # Reduced splits for speed
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,  # Reduce the number of iterations
+        n_iter=5,  # Reduced iterations for speed
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
@@ -233,7 +244,9 @@ def choose_neighbor_generation_method(
 ) -> str:
     """Chooses the neighbor generation method based on exploration/exploitation strategy."""
     if current_iteration < initial_exploration_iterations:
-        method = random.choice(["swap", "shuffle", "torso_shift", "2opt"])
+        method = random.choices(
+            ["swap", "shuffle", "torso_shift", "2opt", "insert"], weights=[0.3, 0.3, 0.2, 0.1, 0.1]
+        )[0]
         print(f"Iteration {current_iteration}: Exploring with {method}")
         return method
     elif current_iteration >= ml_switch_iteration:
@@ -241,7 +254,7 @@ def choose_neighbor_generation_method(
         return "ml"
     else:
         method = random.choices(
-            ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
+            ["swap", "shuffle", "torso_shift", "2opt", "insert"], weights=operator_weights
         )[0]
         print(f"Iteration {current_iteration}: Using weighted operator: {method}")
         return method
@@ -257,9 +270,6 @@ def evaluate_neighbors_parallel(
     return results
 
 
-# Removed objective_function
-
-
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
@@ -272,12 +282,10 @@ def simulated_annealing_single_restart(
     save_interval: int = 50,
     operator_change_interval: int = 100,
     neighbor_batch_size: int = 10,
-    # Removed fcmaes parameters
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
-    # Removed fcmaes initialization
     current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
     current_score = evaluate_solution(current_solution, edges)
 
@@ -295,7 +303,7 @@ def simulated_annealing_single_restart(
     lgbm_model = None
     xgboost_model = None
 
-    operator_weights = [1.0, 1.0, 1.0, 1.0]
+    operator_weights = [1.0, 1.0, 1.0, 1.0, 1.0]  # Added weight for 'insert'
 
     for i in range(max_iterations):
         if i % 100 == 0:
@@ -323,9 +331,9 @@ def simulated_annealing_single_restart(
             if lgbm_model is None or xgboost_model is None:
                 print(f"Restart {restart + 1}, Iteration {i + 1}: ML models not ready yet, using random operator")
                 # If models haven't been trained yet, use a regular operator
-                neighbor_generation_method = random.choice(
-                    ["swap", "shuffle", "torso_shift", "2opt"]
-                )
+                neighbor_generation_method = random.choices(
+                    ["swap", "shuffle", "torso_shift", "2opt", "insert"], weights=[0.3, 0.3, 0.2, 0.1, 0.1]
+                )[0]
             else:
                 # Use ML models to generate a neighbor
                 model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
@@ -377,6 +385,8 @@ def simulated_annealing_single_restart(
                     )
                 elif neighbor_generation_method == "2opt":
                     neighbor = generate_neighbor_2opt(current_solution)
+                elif neighbor_generation_method == "insert":
+                    neighbor = generate_neighbor_insert(current_solution)
                 neighbors.append(neighbor)
 
             neighbor_scores = evaluate_neighbors_parallel(neighbors, edges)
@@ -444,7 +454,6 @@ def simulated_annealing(
     operator_change_interval: int = 100,
     n_jobs: int = n_jobs,  # Use the calculated n_jobs
     neighbor_batch_size: int = 10,
-    # Removed fcmaes parameters
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     pareto_front = []
@@ -463,7 +472,6 @@ def simulated_annealing(
             save_interval,
             operator_change_interval,
             neighbor_batch_size,
-            # Removed fcmaes arguments
         )
         for restart in range(num_restarts)
     )
@@ -527,7 +535,6 @@ def update_operator_weights(
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
                 previous_score[1] - current_score[1]
             )
-
             if X[i] != X[i - 1]:
                 if X[i][-1] != X[i - 1][-1]:
                     operator_index = 2  # torso_shift
@@ -535,6 +542,8 @@ def update_operator_weights(
                     operator_index = 1  # shuffle
                 elif is_2opt(X[i], X[i - 1]):
                     operator_index = 3  # 2-opt
+                elif is_insert(X[i], X[i - 1]):
+                    operator_index = 4 # insert
                 else:
                     operator_index = 0  # swap
 
@@ -543,7 +552,7 @@ def update_operator_weights(
                     "total_improvement"
                 ] += improvement
 
-    for i in range(4):
+    for i in range(5):  # Update weights for all 5 operators
         op_data = operator_improvements[i]
         if op_data["count"] > 0:
             operator_weights[i] = op_data["total_improvement"] / op_data["count"]
@@ -565,6 +574,15 @@ def is_2opt(list1: List[int], list2: List[int]) -> bool:
     """Checks if two lists are different by a single 2-opt move."""
     differences = sum(1 for a, b in zip(list1, list2) if a != b)
     return differences == 4  # 2-opt changes 4 elements
+
+def is_insert(list1: List[int], list2: List[int]) -> bool:
+    """Checks if two lists differ by a single insert operation."""
+    differences = [(i, a, b) for i, (a, b) in enumerate(zip(list1, list2)) if a != b]
+    if len(differences) != 2:  # One element moved to another position
+        return False
+    i1, a1, b1 = differences[0]
+    i2, a2, b2 = differences[1]
+    return a1 == b2 and (i1 + 1) == i2  # Check if elements were indeed inserted
 
 
 if __name__ == "__main__":
@@ -589,20 +607,17 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
 
-    # Removed fcmaes user input section
-
     pareto_front = simulated_annealing(
         edges,
         chosen_problem,
-        max_iterations=5000,  # Increased iterations
-        num_restarts=10,  # Increased restarts
-        save_interval=1000,  # Save less frequently
-        operator_change_interval=200,  # Update operator weights more frequently
-        initial_exploration_iterations=500,  # Longer exploration
-        ml_switch_iteration=1000,  # Switch to ML after more exploration
+        max_iterations=10000,  # Significantly increased iterations
+        num_restarts=20,  # Increased restarts
+        save_interval=2000,  # Save less frequently
+        operator_change_interval=500,  # Update operator weights less frequently
+        initial_exploration_iterations=1000,  # Longer exploration
+        ml_switch_iteration=2000,  # Switch to ML after more exploration
         n_jobs=n_jobs,  # Use calculated n_jobs
         neighbor_batch_size=20,  # Increased batch size
-        # Removed fcmaes arguments
     )
 
     for i, solution in enumerate(pareto_front):
