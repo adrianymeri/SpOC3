@@ -12,8 +12,13 @@ from sklearn.metrics import make_scorer
 from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
+import os
 
 # Removed fcmaes import and flag
+
+# Determine the number of available cores
+num_cores = os.cpu_count()
+n_jobs = int(num_cores * 0.9) if num_cores else -1  # Use 90% or all if undetermined
 
 # Define the problem instances
 problems = {
@@ -153,12 +158,13 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
+
 def train_model(
     X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
 ) -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     if model_type == "lgbm":
-        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=32))
+        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=n_jobs))
         param_grid = {
             "estimator__n_estimators": [200, 300, 500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
@@ -167,7 +173,7 @@ def train_model(
             "estimator__min_data_in_leaf": [10, 20, 30],
         }
     else:  # XGBoost
-        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=32))
+        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=n_jobs))
         param_grid = {
             "estimator__n_estimators": [200, 300, 500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
@@ -184,7 +190,7 @@ def train_model(
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
-        n_jobs=32,
+        n_jobs=n_jobs,
     )
     random_search.fit(X, y)
     best_model = random_search.best_estimator_
@@ -245,7 +251,7 @@ def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
     """Evaluates a list of neighbor solutions in parallel."""
-    results = Paralleln_jobs=32)(
+    results = Parallel(n_jobs=n_jobs)(
         delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
     )
     return results
@@ -311,7 +317,6 @@ def simulated_annealing_single_restart(
                 ml_switch_iteration,
             )
             print(f"Restart {restart + 1}, Iteration {i + 1}: Updated operator weights: {operator_weights}")
-
 
         # Generate neighbors based on the chosen method
         if neighbor_generation_method == "ml":
@@ -437,7 +442,7 @@ def simulated_annealing(
     ml_switch_iteration: int = 25,  # When to switch to ML
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    n_jobs: int = 32,
+    n_jobs: int = n_jobs,  # Use the calculated n_jobs
     neighbor_batch_size: int = 10,
     # Removed fcmaes parameters
 ) -> List[List[int]]:
@@ -595,7 +600,7 @@ if __name__ == "__main__":
         operator_change_interval=200,  # Update operator weights more frequently
         initial_exploration_iterations=500,  # Longer exploration
         ml_switch_iteration=1000,  # Switch to ML after more exploration
-        n_jobs=32,
+        n_jobs=n_jobs,  # Use calculated n_jobs
         neighbor_batch_size=20,  # Increased batch size
         # Removed fcmaes arguments
     )
