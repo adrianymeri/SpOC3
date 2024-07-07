@@ -18,7 +18,7 @@ import os
 
 # Determine the number of available cores
 num_cores = os.cpu_count()
-n_jobs = int(num_cores * 0.9) if num_cores else -1  # Use 90% or all if undetermined
+n_jobs = int(num_cores * 0.5) if num_cores else -1  # Use 50% or all if undetermined
 
 # Define the problem instances
 problems = {
