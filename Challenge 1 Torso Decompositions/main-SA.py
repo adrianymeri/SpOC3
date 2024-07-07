@@ -44,19 +44,20 @@ def load_graph(problem_id: str) -> nx.Graph:
     print(f"Loading graph data from: {url}")
     if url.startswith("http"):  # Load from URL
         with urllib.request.urlopen(url) as f:
+            # Don't split lines here, pass them directly to parse_adjlist
             graph = nx.parse_adjlist(
-                (line.decode("utf-8").strip().split() for line in f if not line.startswith(b"#")),
+                (line.decode("utf-8").strip() for line in f if not line.startswith(b"#")),
                 nodetype=int
             )
     else:  # Load from local file
         with open(url, "r") as f:
+            # Same here, don't split lines prematurely
             graph = nx.parse_adjlist(
-                (line.strip().split() for line in f if not line.strip().startswith("#")),  # Split after checking for comments
+                (line.strip() for line in f if not line.strip().startswith("#")),
                 nodetype=int
             )
     print(f"Loaded graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
     return graph
-
 
 def calculate_torso_size(decision_vector: List[int]) -> int:
     """Calculates the size of the torso for the given decision vector."""
