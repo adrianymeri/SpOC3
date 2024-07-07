@@ -186,7 +186,7 @@ def train_model(
             LGBMRegressor(random_state=42, n_jobs=n_jobs, verbose=-1)
         )
         param_grid = {
-            "estimator__n_estimators": [500, 750, 1000],
+            "estimator__n_estimators": [200, 500, 1000, 1500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [7, 9, 11],
             "estimator__num_leaves": [31, 50, 75],
@@ -197,7 +197,7 @@ def train_model(
             XGBRegressor(random_state=42, n_jobs=n_jobs, verbose=-1)
         )
         param_grid = {
-            "estimator__n_estimators": [500, 750, 1000],
+            "estimator__n_estimators": [200, 500, 1000, 1500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [7, 9, 11],
             "estimator__subsample": [0.7, 0.8, 0.9, 1.0],
@@ -289,9 +289,9 @@ def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
     problem_id: str,
-    max_iterations: int = 1000,
-    initial_temperature: float = 100.0,
-    cooling_rate: float = 0.95,
+    max_iterations: int = 20000,
+    initial_temperature: float = 500.0,
+    cooling_rate: float = 0.99,
     initial_exploration_iterations: int = 20,
     ml_switch_iteration: int = 250,  # Iteration to start using ML model
     save_interval: int = 50,
