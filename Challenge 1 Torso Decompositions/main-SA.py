@@ -45,13 +45,13 @@ def load_graph(problem_id: str) -> nx.Graph:
     if url.startswith("http"):  # Load from URL
         with urllib.request.urlopen(url) as f:
             graph = nx.parse_adjlist(
-                (line.decode("utf-8").strip().split() for line in f if not line.startswith(b"#")), 
+                (line.decode("utf-8").strip().split() for line in f if not line.startswith(b"#")),
                 nodetype=int
             )
     else:  # Load from local file
         with open(url, "r") as f:
             graph = nx.parse_adjlist(
-                (line.strip().split() for line in f if not line.startswith("#")),
+                (line.strip().split() for line in f if not line.strip().startswith("#")),  # Split after checking for comments
                 nodetype=int
             )
     print(f"Loaded graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
