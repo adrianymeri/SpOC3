@@ -13,16 +13,7 @@ from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 
-# Try to import fcmaes and set a flag accordingly
-try:
-    from fcmaes import cma
-
-    fcmaes_available = True
-except ImportError:
-    fcmaes_available = False
-    print(
-        "Warning: fcmaes library not found. To use fcmaes, please install it (e.g., 'pip install fcmaes')."
-    )
+# Removed fcmaes import and flag
 
 # Define the problem instances
 problems = {
@@ -239,7 +230,7 @@ def choose_neighbor_generation_method(
         return random.choice(["swap", "shuffle", "torso_shift", "2opt"])
     # **Condition moved outside the exploration block:**
     elif current_iteration >= ml_switch_iteration:
-        return "ml" 
+        return "ml"
     else:
         return random.choices(
             ["swap", "shuffle", "torso_shift", "2opt"], weights=operator_weights
@@ -256,12 +247,7 @@ def evaluate_neighbors_parallel(
     return results
 
 
-def objective_function(x, edges=None):
-    """Objective function for fcmaes, adapted for your problem."""
-    decision_vector = [int(round(xi)) for xi in x]
-    score = evaluate_solution(decision_vector, edges)
-    return score[0] + 0.5 * score[1]  # Combine size and width
-
+# Removed objective_function 
 
 def simulated_annealing_single_restart(
     edges: List[List[int]],
@@ -275,40 +261,13 @@ def simulated_annealing_single_restart(
     save_interval: int = 50,
     operator_change_interval: int = 100,
     neighbor_batch_size: int = 10,
-    use_fcmaes: bool = True,  # Flag to enable/disable fcmaes
-    fcmaes_iterations: int = 50,  # Number of iterations for fcmaes
+    # Removed fcmaes parameters
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
-    if use_fcmaes:
-        if fcmaes_available:
-            # Use fcmaes for initial solution generation
-            bounds = [(0, n - 1)] * n  # Define bounds for decision variables
-            optimizer = cma.CMA(
-                mean=np.array([n / 2] * n),
-                sigma=n / 4,
-                bounds=bounds,
-                population_size=fcmaes_iterations,
-            )
-
-            for _ in range(fcmaes_iterations):
-                solutions = optimizer.ask()
-                objective_values = [
-                    objective_function(x, edges) for x in solutions
-                ]
-                optimizer.tell(solutions, objective_values)
-            current_solution = [int(round(xi)) for xi in optimizer.mean]
-        else:
-            print(
-                "Warning: fcmaes is not available. Using a random initial solution."
-            )
-            current_solution = [i for i in range(n)] + [
-                random.randint(0, n - 1)
-            ]
-    else:
-        current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
-
+    # Removed fcmaes initialization
+    current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
     current_score = evaluate_solution(current_solution, edges)
 
     best_solution = current_solution[:]
@@ -476,8 +435,7 @@ def simulated_annealing(
     operator_change_interval: int = 100,
     n_jobs: int = -1,
     neighbor_batch_size: int = 10,
-    use_fcmaes: bool = False,  # Flag to enable/disable fcmaes
-    fcmaes_iterations: int = 50,  # Number of iterations for fcmaes
+    # Removed fcmaes parameters
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     pareto_front = []
@@ -496,8 +454,7 @@ def simulated_annealing(
             save_interval,
             operator_change_interval,
             neighbor_batch_size,
-            use_fcmaes,  # Pass the fcmaes flag
-            fcmaes_iterations,  # Pass the number of fcmaes iterations
+            # Removed fcmaes arguments
         )
         for restart in range(num_restarts)
     )
@@ -623,27 +580,7 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     edges = load_graph(chosen_problem)
 
-    # Ask the user if they want to use fcmaes
-    use_fcmaes_input = (
-        input("Use fcmaes for initial solution generation? (yes/no): ")
-        .lower()
-        .strip()
-    )
-    use_fcmaes = use_fcmaes_input == "yes"
-
-    # Ask for fcmaes iterations only if fcmaes is available and the user wants to use it
-    if use_fcmaes and fcmaes_available:
-        try:
-            fcmaes_iterations = int(
-                input(
-                    "Enter the desired population size for fcmaes (default: 50): "
-                )
-            )
-        except ValueError:
-            print("Invalid input. Using default fcmaes population size (50).")
-            fcmaes_iterations = 50
-    else:
-        fcmaes_iterations = 0  # Set to 0 if not using fcmaes
+    # Removed fcmaes user input section
 
     pareto_front = simulated_annealing(
         edges,
@@ -656,8 +593,7 @@ if __name__ == "__main__":
         ml_switch_iteration=1000,  # Switch to ML after more exploration
         n_jobs=-1,
         neighbor_batch_size=20,  # Increased batch size
-        use_fcmaes=use_fcmaes,
-        fcmaes_iterations=fcmaes_iterations,
+        # Removed fcmaes arguments
     )
 
     for i, solution in enumerate(pareto_front):
