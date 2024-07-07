@@ -576,7 +576,9 @@ def update_operator_weights(
                     operator_index = 0  # swap
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index]["total_improvement"] += improvement
+                operator_improvements[operator_index][
+                    "total_improvement"
+                ] += improvement
 
     for i in range(5):  # Update weights for all 5 operators
         op_data = operator_improvements[i]
