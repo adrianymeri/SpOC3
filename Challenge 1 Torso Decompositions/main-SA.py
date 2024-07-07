@@ -13,6 +13,7 @@ from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 import os
+import networkx as nx  # Add NetworkX for graph analysis
 
 # Determine the number of available cores
 num_cores = os.cpu_count()
@@ -37,28 +38,24 @@ def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return (size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]).mean()
 
 
-def load_graph(problem_id: str) -> List[List[int]]:
+def load_graph(problem_id: str) -> nx.Graph:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
     print(f"Loading graph data from: {url}")
     if url.startswith("http"):  # Load from URL
         with urllib.request.urlopen(url) as f:
-            edges = []
-            for line in f:
-                if line.startswith(b"#"):
-                    continue
-                u, v = map(int, line.strip().split())
-                edges.append([u, v])
+            graph = nx.parse_adjlist(
+                (line.decode("utf-8").strip().split() for line in f if not line.startswith(b"#")), 
+                nodetype=int
+            )
     else:  # Load from local file
         with open(url, "r") as f:
-            edges = []
-            for line in f:
-                if line.startswith("#"):
-                    continue
-                u, v = map(int, line.strip().split())
-                edges.append([u, v])
-    print(f"Loaded graph with {len(edges)} edges.")
-    return edges
+            graph = nx.parse_adjlist(
+                (line.strip().split() for line in f if not line.startswith("#")),
+                nodetype=int
+            )
+    print(f"Loaded graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
+    return graph
 
 
 def calculate_torso_size(decision_vector: List[int]) -> int:
@@ -68,34 +65,27 @@ def calculate_torso_size(decision_vector: List[int]) -> int:
     return n - t
 
 
-def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
-    """Calculates the width of the torso for the given decision vector and edges."""
+def calculate_torso_width(decision_vector: List[int], graph: nx.Graph) -> int:
+    """Calculates the width of the torso for the given decision vector and graph."""
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     permutation = decision_vector[:-1]
 
-    # Create adjacency list (outside the loop for efficiency)
-    adj_list = [[] for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    # Calculate outdegrees for nodes in the torso
-    outdegrees = [0 for _ in range(n)]
+    # Use NetworkX's efficient neighborhood access
+    max_outdegree = 0
     for i in range(t, n):
-        for j in adj_list[permutation[i]]:
-            if j in permutation[t:] and permutation.index(j) > i:
-                outdegrees[i] += 1
+        outdegree = sum(1 for j in graph.neighbors(permutation[i]) if j in permutation[t:] and permutation.index(j) > i)
+        max_outdegree = max(max_outdegree, outdegree)
 
-    return max(outdegrees)
+    return max_outdegree
 
 
 def evaluate_solution(
-    decision_vector: List[int], edges: List[List[int]]
+    decision_vector: List[int], graph: nx.Graph
 ) -> List[float]:
     """Evaluates the given solution and returns the torso size and width."""
     torso_size = calculate_torso_size(decision_vector)
-    torso_width = calculate_torso_width(decision_vector, edges)
+    torso_width = calculate_torso_width(decision_vector, graph)
     return [torso_size, torso_width]
 
 
@@ -132,7 +122,6 @@ def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
     neighbor[-1] = len(neighbor) - 1 - neighbor[:-1].index(neighbor[-2])
 
     return neighbor
-
 
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector within the torso."""
@@ -176,6 +165,23 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
+def generate_initial_solution(graph: nx.Graph) -> List[int]:
+    """Generates an initial solution using a greedy approach."""
+    n = graph.number_of_nodes()
+    unplaced_nodes = set(graph.nodes())
+    placement_order = []
+
+    while unplaced_nodes:
+        # Find node with the fewest unplaced neighbors
+        best_node = min(
+            unplaced_nodes, key=lambda node: sum(1 for neighbor in graph.neighbors(node) if neighbor in unplaced_nodes)
+        )
+        placement_order.append(best_node)
+        unplaced_nodes.remove(best_node)
+
+    # Initial torso size is set to a random value for now
+    t = random.randint(0, n - 1) 
+    return placement_order + [t] 
 
 def train_model(
     X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
@@ -186,7 +192,7 @@ def train_model(
             LGBMRegressor(random_state=42, n_jobs=n_jobs, verbose=-1)
         )
         param_grid = {
-            "estimator__n_estimators": [200, 500, 1000, 1500],
+            "estimator__n_estimators": [200, 500, 1000],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [7, 9, 11],
             "estimator__num_leaves": [31, 50, 75],
@@ -197,7 +203,7 @@ def train_model(
             XGBRegressor(random_state=42, n_jobs=n_jobs, verbose=-1)
         )
         param_grid = {
-            "estimator__n_estimators": [200, 500, 1000, 1500],
+            "estimator__n_estimators": [200, 500, 1000],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
             "estimator__max_depth": [7, 9, 11],
             "estimator__subsample": [0.7, 0.8, 0.9, 1.0],
@@ -226,7 +232,7 @@ def train_model(
 
 def generate_neighbor_ml(
     decision_vector: List[int],
-    edges: List[List[int]],
+    graph: nx.Graph,
     model: MultiOutputRegressor,
     num_neighbors: int = 100,
 ) -> List[int]:
@@ -275,35 +281,35 @@ def choose_neighbor_generation_method(
 
 
 def evaluate_neighbors_parallel(
-    neighbors: List[List[int]], edges: List[List[int]]
+    neighbors: List[List[int]], graph: nx.Graph
 ) -> List[List[float]]:
     """Evaluates a list of neighbor solutions in parallel."""
     results = Parallel(n_jobs=n_jobs)(
-        delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
+        delayed(evaluate_solution)(neighbor, graph) for neighbor in neighbors
     )
     return results
 
 
 def simulated_annealing_single_restart(
-    edges: List[List[int]],
+    graph: nx.Graph,
     restart: int,
     problem_id: str,
     max_iterations: int = 20000,
     initial_temperature: float = 500.0,
     cooling_rate: float = 0.99,
-    initial_exploration_iterations: int = 20,
-    ml_switch_iteration: int = 250,  # Iteration to start using ML model
-    save_interval: int = 50,
-    operator_change_interval: int = 100,
-    neighbor_batch_size: int = 10,
+    initial_exploration_iterations: int = 2000,
+    ml_switch_iteration: int = 4000,  # Iteration to start using ML model
+    save_interval: int = 500,
+    operator_change_interval: int = 1000,
+    neighbor_batch_size: int = 20,
     lgbm_model: MultiOutputRegressor = None,  # Pass models as arguments
     xgboost_model: MultiOutputRegressor = None,
 ) -> Tuple[List[int], List[float], np.ndarray, np.ndarray]:
     """Performs a single restart of the simulated annealing algorithm."""
-    n = max(node for edge in edges for node in edge) + 1
+    n = graph.number_of_nodes()
 
-    current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
-    current_score = evaluate_solution(current_solution, edges)
+    current_solution = generate_initial_solution(graph)
+    current_score = evaluate_solution(current_solution, graph)
 
     best_solution = current_solution[:]
     best_score = current_score[:]
@@ -363,19 +369,19 @@ def simulated_annealing_single_restart(
                 model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
                 if model_choice == "lgbm":
                     neighbor = generate_neighbor_ml(
-                        current_solution, edges, lgbm_model
+                        current_solution, graph, lgbm_model
                     )
                 elif model_choice == "xgboost":
                     neighbor = generate_neighbor_ml(
-                        current_solution, edges, xgboost_model
+                        current_solution, graph, xgboost_model
                     )
                 else:  # Hybrid - choose model based on iteration
                     neighbor = generate_neighbor_ml(
                         current_solution,
-                        edges,
+                        graph,
                         lgbm_model if i % 2 == 0 else xgboost_model,
                     )
-                neighbor_score = evaluate_solution(neighbor, edges)
+                neighbor_score = evaluate_solution(neighbor, graph)
 
                 # Acceptance based on Metropolis Hastings (always accept better)
                 delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
@@ -408,7 +414,7 @@ def simulated_annealing_single_restart(
                     neighbor = generate_neighbor_insert(current_solution)
                 neighbors.append(neighbor)
 
-            neighbor_scores = evaluate_neighbors_parallel(neighbors, edges)
+            neighbor_scores = evaluate_neighbors_parallel(neighbors, graph)
             X.extend(neighbors)
             y.extend(neighbor_scores)
 
@@ -453,7 +459,7 @@ def simulated_annealing_single_restart(
 
 
 def simulated_annealing(
-    edges: List[List[int]],
+    graph: nx.Graph,
     problem_id: str,
     max_iterations: int = 1000,
     num_restarts: int = 10,
@@ -480,7 +486,7 @@ def simulated_annealing(
 
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
-            edges,
+            graph,
             restart,
             problem_id,
             max_iterations,
@@ -582,7 +588,9 @@ def update_operator_weights(
                     operator_index = 0  # swap
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index]["total_improvement"] += improvement
+                operator_improvements[operator_index][
+                    "total_improvement"
+                ] += improvement
 
     for i in range(5):  # Update weights for all 5 operators
         op_data = operator_improvements[i]
@@ -638,10 +646,10 @@ if __name__ == "__main__":
         )
 
     print(f"Processing problem: {chosen_problem}")
-    edges = load_graph(chosen_problem)
+    graph = load_graph(chosen_problem) 
 
     pareto_front = simulated_annealing(
-        edges,
+        graph, # Pass the NetworkX graph 
         chosen_problem,
         max_iterations=10000,  # Significantly increased iterations
         num_restarts=20,  # Increased restarts
