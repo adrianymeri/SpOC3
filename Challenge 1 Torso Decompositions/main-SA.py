@@ -158,7 +158,7 @@ def train_model(
 ) -> MultiOutputRegressor:
     print(f"Training {model_type} model...")
     if model_type == "lgbm":
-        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=-1))
+        model = MultiOutputRegressor(LGBMRegressor(random_state=42, n_jobs=32))
         param_grid = {
             "estimator__n_estimators": [200, 300, 500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
@@ -167,7 +167,7 @@ def train_model(
             "estimator__min_data_in_leaf": [10, 20, 30],
         }
     else:  # XGBoost
-        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=-1))
+        model = MultiOutputRegressor(XGBRegressor(random_state=42, n_jobs=32))
         param_grid = {
             "estimator__n_estimators": [200, 300, 500],
             "estimator__learning_rate": [0.01, 0.05, 0.1],
@@ -184,7 +184,7 @@ def train_model(
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
-        n_jobs=-1,
+        n_jobs=32,
     )
     random_search.fit(X, y)
     best_model = random_search.best_estimator_
@@ -245,7 +245,7 @@ def evaluate_neighbors_parallel(
     neighbors: List[List[int]], edges: List[List[int]]
 ) -> List[List[float]]:
     """Evaluates a list of neighbor solutions in parallel."""
-    results = Parallel(n_jobs=-1)(
+    results = Paralleln_jobs=32)(
         delayed(evaluate_solution)(neighbor, edges) for neighbor in neighbors
     )
     return results
@@ -437,7 +437,7 @@ def simulated_annealing(
     ml_switch_iteration: int = 25,  # When to switch to ML
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    n_jobs: int = -1,
+    n_jobs: int = 32,
     neighbor_batch_size: int = 10,
     # Removed fcmaes parameters
 ) -> List[List[int]]:
@@ -595,7 +595,7 @@ if __name__ == "__main__":
         operator_change_interval=200,  # Update operator weights more frequently
         initial_exploration_iterations=500,  # Longer exploration
         ml_switch_iteration=1000,  # Switch to ML after more exploration
-        n_jobs=-1,
+        n_jobs=32,
         neighbor_batch_size=20,  # Increased batch size
         # Removed fcmaes arguments
     )
