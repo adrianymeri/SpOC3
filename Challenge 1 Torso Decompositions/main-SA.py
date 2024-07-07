@@ -17,7 +17,7 @@ import os
 # Determine the number of available cores
 num_cores = os.cpu_count()
 
-# Use half of the available cores
+# Use a fraction of the available cores to avoid oversubscription
 n_jobs = max(1, num_cores // 3)  # Ensure at least one core is used
 
 # Define the problem instances
@@ -232,7 +232,7 @@ def generate_neighbor_ml(
 ) -> List[int]:
     """Generates neighbors using ML models for prediction and selects the best."""
     neighbors = []
-    for _ in range(num_neighbors // 5):
+    for _ in range(num_neighbors // 5):  # Generate diverse neighbors
         neighbors.append(generate_neighbor_swap(decision_vector.copy(), 0.1))
         neighbors.append(generate_neighbor_swap(decision_vector.copy(), 0.2))
         neighbors.append(generate_neighbor_shuffle(decision_vector.copy()))
@@ -242,8 +242,7 @@ def generate_neighbor_ml(
     neighbors_np = np.array(neighbors)
     predictions = model.predict(neighbors_np)
     scores = [
-        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1))
-        for pred in predictions
+        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1)) for pred in predictions
     ]
     best_neighbor_idx = np.argmin(scores)
     return neighbors[best_neighbor_idx]
@@ -445,7 +444,12 @@ def simulated_annealing_single_restart(
     print(
         f"Restart {restart + 1} completed. Best solution: {best_solution}, Score: {best_score}"
     )
-    return best_solution, best_score, X_np, y_np  # Return X_np and y_np
+    return (
+        best_solution,
+        best_score,
+        X_np,
+        y_np,
+    )  # Return X_np and y_np
 
 
 def simulated_annealing(
@@ -557,7 +561,9 @@ def update_operator_weights(
     """Updates the operator weights based on their past performance."""
     operator_improvements = defaultdict(lambda: {"count": 0, "total_improvement": 0})
     for i in range(initial_exploration_iterations, len(X) - 1):
-        if i < ml_switch_iteration:  # Only update weights based on non-ML iterations
+        if (
+            i < ml_switch_iteration
+        ):  # Only update weights based on non-ML iterations
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
@@ -576,9 +582,7 @@ def update_operator_weights(
                     operator_index = 0  # swap
 
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index][
-                    "total_improvement"
-                ] += improvement
+                operator_improvements[operator_index]["total_improvement"] += improvement
 
     for i in range(5):  # Update weights for all 5 operators
         op_data = operator_improvements[i]
