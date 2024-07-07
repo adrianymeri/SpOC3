@@ -18,7 +18,7 @@ import os
 num_cores = os.cpu_count()
 
 # Use all cores except two
-n_jobs = max(1, num_cores - 2) # Ensure at least one core is used
+n_jobs = max(1, num_cores - 3) # Ensure at least one core is used
 
 # Define the problem instances
 problems = {
