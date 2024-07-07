@@ -124,6 +124,10 @@ def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
 
     # Insert at j, shifting elements to the right
     neighbor.insert(j, neighbor.pop(i))
+
+    # Recalculate torso size (t) - This is crucial!
+    neighbor[-1] = len(neighbor) - 1 - neighbor[:-1].index(neighbor[-2])
+
     return neighbor
 
 
@@ -543,7 +547,7 @@ def update_operator_weights(
                 elif is_2opt(X[i], X[i - 1]):
                     operator_index = 3  # 2-opt
                 elif is_insert(X[i], X[i - 1]):
-                    operator_index = 4 # insert
+                    operator_index = 4  # insert
                 else:
                     operator_index = 0  # swap
 
@@ -575,6 +579,7 @@ def is_2opt(list1: List[int], list2: List[int]) -> bool:
     differences = sum(1 for a, b in zip(list1, list2) if a != b)
     return differences == 4  # 2-opt changes 4 elements
 
+
 def is_insert(list1: List[int], list2: List[int]) -> bool:
     """Checks if two lists differ by a single insert operation."""
     differences = [(i, a, b) for i, (a, b) in enumerate(zip(list1, list2)) if a != b]
@@ -582,7 +587,9 @@ def is_insert(list1: List[int], list2: List[int]) -> bool:
         return False
     i1, a1, b1 = differences[0]
     i2, a2, b2 = differences[1]
-    return a1 == b2 and (i1 + 1) == i2  # Check if elements were indeed inserted
+    return a1 == b2 and (
+        i1 + 1
+    ) == i2  # Check if elements were indeed inserted
 
 
 if __name__ == "__main__":
