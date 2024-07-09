@@ -163,9 +163,9 @@ def acceptance_probability(
     old_score: List[float], new_score: List[float], temperature: float
 ) -> float:
     """Calculates the acceptance probability in Simulated Annealing."""
-    # Use torso_scorer to combine multiple objectives into a single value
-    delta_score = torso_scorer([[0, 0]], np.array(new_score)) - torso_scorer(
-        [[0, 0]], np.array(old_score)
+    # Reshape the scores into 2D arrays with one row and two columns
+    delta_score = torso_scorer(np.array([new_score])) - torso_scorer(
+        np.array([old_score])
     )
     return np.exp(delta_score / temperature)
 
