@@ -182,7 +182,7 @@ def generate_initial_solution_de(graph: nx.Graph, num_solutions: int = 10) -> Li
 
     for _ in range(num_solutions):
         # Run differential evolution optimization
-        result = differential_evolution(de_objective, bounds, popsize=50, maxiter=1000)
+        result = differential_evolution(de_objective, bounds, popsize=50, maxiter=1000, disp=False) # Disable DE logs
 
         # Extract the best solution and convert to a valid decision vector
         t = int(result.x[-1])
@@ -231,6 +231,7 @@ def train_model(
         cv=kfold,
         random_state=42,
         n_jobs=n_jobs,
+        verbose=1, # Show progress during model training
     )
     random_search.fit(X, y)
     best_model = random_search.best_estimator_
