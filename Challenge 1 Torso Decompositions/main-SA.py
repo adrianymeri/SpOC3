@@ -156,25 +156,16 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
         x < y for x, y in zip(score1, score2)
     )
 
+
 def generate_initial_solution(graph: nx.Graph) -> List[int]:
     """Generates an initial solution using a degree-based heuristic."""
     degrees = dict(graph.degree())
     sorted_nodes = sorted(degrees, key=degrees.get)  # Sort nodes by ascending degree
     return sorted_nodes + [len(sorted_nodes) // 2]  # Start with torso in the middle
 
+
 def generate_initial_solution_de(graph: nx.Graph, num_solutions: int = 10) -> List[List[int]]:
-    """Generates initial solutions using the differential evolution optimizer.
-    This function uses `scipy.optimize.differential_evolution` to optimize
-    a set of initial solutions. The objective function for differential
-    evolution minimizes a combination of torso size and width.
-
-    Args:
-        graph (nx.Graph): The input graph.
-        num_solutions (int, optional): Number of initial solutions to generate. Defaults to 10.
-
-    Returns:
-        List[List[int]]: A list of initial solutions represented as decision vectors.
-    """
+    """Generates initial solutions using the differential evolution optimizer."""
     n = graph.number_of_nodes()
     initial_solutions = []
 
@@ -201,7 +192,6 @@ def generate_initial_solution_de(graph: nx.Graph, num_solutions: int = 10) -> Li
         initial_solutions.append(decision_vector)
 
     return initial_solutions
-
 
 
 def train_model(
@@ -309,6 +299,7 @@ def evaluate_neighbors_parallel(
     )
     return results
 
+
 def simulated_annealing_single_restart(
     graph: nx.Graph,
     restart: int,
@@ -317,7 +308,7 @@ def simulated_annealing_single_restart(
     initial_temperature: float = 500.0,
     cooling_rate: float = 0.99,
     initial_exploration_iterations: int = 2000,
-    ml_switch_iteration: int = 4000,
+    ml_switch_iteration: int = 15000,  # Increased to allow for more exploration
     save_interval: int = 500,
     operator_change_interval: int = 1000,
     neighbor_batch_size: int = 20,
@@ -377,32 +368,34 @@ def simulated_annealing_single_restart(
                     weights=[0.3, 0.3, 0.2, 0.1, 0.1],
                 )[0]
             else:
-                model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
-                if model_choice == "lgbm":
-                    neighbor = generate_neighbor_ml(
-                        current_solution, graph, lgbm_model
-                    )
-                elif model_choice == "xgboost":
-                    neighbor = generate_neighbor_ml(
-                        current_solution, graph, xgboost_model
-                    )
-                else:
-                    neighbor = generate_neighbor_ml(
-                        current_solution,
-                        graph,
-                        lgbm_model if i % 2 == 0 else xgboost_model,
-                    )
-            neighbor_score = evaluate_solution(neighbor, graph)
-            delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
-                neighbor_score[1] - current_score[1]
-            )
-            acceptance_probability = np.exp(-delta_score / temperature)
-            if delta_score < 0 or random.random() < acceptance_probability:
-                current_solution = neighbor[:]
-                current_score = neighbor_score[:]
-                print(
-                    f"Restart {restart + 1}, Iteration {i + 1}: Accepted ML-generated neighbor with score {neighbor_score}"
+                # Use a hybrid approach, combining predictions from both models
+                lgbm_neighbor = generate_neighbor_ml(
+                    current_solution, graph, lgbm_model
                 )
+                xgboost_neighbor = generate_neighbor_ml(
+                    current_solution, graph, xgboost_model
+                )
+                lgbm_score = evaluate_solution(lgbm_neighbor, graph)
+                xgboost_score = evaluate_solution(xgboost_neighbor, graph)
+
+                # Choose the neighbor with the better (dominating) score
+                if dominates(lgbm_score, xgboost_score):
+                    neighbor = lgbm_neighbor
+                    neighbor_score = lgbm_score
+                else:
+                    neighbor = xgboost_neighbor
+                    neighbor_score = xgboost_score
+
+                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
+                    neighbor_score[1] - current_score[1]
+                )
+                acceptance_probability = np.exp(-delta_score / temperature)
+                if delta_score < 0 or random.random() < acceptance_probability:
+                    current_solution = neighbor[:]
+                    current_score = neighbor_score[:]
+                    print(
+                        f"Restart {restart + 1}, Iteration {i + 1}: Accepted ML-generated neighbor with score {neighbor_score}"
+                    )
         if neighbor_generation_method != "ml":
             neighbors = []
             for _ in range(neighbor_batch_size):
@@ -677,7 +670,7 @@ if __name__ == "__main__":
             save_interval=2000,
             operator_change_interval=500,
             initial_exploration_iterations=1000,
-            ml_switch_iteration=2000,
+            ml_switch_iteration=15000,  # Allow more pure SA exploration
             n_jobs=n_jobs,
             neighbor_batch_size=20,
         )
