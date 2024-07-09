@@ -159,14 +159,10 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     )
 
 
-def acceptance_probability(
-    old_score: List[float], new_score: List[float], temperature: float
-) -> float:
+def acceptance_probability(old_score: List[float], new_score: List[float], temperature: float) -> float:
     """Calculates the acceptance probability in Simulated Annealing."""
-    # Reshape the scores into 2D arrays with one row and two columns
-    delta_score = torso_scorer(np.array([new_score])) - torso_scorer(
-        np.array([old_score])
-    )
+    # Calculate the difference in scores, prioritizing smaller size and width
+    delta_score = (old_score[0] - new_score[0]) + 0.5 * (old_score[1] - new_score[1])
     return np.exp(delta_score / temperature)
 
 
