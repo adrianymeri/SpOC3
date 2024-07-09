@@ -4,22 +4,22 @@ import time
 from collections import defaultdict
 from typing import List, Tuple
 
-import networkx as nx
 import numpy as np
 import urllib.request
 from joblib import Parallel, delayed
 from lightgbm import LGBMRegressor
+from scipy.optimize import differential_evolution
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
+from sklearn.model_selection import KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 import os
+import networkx as nx  # Import NetworkX
 
-# Add NetworkX for graph analysis
 # Determine the number of available cores
 num_cores = os.cpu_count()
 # Use all available cores for maximum parallelization
-n_jobs = num_cores 
+n_jobs = num_cores
 
 # Define the problem instances
 problems = {
@@ -162,6 +162,47 @@ def generate_initial_solution(graph: nx.Graph) -> List[int]:
     sorted_nodes = sorted(degrees, key=degrees.get)  # Sort nodes by ascending degree
     return sorted_nodes + [len(sorted_nodes) // 2]  # Start with torso in the middle
 
+def generate_initial_solution_de(graph: nx.Graph, num_solutions: int = 10) -> List[List[int]]:
+    """Generates initial solutions using the differential evolution optimizer.
+    This function uses `scipy.optimize.differential_evolution` to optimize
+    a set of initial solutions. The objective function for differential
+    evolution minimizes a combination of torso size and width.
+
+    Args:
+        graph (nx.Graph): The input graph.
+        num_solutions (int, optional): Number of initial solutions to generate. Defaults to 10.
+
+    Returns:
+        List[List[int]]: A list of initial solutions represented as decision vectors.
+    """
+    n = graph.number_of_nodes()
+    initial_solutions = []
+
+    def de_objective(x):
+        """Objective function for differential evolution optimization."""
+        # Ensure x represents a valid decision vector
+        t = int(x[-1])  # Torso size
+        perm = np.argsort(x[:-1]).astype(int)  # Node permutation
+        decision_vector = list(perm) + [t]
+        return sum(evaluate_solution(decision_vector, graph))  # Minimize both size and width
+
+    # Define the bounds for differential evolution
+    bounds = [(0, n - 1)] * n + [(0, n - 1)]  # Node order and torso size bounds
+
+    for _ in range(num_solutions):
+        # Run differential evolution optimization
+        result = differential_evolution(de_objective, bounds, popsize=50, maxiter=1000)
+
+        # Extract the best solution and convert to a valid decision vector
+        t = int(result.x[-1])
+        perm = np.argsort(result.x[:-1]).astype(int)
+        decision_vector = list(perm) + [t]
+
+        initial_solutions.append(decision_vector)
+
+    return initial_solutions
+
+
 
 def train_model(
     X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
@@ -191,11 +232,11 @@ def train_model(
         }
     kfold = KFold(
         n_splits=3, shuffle=True, random_state=42
-    ) 
+    )
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=10,  
+        n_iter=10,
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
@@ -276,16 +317,20 @@ def simulated_annealing_single_restart(
     initial_temperature: float = 500.0,
     cooling_rate: float = 0.99,
     initial_exploration_iterations: int = 2000,
-    ml_switch_iteration: int = 4000, 
+    ml_switch_iteration: int = 4000,
     save_interval: int = 500,
     operator_change_interval: int = 1000,
     neighbor_batch_size: int = 20,
-    lgbm_model: MultiOutputRegressor = None,  
+    lgbm_model: MultiOutputRegressor = None,
     xgboost_model: MultiOutputRegressor = None,
+    initial_solution: List[int] = None,  # Add initial_solution as a parameter
 ) -> Tuple[List[int], List[float], np.ndarray, np.ndarray]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = graph.number_of_nodes()
-    current_solution = generate_initial_solution(graph)
+    if initial_solution is None:  # Use default if no initial solution is provided
+        current_solution = generate_initial_solution(graph)
+    else:
+        current_solution = initial_solution  # Use the provided initial solution
     current_score = evaluate_solution(current_solution, graph)
     best_solution = current_solution[:]
     best_score = current_score[:]
@@ -300,7 +345,7 @@ def simulated_annealing_single_restart(
         1.0,
         1.0,
         1.0,
-    ]  
+    ]
     for i in range(max_iterations):
         if i % 100 == 0:
             print(f"Restart {restart + 1}, Iteration {i + 1}...")
@@ -321,7 +366,7 @@ def simulated_annealing_single_restart(
             print(
                 f"Restart {restart + 1}, Iteration {i + 1}: Updated operator weights: {operator_weights}"
             )
-        
+
         if neighbor_generation_method == "ml":
             if lgbm_model is None or xgboost_model is None:
                 print(
@@ -409,7 +454,7 @@ def simulated_annealing_single_restart(
         best_score,
         X_np,
         y_np,
-    )  
+    )
 
 
 def simulated_annealing(
@@ -420,10 +465,10 @@ def simulated_annealing(
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
     initial_exploration_iterations: int = 20,
-    ml_switch_iteration: int = 25, 
+    ml_switch_iteration: int = 25,
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    n_jobs: int = n_jobs,  
+    n_jobs: int = n_jobs,
     neighbor_batch_size: int = 10,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
@@ -433,6 +478,10 @@ def simulated_annealing(
     xgboost_model = None
     all_X = []
     all_y = []
+
+    # Generate diverse initial solutions using differential evolution
+    initial_solutions = generate_initial_solution_de(graph, num_solutions=num_restarts)
+
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
             graph,
@@ -446,10 +495,11 @@ def simulated_annealing(
             save_interval,
             operator_change_interval,
             neighbor_batch_size,
-            lgbm_model,  
+            lgbm_model,
             xgboost_model,
+            initial_solution,  # Pass the initial solution to the restart function
         )
-        for restart in range(num_restarts)
+        for restart, initial_solution in enumerate(initial_solutions)
     )
     for result in results:
         (
@@ -457,7 +507,7 @@ def simulated_annealing(
             score,
             restart_X,
             restart_y,
-        ) = result 
+        ) = result
         pareto_front.append((solution, score))
         all_X.extend(restart_X)
         all_y.extend(restart_y)
@@ -514,7 +564,7 @@ def update_operator_weights(
     for i in range(initial_exploration_iterations, len(X) - 1):
         if (
             i < ml_switch_iteration
-        ): 
+        ):  # Only update weights during the weighted operator phase
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
@@ -535,14 +585,14 @@ def update_operator_weights(
                 operator_improvements[operator_index]["total_improvement"] += (
                     improvement
                 )
-    for i in range(5):  
+    for i in range(5):
         op_data = operator_improvements[i]
         if op_data["count"] > 0:
             operator_weights[i] = (
                 op_data["total_improvement"] / op_data["count"]
             )
         else:
-            operator_weights[i] = 1.0  
+            operator_weights[i] = 1.0  # Reset weight if no improvements
     total_weight = sum(operator_weights)
     operator_weights = [w / total_weight for w in operator_weights]
     return operator_weights
@@ -566,7 +616,7 @@ def is_insert(list1: List[int], list2: List[int]) -> bool:
         return False
     i1, a1, b1 = differences[0]
     i2, a2, b2 = differences[1]
-    return a1 == b2 and (i1 + 1) == i2 
+    return a1 == b2 and (i1 + 1) == i2
 
 # Diversification Strategies
 def generate_diverse_initial_solutions(graph: nx.Graph, num_solutions: int) -> List[List[int]]:
@@ -574,9 +624,9 @@ def generate_diverse_initial_solutions(graph: nx.Graph, num_solutions: int) -> L
     n = graph.number_of_nodes()
     solutions = []
     for i in range(num_solutions):
-        t = i * (n - 1) // (num_solutions - 1) 
+        t = i * (n - 1) // (num_solutions - 1)
         solution = generate_initial_solution(graph)
-        solution[-1] = t 
+        solution[-1] = t
         solutions.append(solution)
     return solutions
 
@@ -613,25 +663,25 @@ if __name__ == "__main__":
     print(f"Processing problem: {chosen_problem}")
     graph = load_graph(chosen_problem)
 
-    num_initial_solutions = 10 
+    num_initial_solutions = 10
     diverse_solutions = generate_diverse_initial_solutions(graph, num_initial_solutions)
 
     pareto_front = []
     for i, initial_solution in enumerate(diverse_solutions):
         print(f"Starting Simulated Annealing from diverse solution {i+1}...")
         solution_set = simulated_annealing(
-            graph,  
+            graph,
             chosen_problem,
-            max_iterations=20000,  
-            num_restarts=20,  
-            save_interval=2000, 
-            operator_change_interval=500, 
+            max_iterations=20000,
+            num_restarts=20,
+            save_interval=2000,
+            operator_change_interval=500,
             initial_exploration_iterations=1000,
-            ml_switch_iteration=2000,  
-            n_jobs=n_jobs,  
-            neighbor_batch_size=20, 
+            ml_switch_iteration=2000,
+            n_jobs=n_jobs,
+            neighbor_batch_size=20,
         )
-        pareto_front.extend(solution_set) 
+        pareto_front.extend(solution_set)
 
     filtered_pareto_front = []
     for i in range(len(pareto_front)):
