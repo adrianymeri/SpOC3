@@ -14,7 +14,7 @@ from sklearn.model_selection import KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 import os
-import networkx as nx  # Import NetworkX
+import networkx as nx
 
 # Determine the number of available cores
 num_cores = os.cpu_count()
@@ -182,7 +182,7 @@ def generate_initial_solution_de(graph: nx.Graph, num_solutions: int = 10) -> Li
 
     for _ in range(num_solutions):
         # Run differential evolution optimization
-        result = differential_evolution(de_objective, bounds, popsize=50, maxiter=1000, disp=False) # Disable DE logs
+        result = differential_evolution(de_objective, bounds, popsize=50, maxiter=1000, disp=False)
 
         # Extract the best solution and convert to a valid decision vector
         t = int(result.x[-1])
@@ -231,7 +231,7 @@ def train_model(
         cv=kfold,
         random_state=42,
         n_jobs=n_jobs,
-        verbose=1, # Show progress during model training
+        verbose=1,
     )
     random_search.fit(X, y)
     best_model = random_search.best_estimator_
