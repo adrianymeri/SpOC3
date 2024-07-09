@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 from typing import List, Tuple
 
+import networkx as nx
 import numpy as np
 import urllib.request
 from joblib import Parallel, delayed
@@ -13,13 +14,12 @@ from sklearn.model_selection import cross_val_score, KFold, RandomizedSearchCV
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 import os
-import networkx as nx  # Add NetworkX for graph analysis
 
+# Add NetworkX for graph analysis
 # Determine the number of available cores
 num_cores = os.cpu_count()
-
-# Use a fraction of the available cores to avoid oversubscription
-n_jobs = max(1, num_cores // 3)  # Ensure at least one core is used
+# Use all available cores for maximum parallelization
+n_jobs = num_cores 
 
 # Define the problem instances
 problems = {
@@ -28,7 +28,6 @@ problems = {
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
-
 
 # Define a scorer function for multi-objective optimization
 def torso_scorer(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -42,22 +41,21 @@ def load_graph(problem_id: str) -> nx.Graph:
     """Loads the graph data for the given problem ID."""
     url = problems[problem_id]
     print(f"Loading graph data from: {url}")
-    if url.startswith("http"):  # Load from URL
+    if url.startswith("http"):
         with urllib.request.urlopen(url) as f:
-            # Don't split lines here, pass them directly to parse_adjlist
             graph = nx.parse_adjlist(
                 (line.decode("utf-8").strip() for line in f if not line.startswith(b"#")),
-                nodetype=int
+                nodetype=int,
             )
-    else:  # Load from local file
+    else:
         with open(url, "r") as f:
-            # Same here, don't split lines prematurely
             graph = nx.parse_adjlist(
                 (line.strip() for line in f if not line.strip().startswith("#")),
-                nodetype=int
+                nodetype=int,
             )
     print(f"Loaded graph with {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.")
     return graph
+
 
 def calculate_torso_size(decision_vector: List[int]) -> int:
     """Calculates the size of the torso for the given decision vector."""
@@ -71,19 +69,18 @@ def calculate_torso_width(decision_vector: List[int], graph: nx.Graph) -> int:
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     permutation = decision_vector[:-1]
-
-    # Use NetworkX's efficient neighborhood access
     max_outdegree = 0
     for i in range(t, n):
-        outdegree = sum(1 for j in graph.neighbors(permutation[i]) if j in permutation[t:] and permutation.index(j) > i)
+        outdegree = sum(
+            1
+            for j in graph.neighbors(permutation[i])
+            if j in permutation[t:] and permutation.index(j) > i
+        )
         max_outdegree = max(max_outdegree, outdegree)
-
     return max_outdegree
 
 
-def evaluate_solution(
-    decision_vector: List[int], graph: nx.Graph
-) -> List[float]:
+def evaluate_solution(decision_vector: List[int], graph: nx.Graph) -> List[float]:
     """Evaluates the given solution and returns the torso size and width."""
     torso_size = calculate_torso_size(decision_vector)
     torso_width = calculate_torso_width(decision_vector, graph)
@@ -97,9 +94,7 @@ def generate_neighbor_swap(
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     num_perturbations = max(1, int(perturbation_rate * (n - t)))
-
     neighbor = decision_vector.copy()
-
     for _ in range(num_perturbations):
         i = random.randint(t, n - 1)
         j = random.randint(t, n - 1)
@@ -112,17 +107,14 @@ def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
     n = len(decision_vector) - 1
     t = decision_vector[-1]
     neighbor = decision_vector.copy()
-
     i = random.randint(t, n - 1)  # Index of element to move
     j = random.randint(t, n)  # Target index (inclusive)
-
     # Insert at j, shifting elements to the right
     neighbor.insert(j, neighbor.pop(i))
-
     # Recalculate torso size (t) - This is crucial!
     neighbor[-1] = len(neighbor) - 1 - neighbor[:-1].index(neighbor[-2])
-
     return neighbor
+
 
 def generate_neighbor_shuffle(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor solution by shuffling a portion of the decision vector within the torso."""
@@ -152,10 +144,8 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
     neighbor = decision_vector.copy()
     n = len(neighbor) - 1
     t = neighbor[-1]
-
     i = random.randint(t, max(t, n - 3))
     j = random.randint(i + 1, n)
-
     neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
 
@@ -167,22 +157,11 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     )
 
 def generate_initial_solution(graph: nx.Graph) -> List[int]:
-    """Generates an initial solution using a greedy approach."""
-    n = graph.number_of_nodes()
-    unplaced_nodes = set(graph.nodes())
-    placement_order = []
+    """Generates an initial solution using a degree-based heuristic."""
+    degrees = dict(graph.degree())
+    sorted_nodes = sorted(degrees, key=degrees.get)  # Sort nodes by ascending degree
+    return sorted_nodes + [len(sorted_nodes) // 2]  # Start with torso in the middle
 
-    while unplaced_nodes:
-        # Find node with the fewest unplaced neighbors
-        best_node = min(
-            unplaced_nodes, key=lambda node: sum(1 for neighbor in graph.neighbors(node) if neighbor in unplaced_nodes)
-        )
-        placement_order.append(best_node)
-        unplaced_nodes.remove(best_node)
-
-    # Initial torso size is set to a random value for now
-    t = random.randint(0, n - 1) 
-    return placement_order + [t] 
 
 def train_model(
     X: np.ndarray, y: np.ndarray, model_type: str = "lgbm"
@@ -210,14 +189,13 @@ def train_model(
             "estimator__subsample": [0.7, 0.8, 0.9, 1.0],
             "estimator__colsample_bytree": [0.7, 0.8, 0.9, 1.0],
         }
-
     kfold = KFold(
         n_splits=3, shuffle=True, random_state=42
-    )  # Reduced splits for speed
+    ) 
     random_search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_grid,
-        n_iter=5,  # Reduced iterations for speed
+        n_iter=10,  
         scoring=make_scorer(torso_scorer, greater_is_better=False),
         cv=kfold,
         random_state=42,
@@ -245,11 +223,11 @@ def generate_neighbor_ml(
         neighbors.append(generate_neighbor_shuffle(decision_vector.copy()))
         neighbors.append(generate_neighbor_torso_shift(decision_vector.copy()))
         neighbors.append(generate_neighbor_2opt(decision_vector.copy()))
-
     neighbors_np = np.array(neighbors)
     predictions = model.predict(neighbors_np)
     scores = [
-        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1)) for pred in predictions
+        torso_scorer(np.array([[0, 0]]), pred.reshape(1, -1))
+        for pred in predictions
     ]
     best_neighbor_idx = np.argmin(scores)
     return neighbors[best_neighbor_idx]
@@ -290,7 +268,6 @@ def evaluate_neighbors_parallel(
     )
     return results
 
-
 def simulated_annealing_single_restart(
     graph: nx.Graph,
     restart: int,
@@ -299,46 +276,37 @@ def simulated_annealing_single_restart(
     initial_temperature: float = 500.0,
     cooling_rate: float = 0.99,
     initial_exploration_iterations: int = 2000,
-    ml_switch_iteration: int = 4000,  # Iteration to start using ML model
+    ml_switch_iteration: int = 4000, 
     save_interval: int = 500,
     operator_change_interval: int = 1000,
     neighbor_batch_size: int = 20,
-    lgbm_model: MultiOutputRegressor = None,  # Pass models as arguments
+    lgbm_model: MultiOutputRegressor = None,  
     xgboost_model: MultiOutputRegressor = None,
 ) -> Tuple[List[int], List[float], np.ndarray, np.ndarray]:
     """Performs a single restart of the simulated annealing algorithm."""
     n = graph.number_of_nodes()
-
     current_solution = generate_initial_solution(graph)
     current_score = evaluate_solution(current_solution, graph)
-
     best_solution = current_solution[:]
     best_score = current_score[:]
-
     temperature = initial_temperature
-
     initial_perturbation_rate = 0.5
     perturbation_rate_decay = 0.99
-
     X = []
     y = []
-
     operator_weights = [
         1.0,
         1.0,
         1.0,
         1.0,
         1.0,
-    ]  # Added weight for 'insert'
-
+    ]  
     for i in range(max_iterations):
         if i % 100 == 0:
             print(f"Restart {restart + 1}, Iteration {i + 1}...")
-
         neighbor_generation_method = choose_neighbor_generation_method(
             i, initial_exploration_iterations, ml_switch_iteration, operator_weights
         )
-
         if (
             i >= initial_exploration_iterations
             and i % operator_change_interval == 0
@@ -353,20 +321,17 @@ def simulated_annealing_single_restart(
             print(
                 f"Restart {restart + 1}, Iteration {i + 1}: Updated operator weights: {operator_weights}"
             )
-
-        # Generate neighbors based on the chosen method
+        
         if neighbor_generation_method == "ml":
             if lgbm_model is None or xgboost_model is None:
                 print(
                     f"Restart {restart + 1}, Iteration {i + 1}: ML models not ready yet, using random operator"
                 )
-                # If models haven't been trained yet, use a regular operator
                 neighbor_generation_method = random.choices(
                     ["swap", "shuffle", "torso_shift", "2opt", "insert"],
                     weights=[0.3, 0.3, 0.2, 0.1, 0.1],
                 )[0]
             else:
-                # Use ML models to generate a neighbor
                 model_choice = random.choice(["lgbm", "xgboost", "hybrid"])
                 if model_choice == "lgbm":
                     neighbor = generate_neighbor_ml(
@@ -376,27 +341,23 @@ def simulated_annealing_single_restart(
                     neighbor = generate_neighbor_ml(
                         current_solution, graph, xgboost_model
                     )
-                else:  # Hybrid - choose model based on iteration
+                else:
                     neighbor = generate_neighbor_ml(
                         current_solution,
                         graph,
                         lgbm_model if i % 2 == 0 else xgboost_model,
                     )
-                neighbor_score = evaluate_solution(neighbor, graph)
-
-                # Acceptance based on Metropolis Hastings (always accept better)
-                delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
-                    neighbor_score[1] - current_score[1]
+            neighbor_score = evaluate_solution(neighbor, graph)
+            delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
+                neighbor_score[1] - current_score[1]
+            )
+            acceptance_probability = np.exp(-delta_score / temperature)
+            if delta_score < 0 or random.random() < acceptance_probability:
+                current_solution = neighbor[:]
+                current_score = neighbor_score[:]
+                print(
+                    f"Restart {restart + 1}, Iteration {i + 1}: Accepted ML-generated neighbor with score {neighbor_score}"
                 )
-                acceptance_probability = np.exp(-delta_score / temperature)
-                if delta_score < 0 or random.random() < acceptance_probability:
-                    current_solution = neighbor[:]
-                    current_score = neighbor_score[:]
-                    print(
-                        f"Restart {restart + 1}, Iteration {i + 1}: Accepted ML-generated neighbor with score {neighbor_score}"
-                    )
-
-        # If not using ML for neighbor generation in this iteration
         if neighbor_generation_method != "ml":
             neighbors = []
             for _ in range(neighbor_batch_size):
@@ -414,11 +375,9 @@ def simulated_annealing_single_restart(
                 elif neighbor_generation_method == "insert":
                     neighbor = generate_neighbor_insert(current_solution)
                 neighbors.append(neighbor)
-
             neighbor_scores = evaluate_neighbors_parallel(neighbors, graph)
             X.extend(neighbors)
             y.extend(neighbor_scores)
-
             for neighbor, neighbor_score in zip(neighbors, neighbor_scores):
                 if dominates(neighbor_score, best_score):
                     best_solution = neighbor[:]
@@ -426,8 +385,6 @@ def simulated_annealing_single_restart(
                     print(
                         f"Restart {restart + 1} - Iteration {i + 1}: New best solution found - Score: {best_score}"
                     )
-
-                # Metropolis Hastings acceptance
                 delta_score = (neighbor_score[0] - current_score[0]) + 0.5 * (
                     neighbor_score[1] - current_score[1]
                 )
@@ -435,19 +392,15 @@ def simulated_annealing_single_restart(
                 if delta_score < 0 or random.random() < acceptance_probability:
                     current_solution = neighbor[:]
                     current_score = neighbor_score[:]
-
         temperature *= cooling_rate
-
         if (i + 1) % save_interval == 0:
             create_submission_file(
                 best_solution,
                 problem_id,
                 f"intermediate_solution_{restart + 1}_iter_{i + 1}.json",
             )
-
     X_np = np.array(X)
     y_np = np.array(y)
-
     print(
         f"Restart {restart + 1} completed. Best solution: {best_solution}, Score: {best_score}"
     )
@@ -456,7 +409,7 @@ def simulated_annealing_single_restart(
         best_score,
         X_np,
         y_np,
-    )  # Return X_np and y_np
+    )  
 
 
 def simulated_annealing(
@@ -467,24 +420,19 @@ def simulated_annealing(
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
     initial_exploration_iterations: int = 20,
-    ml_switch_iteration: int = 25,  # When to switch to ML
+    ml_switch_iteration: int = 25, 
     save_interval: int = 50,
     operator_change_interval: int = 100,
-    n_jobs: int = n_jobs,  # Use the calculated n_jobs
+    n_jobs: int = n_jobs,  
     neighbor_batch_size: int = 10,
 ) -> List[List[int]]:
     """Performs simulated annealing to find a set of Pareto optimal solutions."""
     pareto_front = []
     start_time = time.time()
-
-    # Initialize ML models outside the parallel loop
     lgbm_model = None
     xgboost_model = None
-
-    # Collect training data from all restarts
     all_X = []
     all_y = []
-
     results = Parallel(n_jobs=n_jobs)(
         delayed(simulated_annealing_single_restart)(
             graph,
@@ -498,7 +446,7 @@ def simulated_annealing(
             save_interval,
             operator_change_interval,
             neighbor_batch_size,
-            lgbm_model,  # Pass models to restarts
+            lgbm_model,  
             xgboost_model,
         )
         for restart in range(num_restarts)
@@ -509,21 +457,17 @@ def simulated_annealing(
             score,
             restart_X,
             restart_y,
-        ) = result  # Get X and y from each restart
+        ) = result 
         pareto_front.append((solution, score))
         all_X.extend(restart_X)
         all_y.extend(restart_y)
-
     print(f"Pareto Front: {pareto_front}")
-
-    # Train models after all restarts have finished
     if all_X:
         print("Training ML models with data from all restarts...")
         X_np = np.array(all_X)
         y_np = np.array(all_y)
         lgbm_model = train_model(X_np, y_np, "lgbm")
         xgboost_model = train_model(X_np, y_np, "xgboost")
-
     filtered_pareto_front = []
     for i in range(len(pareto_front)):
         solution1, score1 = pareto_front[i]
@@ -570,7 +514,7 @@ def update_operator_weights(
     for i in range(initial_exploration_iterations, len(X) - 1):
         if (
             i < ml_switch_iteration
-        ):  # Only update weights based on non-ML iterations
+        ): 
             previous_score = y[i - 1]
             current_score = y[i]
             improvement = (previous_score[0] - current_score[0]) + 0.5 * (
@@ -587,22 +531,20 @@ def update_operator_weights(
                     operator_index = 4  # insert
                 else:
                     operator_index = 0  # swap
-
                 operator_improvements[operator_index]["count"] += 1
-                operator_improvements[operator_index][
-                    "total_improvement"
-                ] += improvement
-
-    for i in range(5):  # Update weights for all 5 operators
+                operator_improvements[operator_index]["total_improvement"] += (
+                    improvement
+                )
+    for i in range(5):  
         op_data = operator_improvements[i]
         if op_data["count"] > 0:
-            operator_weights[i] = op_data["total_improvement"] / op_data["count"]
+            operator_weights[i] = (
+                op_data["total_improvement"] / op_data["count"]
+            )
         else:
-            operator_weights[i] = 1.0  # Default if no data yet
-
+            operator_weights[i] = 1.0  
     total_weight = sum(operator_weights)
     operator_weights = [w / total_weight for w in operator_weights]
-
     return operator_weights
 
 
@@ -624,18 +566,41 @@ def is_insert(list1: List[int], list2: List[int]) -> bool:
         return False
     i1, a1, b1 = differences[0]
     i2, a2, b2 = differences[1]
-    return a1 == b2 and (i1 + 1) == i2  # Check if elements were indeed inserted
+    return a1 == b2 and (i1 + 1) == i2 
 
+# Diversification Strategies
+def generate_diverse_initial_solutions(graph: nx.Graph, num_solutions: int) -> List[List[int]]:
+    """Generates multiple initial solutions with different torso sizes."""
+    n = graph.number_of_nodes()
+    solutions = []
+    for i in range(num_solutions):
+        t = i * (n - 1) // (num_solutions - 1) 
+        solution = generate_initial_solution(graph)
+        solution[-1] = t 
+        solutions.append(solution)
+    return solutions
 
+def perturb_solution(solution: List[int], strength: float = 0.2) -> List[int]:
+    """Applies a strong perturbation to a solution to escape local optima."""
+    n = len(solution) - 1
+    t = solution[-1]
+    perturbation_size = max(1, int(strength * (n - t)))
+    neighbor = solution.copy()
+    indices = list(range(t, n))
+    random.shuffle(indices)
+    for i in range(perturbation_size):
+        j = random.randint(t, n - 1)
+        neighbor[indices[i]], neighbor[j] = neighbor[j], neighbor[indices[i]]
+    return neighbor
+
+# Updated main function
 if __name__ == "__main__":
     random.seed(42)
-
     chosen_problem = (
         input("Choose problem difficulty (supereasy, easy, medium, hard): ")
         .lower()
         .strip()
     )
-
     while chosen_problem not in problems:
         print(
             "Invalid problem difficulty. Please choose from 'supereasy', 'easy', 'medium', or 'hard'."
@@ -645,24 +610,45 @@ if __name__ == "__main__":
             .lower()
             .strip()
         )
-
     print(f"Processing problem: {chosen_problem}")
-    graph = load_graph(chosen_problem) 
+    graph = load_graph(chosen_problem)
 
-    pareto_front = simulated_annealing(
-        graph, # Pass the NetworkX graph 
-        chosen_problem,
-        max_iterations=10000,  # Significantly increased iterations
-        num_restarts=20,  # Increased restarts
-        save_interval=2000,  # Save less frequently
-        operator_change_interval=500,  # Update operator weights less frequently
-        initial_exploration_iterations=1000,  # Longer exploration
-        ml_switch_iteration=2000,  # Switch to ML after more exploration
-        n_jobs=n_jobs,  # Use calculated n_jobs
-        neighbor_batch_size=20,  # Increased batch size
-    )
+    num_initial_solutions = 10 
+    diverse_solutions = generate_diverse_initial_solutions(graph, num_initial_solutions)
 
-    for i, solution in enumerate(pareto_front):
+    pareto_front = []
+    for i, initial_solution in enumerate(diverse_solutions):
+        print(f"Starting Simulated Annealing from diverse solution {i+1}...")
+        solution_set = simulated_annealing(
+            graph,  
+            chosen_problem,
+            max_iterations=20000,  
+            num_restarts=20,  
+            save_interval=2000, 
+            operator_change_interval=500, 
+            initial_exploration_iterations=1000,
+            ml_switch_iteration=2000,  
+            n_jobs=n_jobs,  
+            neighbor_batch_size=20, 
+        )
+        pareto_front.extend(solution_set) 
+
+    filtered_pareto_front = []
+    for i in range(len(pareto_front)):
+        solution1 = pareto_front[i]
+        score1 = evaluate_solution(solution1, graph)
+        dominated = False
+        for j in range(len(pareto_front)):
+            if i != j:
+                solution2 = pareto_front[j]
+                score2 = evaluate_solution(solution2, graph)
+                if dominates(score2, score1):
+                    dominated = True
+                    break
+        if not dominated:
+            filtered_pareto_front.append(solution1)
+
+    for i, solution in enumerate(filtered_pareto_front):
         create_submission_file(
             solution, chosen_problem, f"{chosen_problem}_final_solution_{i + 1}.json"
         )
