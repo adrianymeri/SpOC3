@@ -14,6 +14,7 @@ from joblib import Parallel, delayed
 
 # Define the problem instances
 problems = {
+    "supereasy": "data/supereasy.gr",
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
@@ -29,15 +30,23 @@ def torso_scorer(y_true, y_pred):
 
 def load_graph(problem_id: str) -> List[List[int]]:
     """Loads the graph data for the given problem ID."""
-    url = problems[problem_id]
-    print(f"Loading graph data from: {url}")
-    with urllib.request.urlopen(url) as f:
-        edges = []
-        for line in f:
-            if line.startswith(b"#"):
-                continue
-            u, v = map(int, line.strip().split())
-            edges.append([u, v])
+    file_path = problems[problem_id]
+    print(f"Loading graph data from: {file_path}")
+    edges = []
+    if file_path.startswith("http"):
+        with urllib.request.urlopen(file_path) as f:
+            for line in f:
+                if line.startswith(b"#"):
+                    continue
+                u, v = map(int, line.strip().split())
+                edges.append([u, v])
+    else:
+        with open(file_path, "r") as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                u, v = map(int, line.strip().split())
+                edges.append([u, v])
     print(f"Loaded graph with {len(edges)} edges.")
     return edges
 
@@ -296,7 +305,9 @@ def create_submission_file(
 
 if __name__ == "__main__":
     random.seed(42)
-    problem_id = "easy"  # You can change this to 'medium' or 'hard'
+    problem_id = input(
+        "Select problem instance (supereasy, easy, medium, hard): "
+    )  # Get input from the user
     edges = load_graph(problem_id)
 
     # Simulated Annealing
