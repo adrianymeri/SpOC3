@@ -148,6 +148,28 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     neighbor[-1] = new_torso_position
     return neighbor
 
+def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
+    """Generates a neighbor by randomly inserting an element at a different position."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    i = random.randint(0, n - 1)
+    j = random.randint(0, n)
+    element = neighbor.pop(i)
+    neighbor.insert(j, element)
+    return neighbor
+
+def generate_neighbor_inversion(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor by reversing a subsequence of the decision vector."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    inversion_length = max(1, int(perturbation_rate * n))
+    start_index = random.randint(0, n - inversion_length)
+    neighbor[start_index : start_index + inversion_length] = reversed(
+        neighbor[start_index : start_index + inversion_length]
+    )
+    return neighbor
 
 # --- End of Neighborhood Operators ---
 
@@ -159,10 +181,14 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     )
 
 
-def acceptance_probability(old_score: List[float], new_score: List[float], temperature: float) -> float:
+def acceptance_probability(
+    old_score: List[float], new_score: List[float], temperature: float
+) -> float:
     """Calculates the acceptance probability in Simulated Annealing."""
-    # Calculate the difference in scores, prioritizing smaller size and width
-    delta_score = (old_score[0] - new_score[0]) + 0.5 * (old_score[1] - new_score[1])
+    # Reshape the scores into 2D arrays with one row and two columns
+    delta_score = torso_scorer(np.array([new_score])) - torso_scorer(
+        np.array([old_score])
+    )
     return np.exp(delta_score / temperature)
 
 
@@ -172,7 +198,7 @@ def simulated_annealing_single_restart(
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift"],
+    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift", "insert", "inversion"],
     save_interval: int = 50,
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the Simulated Annealing algorithm."""
@@ -194,6 +220,9 @@ def simulated_annealing_single_restart(
     print(f"Restart {restart+1} - Initial Solution: {current_solution}, Score: {current_score}")
 
     for i in range(max_iterations):
+        # Adaptive Perturbation: Adjust perturbation rate based on temperature
+        perturbation_rate = 0.2 * (temperature / initial_temperature)
+
         # Choose a neighbor operator based on weights
         operator = random.choices(
             list(operator_weights.keys()), list(operator_weights.values())
@@ -201,13 +230,17 @@ def simulated_annealing_single_restart(
 
         # Generate neighbor solution using the selected operator
         if operator == "swap":
-            neighbor = generate_neighbor_swap(current_solution)
+            neighbor = generate_neighbor_swap(current_solution, perturbation_rate)
         elif operator == "2opt":
             neighbor = generate_neighbor_2opt(current_solution)
         elif operator == "shuffle":
-            neighbor = generate_neighbor_shuffle(current_solution)
+            neighbor = generate_neighbor_shuffle(current_solution, perturbation_rate)
         elif operator == "torso_shift":
             neighbor = generate_neighbor_torso_shift(current_solution)
+        elif operator == "insert":
+            neighbor = generate_neighbor_insert(current_solution)
+        elif operator == "inversion":
+            neighbor = generate_neighbor_inversion(current_solution, perturbation_rate)
         else:
             raise ValueError(f"Invalid neighbor operator: {operator}")
 
@@ -270,7 +303,7 @@ def simulated_annealing(
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift"],
+    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift", "insert", "inversion"],
     save_interval: int = 50,
     n_jobs: int = -1,
 ) -> List[List[int]]:
@@ -320,7 +353,7 @@ def create_submission_file(
     """Creates a valid submission file."""
     submission = {
         "decisionVector": [decision_vector],  # Wrap in a list for multiple solutions
-        "problem": problem_id, # Use the provided problem_id
+        "problem": problem_id,  # Use the provided problem_id
         "challenge": "spoc-3-torso-decompositions",
     }
     with open(filename, "w") as f:
@@ -348,6 +381,8 @@ if __name__ == "__main__":
             "2opt",
             "shuffle",
             "torso_shift",
+            "insert",  # Added insert operator
+            "inversion",  # Added inversion operator
         ],  # Choose operators to use
         save_interval=50,  # Save every 50 iterations
     )
