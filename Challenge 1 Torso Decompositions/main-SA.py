@@ -14,19 +14,23 @@ from joblib import Parallel, delayed
 
 # Define the problem instances
 problems = {
-    "supereasy": "data/supereasy.gr",
+    "supereasy": "data/toy.gr",
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
 # Define a scorer function for multi-objective optimization
-def torso_scorer(y_true, y_pred):"""Combines torso size and width into a single score for optimization."""size_weight = -1  # Prioritize minimizing size
+def torso_scorer(y_true, y_pred):
+    """Combines torso size and width into a single score for optimization."""
+    size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
 
-def load_graph(problem_id: str) -> List[List[int]]:"""Loads the graph data for the given problem ID."""file_path = problems[problem_id]
+def load_graph(problem_id: str) -> List[List[int]]:
+    """Loads the graph data for the given problem ID."""
+    file_path = problems[problem_id]
     print(f"Loading graph data from: {file_path}")
     edges = []
     if file_path.startswith("http"):
@@ -47,12 +51,16 @@ def load_graph(problem_id: str) -> List[List[int]]:"""Loads the graph data for t
     return edges
 
 
-def calculate_torso_size(decision_vector: List[int]) -> int:"""Calculates the size of the torso for the given decision vector."""n = len(decision_vector) - 1
+def calculate_torso_size(decision_vector: List[int]) -> int:
+    """Calculates the size of the torso for the given decision vector."""
+    n = len(decision_vector) - 1
     t = decision_vector[-1]
     return n - t
 
 
-def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:"""Calculates the width of the torso for the given decision vector and edges."""n = len(decision_vector) - 1
+def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
+    """Calculates the width of the torso for the given decision vector and edges."""
+    n = len(decision_vector) - 1
     t = decision_vector[-1]
     permutation = decision_vector[:-1]
 
@@ -84,7 +92,9 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
 
 def evaluate_solution(
     decision_vector: List[int], edges: List[List[int]]
-) -> List[float]:"""Evaluates the given solution and returns the torso size and width."""torso_size = calculate_torso_size(decision_vector)
+) -> List[float]:
+    """Evaluates the given solution and returns the torso size and width."""
+    torso_size = calculate_torso_size(decision_vector)
     torso_width = calculate_torso_width(decision_vector, edges)
     return [torso_size, torso_width]
 
@@ -93,7 +103,9 @@ def evaluate_solution(
 
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:"""Generates a neighbor solution by swapping two random elements."""neighbor = decision_vector[:]
+) -> List[int]:
+    """Generates a neighbor solution by swapping two random elements."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
     num_perturbations = max(1, int(perturbation_rate * n))
     swap_indices = random.sample(range(n), num_perturbations * 2)
@@ -105,7 +117,9 @@ def generate_neighbor_swap(
     return neighbor
 
 
-def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:"""Generates a neighbor solution using the 2-opt operator."""n = len(decision_vector) - 1
+def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:
+    """Generates a neighbor solution using the 2-opt operator."""
+    n = len(decision_vector) - 1
     i = random.randint(0, n - 2)
     j = random.randint(i + 1, n - 1)
     neighbor = decision_vector[:i] + decision_vector[i:j][::-1] + decision_vector[j:]
@@ -114,7 +128,9 @@ def generate_neighbor_2opt(decision_vector: List[int]) -> List[int]:"""Generates
 
 def generate_neighbor_shuffle(
     decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:"""Generates a neighbor solution by shuffling a portion of the decision vector."""neighbor = decision_vector[:]
+) -> List[int]:
+    """Generates a neighbor solution by shuffling a portion of the decision vector."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
     shuffle_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - shuffle_length)
@@ -124,7 +140,9 @@ def generate_neighbor_shuffle(
     return neighbor
 
 
-def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:"""Generates a neighbor solution by shifting the torso position."""neighbor = decision_vector[:]
+def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
+    """Generates a neighbor solution by shifting the torso position."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
     new_torso_position = random.randint(0, n - 1)
     neighbor[-1] = new_torso_position
@@ -134,14 +152,18 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:"""Ge
 # --- End of Neighborhood Operators ---
 
 
-def dominates(score1: List[float], score2: List[float]) -> bool:"""Checks if score1 dominates score2 in multi-objective optimization."""return all(x <= y for x, y in zip(score1, score2)) and any(
+def dominates(score1: List[float], score2: List[float]) -> bool:
+    """Checks if score1 dominates score2 in multi-objective optimization."""
+    return all(x <= y for x, y in zip(score1, score2)) and any(
         x < y for x, y in zip(score1, score2)
     )
 
 
 def acceptance_probability(
     old_score: List[float], new_score: List[float], temperature: float
-) -> float:"""Calculates the acceptance probability in Simulated Annealing."""# Use torso_scorer to combine multiple objectives into a single value
+) -> float:
+    """Calculates the acceptance probability in Simulated Annealing."""
+    # Use torso_scorer to combine multiple objectives into a single value
     delta_score = torso_scorer([[0, 0]], np.array(new_score)) - torso_scorer(
         [[0, 0]], np.array(old_score)
     )
@@ -156,7 +178,9 @@ def simulated_annealing_single_restart(
     cooling_rate: float = 0.95,
     neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift"],
     save_interval: int = 50,
-) -> Tuple[List[int], List[float]]:"""Performs a single restart of the Simulated Annealing algorithm."""n = max(node for edge in edges for node in edge) + 1
+) -> Tuple[List[int], List[float]]:
+    """Performs a single restart of the Simulated Annealing algorithm."""
+    n = max(node for edge in edges for node in edge) + 1
 
     # Generate random initial solution
     current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
@@ -170,6 +194,8 @@ def simulated_annealing_single_restart(
     # Initialize operator weights and success counts
     operator_weights = {op: 1.0 for op in neighbor_operators}
     operator_success_counts = {op: 0 for op in neighbor_operators}
+
+    print(f"Restart {restart+1} - Initial Solution: {current_solution}, Score: {current_score}")
 
     for i in range(max_iterations):
         # Choose a neighbor operator based on weights
@@ -190,6 +216,9 @@ def simulated_annealing_single_restart(
             raise ValueError(f"Invalid neighbor operator: {operator}")
 
         neighbor_score = evaluate_solution(neighbor, edges)
+
+        # Print the operator used in each iteration
+        print(f"Restart {restart+1} - Iteration {i+1}: Operator used - {operator}")
 
         # Accept the neighbor if it's better or based on probability
         if dominates(neighbor_score, current_score) or random.random() < acceptance_probability(
@@ -248,7 +277,9 @@ def simulated_annealing(
     neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift"],
     save_interval: int = 50,
     n_jobs: int = -1,
-) -> List[List[int]]:"""Performs Simulated Annealing to find a set of Pareto optimal solutions."""pareto_front = []
+) -> List[List[int]]:
+    """Performs Simulated Annealing to find a set of Pareto optimal solutions."""
+    pareto_front = []
     start_time = time.time()
 
     # Run Simulated Annealing with multiple restarts in parallel
@@ -289,9 +320,11 @@ def simulated_annealing(
 
 def create_submission_file(
     decision_vector, problem_id, filename="submission.json"
-):"""Creates a valid submission file."""submission = {
+):
+    """Creates a valid submission file."""
+    submission = {
         "decisionVector": [decision_vector],  # Wrap in a list for multiple solutions
-        "problem": problem_id,
+        "problem": problem_id, # Use the provided problem_id
         "challenge": "spoc-3-torso-decompositions",
     }
     with open(filename, "w") as f:
