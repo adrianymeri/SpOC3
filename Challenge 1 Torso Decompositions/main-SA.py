@@ -1,7 +1,7 @@
 import json
 import random
 import time
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 import urllib.request
@@ -11,6 +11,13 @@ from sklearn.model_selection import cross_val_score, KFold
 from sklearn.multioutput import MultiOutputRegressor
 from xgboost import XGBRegressor
 from joblib import Parallel, delayed
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
+from pymoo.operators.sampling.rnd import IntegerRandomSampling
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
 
 # Define the problem instances
 problems = {
@@ -148,6 +155,7 @@ def generate_neighbor_torso_shift(decision_vector: List[int]) -> List[int]:
     neighbor[-1] = new_torso_position
     return neighbor
 
+
 def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
     """Generates a neighbor by randomly inserting an element at a different position."""
     neighbor = decision_vector[:]
@@ -157,6 +165,7 @@ def generate_neighbor_insert(decision_vector: List[int]) -> List[int]:
     element = neighbor.pop(i)
     neighbor.insert(j, element)
     return neighbor
+
 
 def generate_neighbor_inversion(
     decision_vector: List[int], perturbation_rate: float = 0.2
@@ -170,6 +179,7 @@ def generate_neighbor_inversion(
         neighbor[start_index : start_index + inversion_length]
     )
     return neighbor
+
 
 # --- End of Neighborhood Operators ---
 
@@ -248,8 +258,8 @@ def simulated_annealing_single_restart(
 
         neighbor_score = evaluate_solution(neighbor, edges)
 
-        # Print the operator used in each iteration
-        print(f"Restart {restart+1} - Iteration {i+1}: Operator used - {operator}")
+        # Print the operator used and current score in each iteration
+        print(f"Restart {restart+1} - Iteration {i+1}: Operator used - {operator}, Current Score: {current_score}")
 
         # Accept the neighbor if it's better or based on probability
         if dominates(neighbor_score, current_score) or random.random() < acceptance_probability(
@@ -327,7 +337,9 @@ def simulated_annealing(
         for restart in range(num_restarts)
     )
 
-    pareto_front = results  # Results now contain solutions from all restarts
+    # Results now contain solutions from all restarts
+    for result in results:
+        pareto_front.append(result)
 
     print(f"Pareto Front: {pareto_front}")
 
@@ -363,6 +375,52 @@ def create_submission_file(
     print(f"Submission file '{filename}' created successfully!")
 
 
+# --- Genetic Algorithm using pymoo ---
+
+class TorsoProblem(ElementwiseProblem):
+    def __init__(self, edges: List[List[int]]):
+        super().__init__(n_var=len(edges) + 1,
+                         n_obj=2,
+                         n_constr=0,
+                         xl=np.zeros(len(edges) + 1),
+                         xu=np.array([len(edges)] * len(edges) + [len(edges) - 1]))
+        self.edges = edges
+
+    def _evaluate(self, x, out, *args, **kwargs):
+        decision_vector = x.astype(int).tolist()
+        torso_size = calculate_torso_size(decision_vector)
+        torso_width = calculate_torso_width(decision_vector, self.edges)
+        out["F"] = [torso_size, torso_width]
+
+
+def run_genetic_algorithm(edges: List[List[int]], pop_size: int = 100, n_gen: int = 100):
+    """Runs the genetic algorithm to find a set of Pareto optimal solutions."""
+    problem = TorsoProblem(edges)
+
+    algorithm = NSGA2(
+        pop_size=pop_size,
+        sampling=IntegerRandomSampling(),
+        crossover=SBX(prob=0.9, eta=15),
+        mutation=PM(prob=1.0, eta=20),
+        eliminate_duplicates=True,
+    )
+
+    termination = get_termination("n_gen", n_gen)
+
+    res = minimize(problem,
+                   algorithm,
+                   termination,
+                   seed=1,
+                   save_history=True,
+                   verbose=True)
+
+    # Extract and return Pareto front solutions
+    pareto_front = [s.X.astype(int).tolist() for s in res.pop.get("X")]
+    return pareto_front
+
+
+# --- Main Execution ---
+
 if __name__ == "__main__":
     random.seed(42)
     problem_id = input(
@@ -370,24 +428,35 @@ if __name__ == "__main__":
     )  # Get input from the user
     edges = load_graph(problem_id)
 
-    # Simulated Annealing
-    print("Starting Simulated Annealing...")
-    pareto_front = simulated_annealing(
-        edges,
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        initial_temperature=100.0,  # Adjust as needed
-        cooling_rate=0.95,  # Adjust as needed
-        neighbor_operators=[
-            "swap",
-            "2opt",
-            "shuffle",
-            "torso_shift",
-            "insert",  # Added insert operator
-            "inversion",  # Added inversion operator
-        ],  # Choose operators to use
-        save_interval=50,  # Save every 50 iterations
-    )
+    # Choose an algorithm:
+    algorithm_choice = input("Choose an algorithm (SA for Simulated Annealing, GA for Genetic Algorithm): ").upper()
+
+    if algorithm_choice == "SA":
+        # Simulated Annealing
+        print("Starting Simulated Annealing...")
+        pareto_front = simulated_annealing(
+            edges,
+            max_iterations=1000,  # Adjust as needed
+            num_restarts=20,  # Adjust as needed
+            initial_temperature=100.0,  # Adjust as needed
+            cooling_rate=0.95,  # Adjust as needed
+            neighbor_operators=[
+                "swap",
+                "2opt",
+                "shuffle",
+                "torso_shift",
+                "insert",  # Added insert operator
+                "inversion",  # Added inversion operator
+            ],  # Choose operators to use
+            save_interval=50,  # Save every 50 iterations
+        )
+    elif algorithm_choice == "GA":
+        # Genetic Algorithm
+        print("Starting Genetic Algorithm...")
+        pareto_front = run_genetic_algorithm(edges, pop_size=100, n_gen=100)  # Adjust parameters as needed
+    else:
+        print("Invalid algorithm choice. Please choose SA or GA.")
+        exit()
 
     # Create Final Submission File
     for i, solution in enumerate(pareto_front):
