@@ -428,37 +428,48 @@ if __name__ == "__main__":
     )  # Get input from the user
     edges = load_graph(problem_id)
 
-    # Choose an algorithm:
-    algorithm_choice = input("Choose an algorithm (SA for Simulated Annealing, GA for Genetic Algorithm): ").upper()
+    # Run both Simulated Annealing and Genetic Algorithm
+    print("Starting Simulated Annealing...")
+    sa_pareto_front = simulated_annealing(
+        edges,
+        max_iterations=1000,  # Adjust as needed
+        num_restarts=20,  # Adjust as needed
+        initial_temperature=100.0,  # Adjust as needed
+        cooling_rate=0.95,  # Adjust as needed
+        neighbor_operators=[
+            "swap",
+            "2opt",
+            "shuffle",
+            "torso_shift",
+            "insert",  # Added insert operator
+            "inversion",  # Added inversion operator
+        ],  # Choose operators to use
+        save_interval=50,  # Save every 50 iterations
+    )
 
-    if algorithm_choice == "SA":
-        # Simulated Annealing
-        print("Starting Simulated Annealing...")
-        pareto_front = simulated_annealing(
-            edges,
-            max_iterations=1000,  # Adjust as needed
-            num_restarts=20,  # Adjust as needed
-            initial_temperature=100.0,  # Adjust as needed
-            cooling_rate=0.95,  # Adjust as needed
-            neighbor_operators=[
-                "swap",
-                "2opt",
-                "shuffle",
-                "torso_shift",
-                "insert",  # Added insert operator
-                "inversion",  # Added inversion operator
-            ],  # Choose operators to use
-            save_interval=50,  # Save every 50 iterations
-        )
-    elif algorithm_choice == "GA":
-        # Genetic Algorithm
-        print("Starting Genetic Algorithm...")
-        pareto_front = run_genetic_algorithm(edges, pop_size=100, n_gen=100)  # Adjust parameters as needed
-    else:
-        print("Invalid algorithm choice. Please choose SA or GA.")
-        exit()
+    print("Starting Genetic Algorithm...")
+    ga_pareto_front = run_genetic_algorithm(edges, pop_size=100, n_gen=100)  # Adjust parameters as needed
 
-    # Create Final Submission File
-    for i, solution in enumerate(pareto_front):
+    # Combine the Pareto fronts from both algorithms
+    combined_pareto_front = sa_pareto_front + ga_pareto_front
+
+    # Filter for non-dominated solutions in the combined front
+    final_pareto_front = []
+    for i in range(len(combined_pareto_front)):
+        solution1 = combined_pareto_front[i]
+        score1 = evaluate_solution(solution1, edges)
+        dominated = False
+        for j in range(len(combined_pareto_front)):
+            if i != j:
+                solution2 = combined_pareto_front[j]
+                score2 = evaluate_solution(solution2, edges)
+                if dominates(score2, score1):
+                    dominated = True
+                    break
+        if not dominated:
+            final_pareto_front.append(solution1)
+
+    # Create Final Submission Files for the combined Pareto front
+    for i, solution in enumerate(final_pareto_front):
         create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
     print("All submission files created successfully!")
