@@ -185,9 +185,11 @@ def acceptance_probability(
     old_score: List[float], new_score: List[float], temperature: float
 ) -> float:
     """Calculates the acceptance probability in Simulated Annealing."""
-    # Reshape the scores into 2D arrays with one row and two columns
-    delta_score = torso_scorer(np.array([new_score])) - torso_scorer(
-        np.array([old_score])
+    # Directly compare scores using the torso_scorer logic
+    size_weight = -1  # Prioritize minimizing size
+    width_weight = -0.5  # Penalize width but less than size
+    delta_score = (size_weight * new_score[0] + width_weight * new_score[1]) - (
+        size_weight * old_score[0] + width_weight * old_score[1]
     )
     return np.exp(delta_score / temperature)
 
