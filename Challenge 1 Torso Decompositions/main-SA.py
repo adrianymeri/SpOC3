@@ -5,12 +5,6 @@ from typing import List, Tuple, Dict
 
 import numpy as np
 import urllib.request
-from lightgbm import LGBMRegressor
-from sklearn.metrics import make_scorer
-from sklearn.model_selection import cross_val_score, KFold
-from sklearn.multioutput import MultiOutputRegressor
-from xgboost import XGBRegressor
-from joblib import Parallel, delayed
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.operators.crossover.sbx import SBX
@@ -18,6 +12,7 @@ from pymoo.operators.mutation.pm import PM
 from pymoo.operators.sampling.rnd import IntegerRandomSampling
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
+from joblib import Parallel, delayed
 
 # Define the problem instances
 problems = {
@@ -27,12 +22,7 @@ problems = {
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# Define a scorer function for multi-objective optimization
-def torso_scorer(y_true, y_pred):
-    """Combines torso size and width into a single score for optimization."""
-    size_weight = -1  # Prioritize minimizing size
-    width_weight = -0.5  # Penalize width but less than size
-    return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
+# --- Helper Functions ---
 
 
 def load_graph(problem_id: str) -> List[List[int]]:
@@ -106,7 +96,28 @@ def evaluate_solution(
     return [torso_size, torso_width]
 
 
+def dominates(score1: List[float], score2: List[float]) -> bool:
+    """Checks if score1 dominates score2 in multi-objective optimization."""
+    return all(x <= y for x, y in zip(score1, score2)) and any(
+        x < y for x, y in zip(score1, score2)
+    )
+
+
+def create_submission_file(
+    decision_vector, problem_id, filename="submission.json"
+):
+    """Creates a valid submission file."""
+    submission = {
+        "decisionVector": [decision_vector],  # Wrap in a list for multiple solutions
+        "problem": problem_id,  # Use the provided problem_id
+        "challenge": "spoc-3-torso-decompositions",
+    }
+    with open(filename, "w") as f:
+        json.dump(submission, f, indent=4)
+    print(f"Submission file '{filename}' created successfully!")
+
 # --- Neighborhood Operators ---
+
 
 def generate_neighbor_swap(
     decision_vector: List[int], perturbation_rate: float = 0.2
@@ -141,8 +152,8 @@ def generate_neighbor_shuffle(
     n = len(neighbor) - 1
     shuffle_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - shuffle_length)
-    neighbor[start_index : start_index + shuffle_length] = random.sample(
-        neighbor[start_index : start_index + shuffle_length], shuffle_length
+    neighbor[start_index: start_index + shuffle_length] = random.sample(
+        neighbor[start_index: start_index + shuffle_length], shuffle_length
     )
     return neighbor
 
@@ -175,8 +186,8 @@ def generate_neighbor_inversion(
     n = len(neighbor) - 1
     inversion_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - inversion_length)
-    neighbor[start_index : start_index + inversion_length] = reversed(
-        neighbor[start_index : start_index + inversion_length]
+    neighbor[start_index: start_index + inversion_length] = reversed(
+        neighbor[start_index: start_index + inversion_length]
     )
     return neighbor
 
@@ -184,23 +195,20 @@ def generate_neighbor_inversion(
 # --- End of Neighborhood Operators ---
 
 
-def dominates(score1: List[float], score2: List[float]) -> bool:
-    """Checks if score1 dominates score2 in multi-objective optimization."""
-    return all(x <= y for x, y in zip(score1, score2)) and any(
-        x < y for x, y in zip(score1, score2)
-    )
-
-
 def acceptance_probability(
     old_score: List[float], new_score: List[float], temperature: float
 ) -> float:
     """Calculates the acceptance probability in Simulated Annealing."""
-    # Directly compare scores using the torso_scorer logic
+    # Directly compare scores using weighted sum (smaller is better)
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    delta_score = (size_weight * new_score[0] + width_weight * new_score[1]) - (
+    old_weighted_score = (
         size_weight * old_score[0] + width_weight * old_score[1]
     )
+    new_weighted_score = (
+        size_weight * new_score[0] + width_weight * new_score[1]
+    )
+    delta_score = new_weighted_score - old_weighted_score
     return np.exp(delta_score / temperature)
 
 
@@ -210,7 +218,14 @@ def simulated_annealing_single_restart(
     max_iterations: int = 1000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift", "insert", "inversion"],
+    neighbor_operators: List[str] = [
+        "swap",
+        "2opt",
+        "shuffle",
+        "torso_shift",
+        "insert",
+        "inversion",
+    ],
     save_interval: int = 50,
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the Simulated Annealing algorithm."""
@@ -225,20 +240,16 @@ def simulated_annealing_single_restart(
 
     temperature = initial_temperature
 
-    # Initialize operator weights and success counts
-    operator_weights = {op: 1.0 for op in neighbor_operators}
-    operator_success_counts = {op: 0 for op in neighbor_operators}
-
-    print(f"Restart {restart+1} - Initial Solution: {current_solution}, Score: {current_score}")
+    print(
+        f"Restart {restart+1} - Initial Solution: {current_solution}, Score: {current_score}"
+    )
 
     for i in range(max_iterations):
         # Adaptive Perturbation: Adjust perturbation rate based on temperature
         perturbation_rate = 0.2 * (temperature / initial_temperature)
 
-        # Choose a neighbor operator based on weights
-        operator = random.choices(
-            list(operator_weights.keys()), list(operator_weights.values())
-        )[0]
+        # Choose a random neighbor operator
+        operator = random.choice(neighbor_operators)
 
         # Generate neighbor solution using the selected operator
         if operator == "swap":
@@ -258,12 +269,11 @@ def simulated_annealing_single_restart(
 
         neighbor_score = evaluate_solution(neighbor, edges)
 
-        # Print the operator used and current score in each iteration
-        print(f"Restart {restart+1} - Iteration {i+1}: Operator used - {operator}, Current Score: {current_score}")
-
         # Accept the neighbor if it's better or based on probability
-        if dominates(neighbor_score, current_score) or random.random() < acceptance_probability(
-            current_score, neighbor_score, temperature
+        if (
+            dominates(neighbor_score, current_score)
+            or random.random()
+            < acceptance_probability(current_score, neighbor_score, temperature)
         ):
             current_solution = neighbor[:]
             current_score = neighbor_score[:]
@@ -276,31 +286,15 @@ def simulated_annealing_single_restart(
                     f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_solution}, Score: {best_score}"
                 )
 
-            # Update operator success count
-            operator_success_counts[operator] += 1
-
-        # Update operator weights (e.g., every 10 iterations)
-        if (i + 1) % 10 == 0:
-            total_successes = sum(operator_success_counts.values())
-            if total_successes > 0:
-                for op in operator_weights:
-                    operator_weights[op] = (
-                        0.8 * operator_weights[op]
-                        + 0.2 * operator_success_counts[op] / total_successes
-                    )
-                # Normalize weights
-                total_weight = sum(operator_weights.values())
-                operator_weights = {
-                    op: w / total_weight for op, w in operator_weights.items()
-                }
-
         # Cool down the temperature
         temperature *= cooling_rate
 
         # Save intermediate solutions
         if (i + 1) % save_interval == 0:
             create_submission_file(
-                best_solution, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json"
+                best_solution,
+                problem_id,
+                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
             )
 
     print(
@@ -315,7 +309,14 @@ def simulated_annealing(
     num_restarts: int = 10,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
-    neighbor_operators: List[str] = ["swap", "2opt", "shuffle", "torso_shift", "insert", "inversion"],
+    neighbor_operators: List[str] = [
+        "swap",
+        "2opt",
+        "shuffle",
+        "torso_shift",
+        "insert",
+        "inversion",
+    ],
     save_interval: int = 50,
     n_jobs: int = -1,
 ) -> List[List[int]]:
@@ -361,29 +362,18 @@ def simulated_annealing(
     return filtered_pareto_front
 
 
-def create_submission_file(
-    decision_vector, problem_id, filename="submission.json"
-):
-    """Creates a valid submission file."""
-    submission = {
-        "decisionVector": [decision_vector],  # Wrap in a list for multiple solutions
-        "problem": problem_id,  # Use the provided problem_id
-        "challenge": "spoc-3-torso-decompositions",
-    }
-    with open(filename, "w") as f:
-        json.dump(submission, f, indent=4)
-    print(f"Submission file '{filename}' created successfully!")
-
-
 # --- Genetic Algorithm using pymoo ---
+
 
 class TorsoProblem(ElementwiseProblem):
     def __init__(self, edges: List[List[int]]):
-        super().__init__(n_var=len(edges) + 1,
-                         n_obj=2,
-                         n_constr=0,
-                         xl=np.zeros(len(edges) + 1),
-                         xu=np.array([len(edges)] * len(edges) + [len(edges) - 1]))
+        super().__init__(
+            n_var=len(edges) + 1,
+            n_obj=2,
+            n_constr=0,
+            xl=np.zeros(len(edges) + 1),
+            xu=np.array([len(edges)] * len(edges) + [len(edges) - 1]),
+        )
         self.edges = edges
 
     def _evaluate(self, x, out, *args, **kwargs):
@@ -393,7 +383,9 @@ class TorsoProblem(ElementwiseProblem):
         out["F"] = [torso_size, torso_width]
 
 
-def run_genetic_algorithm(edges: List[List[int]], pop_size: int = 100, n_gen: int = 100):
+def run_genetic_algorithm(
+    edges: List[List[int]], pop_size: int = 100, n_gen: int = 100
+):
     """Runs the genetic algorithm to find a set of Pareto optimal solutions."""
     problem = TorsoProblem(edges)
 
@@ -407,12 +399,14 @@ def run_genetic_algorithm(edges: List[List[int]], pop_size: int = 100, n_gen: in
 
     termination = get_termination("n_gen", n_gen)
 
-    res = minimize(problem,
-                   algorithm,
-                   termination,
-                   seed=1,
-                   save_history=True,
-                   verbose=True)
+    res = minimize(
+        problem,
+        algorithm,
+        termination,
+        seed=1,
+        save_history=True,
+        verbose=True,
+    )
 
     # Extract and return Pareto front solutions
     pareto_front = [s.X.astype(int).tolist() for s in res.pop.get("X")]
@@ -448,7 +442,9 @@ if __name__ == "__main__":
     )
 
     print("Starting Genetic Algorithm...")
-    ga_pareto_front = run_genetic_algorithm(edges, pop_size=100, n_gen=100)  # Adjust parameters as needed
+    ga_pareto_front = run_genetic_algorithm(
+        edges, pop_size=100, n_gen=100
+    )  # Adjust parameters as needed
 
     # Combine the Pareto fronts from both algorithms
     combined_pareto_front = sa_pareto_front + ga_pareto_front
@@ -471,5 +467,7 @@ if __name__ == "__main__":
 
     # Create Final Submission Files for the combined Pareto front
     for i, solution in enumerate(final_pareto_front):
-        create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
+        create_submission_file(
+            solution, problem_id, f"final_solution_{i+1}.json"
+        )
     print("All submission files created successfully!")
