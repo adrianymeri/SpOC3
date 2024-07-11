@@ -152,8 +152,8 @@ def generate_neighbor_shuffle(
     n = len(neighbor) - 1
     shuffle_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - shuffle_length)
-    neighbor[start_index: start_index + shuffle_length] = random.sample(
-        neighbor[start_index: start_index + shuffle_length], shuffle_length
+    neighbor[start_index : start_index + shuffle_length] = random.sample(
+        neighbor[start_index : start_index + shuffle_length], shuffle_length
     )
     return neighbor
 
@@ -186,11 +186,10 @@ def generate_neighbor_inversion(
     n = len(neighbor) - 1
     inversion_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - inversion_length)
-    neighbor[start_index: start_index + inversion_length] = reversed(
-        neighbor[start_index: start_index + inversion_length]
+    neighbor[start_index : start_index + inversion_length] = reversed(
+        neighbor[start_index : start_index + inversion_length]
     )
     return neighbor
-
 
 # --- End of Neighborhood Operators ---
 
@@ -202,12 +201,8 @@ def acceptance_probability(
     # Directly compare scores using weighted sum (smaller is better)
     size_weight = -1  # Prioritize minimizing size
     width_weight = -0.5  # Penalize width but less than size
-    old_weighted_score = (
-        size_weight * old_score[0] + width_weight * old_score[1]
-    )
-    new_weighted_score = (
-        size_weight * new_score[0] + width_weight * new_score[1]
-    )
+    old_weighted_score = size_weight * old_score[0] + width_weight * old_score[1]
+    new_weighted_score = size_weight * new_score[0] + width_weight * new_score[1]
     delta_score = new_weighted_score - old_weighted_score
     return np.exp(delta_score / temperature)
 
@@ -426,25 +421,25 @@ if __name__ == "__main__":
     print("Starting Simulated Annealing...")
     sa_pareto_front = simulated_annealing(
         edges,
-        max_iterations=1000,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        initial_temperature=100.0,  # Adjust as needed
-        cooling_rate=0.95,  # Adjust as needed
+        max_iterations=5000,  # Increased iterations
+        num_restarts=50,  # Increased restarts
+        initial_temperature=200.0,  # Adjusted temperature
+        cooling_rate=0.98,  # Slower cooling
         neighbor_operators=[
             "swap",
             "2opt",
             "shuffle",
             "torso_shift",
-            "insert",  # Added insert operator
-            "inversion",  # Added inversion operator
-        ],  # Choose operators to use
-        save_interval=50,  # Save every 50 iterations
+            "insert",
+            "inversion",
+        ],  # All operators enabled
+        save_interval=100,  # Save less frequently
     )
 
     print("Starting Genetic Algorithm...")
     ga_pareto_front = run_genetic_algorithm(
-        edges, pop_size=100, n_gen=100
-    )  # Adjust parameters as needed
+        edges, pop_size=200, n_gen=500
+    )  # Increased population and generations
 
     # Combine the Pareto fronts from both algorithms
     combined_pareto_front = sa_pareto_front + ga_pareto_front
