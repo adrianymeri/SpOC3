@@ -210,7 +210,8 @@ def acceptance_probability(
 def simulated_annealing_single_restart(
     edges: List[List[int]],
     restart: int,
-    max_iterations: int = 1000,
+    initial_solution: List[int] = None,  # Optional initial solution
+    max_iterations: int = 10000,
     initial_temperature: float = 100.0,
     cooling_rate: float = 0.95,
     neighbor_operators: List[str] = [
@@ -226,8 +227,11 @@ def simulated_annealing_single_restart(
     """Performs a single restart of the Simulated Annealing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
 
-    # Generate random initial solution
-    current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
+    # Use provided initial solution or generate random one
+    if initial_solution is not None:
+        current_solution = initial_solution[:]
+    else:
+        current_solution = [i for i in range(n)] + [random.randint(0, n - 1)]
     current_score = evaluate_solution(current_solution, edges)
 
     best_solution = current_solution[:]
@@ -300,9 +304,10 @@ def simulated_annealing_single_restart(
 
 def simulated_annealing(
     edges: List[List[int]],
+    initial_solutions: List[List[int]] = None,  # Optional list of initial solutions
     max_iterations: int = 1000,
     num_restarts: int = 10,
-    initial_temperature: float = 100.0,
+    initial_temperature: float = 400.0,
     cooling_rate: float = 0.95,
     neighbor_operators: List[str] = [
         "swap",
@@ -319,19 +324,36 @@ def simulated_annealing(
     pareto_front = []
     start_time = time.time()
 
-    # Run Simulated Annealing with multiple restarts in parallel
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(simulated_annealing_single_restart)(
-            edges,
-            restart,
-            max_iterations,
-            initial_temperature,
-            cooling_rate,
-            neighbor_operators,
-            save_interval,
+    # If initial solutions are provided, use them for restarts
+    if initial_solutions is not None:
+        num_restarts = len(initial_solutions)
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(simulated_annealing_single_restart)(
+                edges,
+                restart,
+                initial_solution=initial_solutions[restart],  # Use provided solution
+                max_iterations=max_iterations,
+                initial_temperature=initial_temperature,
+                cooling_rate=cooling_rate,
+                neighbor_operators=neighbor_operators,
+                save_interval=save_interval,
+            )
+            for restart in range(num_restarts)
         )
-        for restart in range(num_restarts)
-    )
+    else:
+        # Run Simulated Annealing with multiple restarts in parallel
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(simulated_annealing_single_restart)(
+                edges,
+                restart,
+                max_iterations=max_iterations,
+                initial_temperature=initial_temperature,
+                cooling_rate=cooling_rate,
+                neighbor_operators=neighbor_operators,
+                save_interval=save_interval,
+            )
+            for restart in range(num_restarts)
+        )
 
     # Results now contain solutions from all restarts
     for result in results:
@@ -379,7 +401,7 @@ class TorsoProblem(ElementwiseProblem):
 
 
 def run_genetic_algorithm(
-    edges: List[List[int]], pop_size: int = 100, n_gen: int = 100
+    edges: List[List[int]], pop_size: int = 1500, n_gen: int = 1500
 ):
     """Runs the genetic algorithm to find a set of Pareto optimal solutions."""
     problem = TorsoProblem(edges)
@@ -417,14 +439,21 @@ if __name__ == "__main__":
     )  # Get input from the user
     edges = load_graph(problem_id)
 
-    # Run both Simulated Annealing and Genetic Algorithm
-    print("Starting Simulated Annealing...")
+    # --- Hybrid Approach: GA to initialize SA ---
+
+    # 1. Run GA for a short time to get initial solutions
+    print("Starting Genetic Algorithm for initialization...")
+    ga_initial_solutions = run_genetic_algorithm(edges, pop_size=100, n_gen=50)
+
+    # 2. Use GA solutions to initialize SA
+    print("Starting Simulated Annealing with GA initialization...")
     sa_pareto_front = simulated_annealing(
         edges,
-        max_iterations=5000,  # Increased iterations
-        num_restarts=50,  # Increased restarts
-        initial_temperature=200.0,  # Adjusted temperature
-        cooling_rate=0.98,  # Slower cooling
+        initial_solutions=ga_initial_solutions,  # Pass GA solutions to SA
+        max_iterations=2000,  # Adjust as needed
+        num_restarts=len(ga_initial_solutions),  # Use the number of GA solutions
+        initial_temperature=200.0,  # Adjust as needed
+        cooling_rate=0.98,  # Adjust as needed
         neighbor_operators=[
             "swap",
             "2opt",
@@ -432,37 +461,15 @@ if __name__ == "__main__":
             "torso_shift",
             "insert",
             "inversion",
-        ],  # All operators enabled
-        save_interval=100,  # Save less frequently
+        ],
+        save_interval=100,
     )
 
-    print("Starting Genetic Algorithm...")
-    ga_pareto_front = run_genetic_algorithm(
-        edges, pop_size=200, n_gen=500
-    )  # Increased population and generations
-
-    # Combine the Pareto fronts from both algorithms
-    combined_pareto_front = sa_pareto_front + ga_pareto_front
-
-    # Filter for non-dominated solutions in the combined front
-    final_pareto_front = []
-    for i in range(len(combined_pareto_front)):
-        solution1 = combined_pareto_front[i]
-        score1 = evaluate_solution(solution1, edges)
-        dominated = False
-        for j in range(len(combined_pareto_front)):
-            if i != j:
-                solution2 = combined_pareto_front[j]
-                score2 = evaluate_solution(solution2, edges)
-                if dominates(score2, score1):
-                    dominated = True
-                    break
-        if not dominated:
-            final_pareto_front.append(solution1)
+    # --- End of Hybrid Approach ---
 
     # Create Final Submission Files for the combined Pareto front
-    for i, solution in enumerate(final_pareto_front):
+    for i, solution in enumerate(sa_pareto_front):
         create_submission_file(
-            solution, problem_id, f"final_solution_{i+1}.json"
+            solution, problem_id, f"final_solution_hybrid_{i+1}.json"
         )
-    print("All submission files created successfully!")
+    print("All hybrid submission files created successfully!")
