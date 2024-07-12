@@ -62,10 +62,10 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
     permutation = decision_vector[:-1]
 
     # Find the maximum node index for correct adj_list size
-    max_node_index = max(node for edge in edges for node in edge) + 1 
+    max_node_index = max(node for edge in edges for node in edge) + 1
 
     # Initialize adj_list with the correct size
-    adj_list = [[] for _ in range(max_node_index)] 
+    adj_list = [[] for _ in range(max_node_index)]
 
     for u, v in edges:
         adj_list[u].append(v)
@@ -77,7 +77,7 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
             if permutation[i] in adj_list[permutation[j]]:
                 oriented_edges.append((permutation[i], permutation[j]))
 
-    outdegrees = [0 for _ in range(n)]
+    outdegrees = [0 for _ in range(max_node_index)]  # Use max_node_index here
     for i in range(n):
         for j in range(i + 1, n):
             if (permutation[i], permutation[j]) in oriented_edges:
