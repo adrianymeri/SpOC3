@@ -106,13 +106,78 @@ def generate_neighbor_swap(
     return neighbor
 
 
+def generate_neighbor_shuffle(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by shuffling a sublist of elements."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    sublist_length = max(1, int(perturbation_rate * n))
+    start_index = random.randint(0, n - sublist_length)
+    sublist = neighbor[start_index : start_index + sublist_length]
+    random.shuffle(sublist)
+    neighbor[start_index : start_index + sublist_length] = sublist
+    return neighbor
+
+
+def generate_neighbor_torso_shift(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by shifting the torso threshold."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    shift_amount = int(perturbation_rate * n)
+    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount)))
+    return neighbor
+
+
+def generate_neighbor_2opt(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution using the 2-opt heuristic."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    i = random.randint(0, n - 2)
+    j = random.randint(i + 1, n - 1)
+    neighbor[i : j] = neighbor[i : j][::-1]  # Reverse the sublist
+    return neighbor
+
+
+def generate_neighbor_insert(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by inserting an element at a random position."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    index1 = random.randint(0, n - 1)
+    index2 = random.randint(0, n)
+    value = neighbor.pop(index1)
+    neighbor.insert(index2, value)
+    return neighbor
+
+
+def generate_neighbor_inversion(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by inverting a sublist of elements."""
+    neighbor = decision_vector[:]
+    n = len(neighbor) - 1
+    sublist_length = max(1, int(perturbation_rate * n))
+    start_index = random.randint(0, n - sublist_length)
+    neighbor[start_index : start_index + sublist_length] = neighbor[
+        start_index : start_index + sublist_length
+    ][::-1]
+    return neighbor
+
+
 def dominates(score1: List[float], score2: List[float]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
     return all(x <= y for x, y in zip(score1, score2)) and any(
         x < y for x, y in zip(score1, score2)
     )
 
-def train_model(X, y, model_type='lgbm'):
+
+def train_model(X, y, model_type="lgbm"):
     """Trains an LGBM or XGBoost model with hyperparameter tuning."""
     print(f"Training {model_type} model...")
     best_model = None
@@ -127,7 +192,7 @@ def train_model(X, y, model_type='lgbm'):
     for n_estimators in param_grid["n_estimators"]:
         for learning_rate in param_grid["learning_rate"]:
             for max_depth in param_grid["max_depth"]:
-                if model_type == 'lgbm':
+                if model_type == "lgbm":
                     model = MultiOutputRegressor(
                         LGBMRegressor(
                             n_estimators=n_estimators,
@@ -136,7 +201,7 @@ def train_model(X, y, model_type='lgbm'):
                             random_state=42,
                         )
                     )
-                else: # XGBoost
+                else:  # XGBoost
                     model = MultiOutputRegressor(
                         XGBRegressor(
                             n_estimators=n_estimators,
@@ -153,11 +218,13 @@ def train_model(X, y, model_type='lgbm'):
                     scoring="neg_mean_squared_error",
                 )
                 mean_score = -cv_scores.mean()  # Use negative mean for minimization
-                print(f"Model with {n_estimators}, {learning_rate}, {max_depth}: {mean_score}") # Verbose output
+                print(
+                    f"Model with {n_estimators}, {learning_rate}, {max_depth}: {mean_score}"
+                )  # Verbose output
                 if mean_score < best_score:
                     best_score = mean_score
                     best_model = model
-    print(f"Best {model_type} model: {best_model}") # Verbose output
+    print(f"Best {model_type} model: {best_model}")  # Verbose output
     print(f"{model_type} training completed.")
     return best_model
 
@@ -197,11 +264,11 @@ def hill_climbing_single_restart(
     restart: int,
     max_iterations: int = 100,
     perturbation_rate: float = 0.2,
-    neighbor_generation_method: str = "swap",
+    neighbor_generation_method: str = "random_operator",
     lgbm_model=None,
     xgboost_model=None,
     ml_switch_interval: int = 5,
-    save_interval: int = 50, # Save every 50 iterations
+    save_interval: int = 50,  # Save every 50 iterations
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the hill climbing algorithm."""
     n = max(node for edge in edges for node in edge) + 1
@@ -211,14 +278,37 @@ def hill_climbing_single_restart(
 
     # Evaluate initial solution
     current_score = evaluate_solution(decision_vector, edges)
-    print(f"Restart {restart+1} - Initial solution: {decision_vector}, Score: {current_score}")
+    print(
+        f"Restart {restart+1} - Initial solution: {decision_vector}, Score: {current_score}"
+    )
 
     best_decision_vector = decision_vector[:]
     best_score = current_score[:]
 
+    # Define neighbor generation functions and their initial probabilities
+    neighbor_functions = {
+        "swap": generate_neighbor_swap,
+        "shuffle": generate_neighbor_shuffle,
+        "torso_shift": generate_neighbor_torso_shift,
+        "2opt": generate_neighbor_2opt,
+        "insert": generate_neighbor_insert,
+        "inversion": generate_neighbor_inversion,
+    }
+    operator_probabilities = {
+        op_name: 1 / len(neighbor_functions) for op_name in neighbor_functions
+    }
+
     for i in range(max_iterations):
-        # Generate neighbor solution using the selected method
-        if neighbor_generation_method == "lgbm_ml":
+        # Choose neighbor generation method based on probabilities
+        if neighbor_generation_method == "random_operator":
+            selected_operator = random.choices(
+                list(operator_probabilities.keys()),
+                weights=list(operator_probabilities.values()),
+            )[0]
+            neighbor = neighbor_functions[selected_operator](
+                decision_vector, perturbation_rate
+            )
+        elif neighbor_generation_method == "lgbm_ml":
             neighbor = generate_neighbor_ml(decision_vector, edges, lgbm_model)
         elif neighbor_generation_method == "xgboost_ml":
             neighbor = generate_neighbor_ml(decision_vector, edges, xgboost_model)
@@ -230,7 +320,9 @@ def hill_climbing_single_restart(
                 model = xgboost_model
                 model_name = "XGBoost"
             neighbor = generate_neighbor_ml(decision_vector, edges, model)
-            print(f"Iteration {i+1}: Used {model_name} to generate neighbor.")  # Indicate which model was used
+            print(
+                f"Iteration {i+1}: Used {model_name} to generate neighbor."
+            )  # Indicate which model was used
         else:  # Default to 'swap'
             neighbor = generate_neighbor_swap(decision_vector, perturbation_rate)
 
@@ -241,30 +333,51 @@ def hill_climbing_single_restart(
         if dominates(neighbor_score, current_score) or neighbor_score == current_score:
             decision_vector = neighbor[:]
             current_score = neighbor_score[:]
-            print(f"Restart {restart+1} - Iteration {i+1}: Found better solution - {decision_vector}, Score: {current_score}")
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: Found better solution - {decision_vector}, Score: {current_score}"
+            )
+
+            # Update operator probabilities (reinforcement learning)
+            if neighbor_generation_method == "random_operator":
+                operator_probabilities[selected_operator] *= 1.1  # Increase probability
+                # Normalize probabilities
+                total_prob = sum(operator_probabilities.values())
+                operator_probabilities = {
+                    op: prob / total_prob
+                    for op, prob in operator_probabilities.items()
+                }
 
         # Update best solution if current solution is better
         if dominates(current_score, best_score):
             best_decision_vector = decision_vector[:]
             best_score = current_score[:]
-            print(f"Restart {restart+1} - Iteration {i+1}: New best solution found -  {best_decision_vector}, Score: {best_score}")
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
+            )
 
         # Save intermediate solutions
         if (i + 1) % save_interval == 0:
-            create_submission_file(best_decision_vector, problem_id, f"intermediate_solution_{restart+1}_iter_{i+1}.json")
+            create_submission_file(
+                best_decision_vector,
+                problem_id,
+                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
+            )
 
-    print(f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}")
+    print(
+        f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}"
+    )
     return best_decision_vector, best_score
+
 
 def hill_climbing(
     edges: List[List[int]],
     max_iterations: int = 100,
     num_restarts: int = 10,
     perturbation_rate: float = 0.2,
-    neighbor_generation_method: str = "swap",
+    neighbor_generation_method: str = "random_operator",
     use_hybrid_ml: bool = False,
     ml_switch_interval: int = 5,
-    save_interval: int = 50, # Save every 50 iterations
+    save_interval: int = 50,  # Save every 50 iterations
     n_jobs: int = -1,  # Use all available cores for parallelization
 ) -> List[List[int]]:
     """Performs hill climbing to find a set of Pareto optimal solutions."""
@@ -283,8 +396,8 @@ def hill_climbing(
             y.append(evaluate_solution(decision_vector, edges))
         X = np.array(X)
         y = np.array(y)
-        lgbm_model = train_model(X, y, 'lgbm')
-        xgboost_model = train_model(X, y, 'xgboost')
+        lgbm_model = train_model(X, y, "lgbm")
+        xgboost_model = train_model(X, y, "xgboost")
     else:
         lgbm_model = None
         xgboost_model = None
@@ -326,10 +439,15 @@ def hill_climbing(
     print(f"Filtered Pareto Front: {filtered_pareto_front}")
     return filtered_pareto_front
 
-def create_submission_file(decision_vector, problem_id, filename="submission.json"):
+
+def create_submission_file(
+    decision_vector, problem_id, filename="submission.json"
+):
     """Creates a valid submission file."""
     submission = {
-        "decisionVector": [decision_vector], # Wrap in a list for multiple solutions
+        "decisionVector": [
+            decision_vector
+        ],  # Wrap in a list for multiple solutions
         "problem": problem_id,
         "challenge": "spoc-3-torso-decompositions",
     }
@@ -337,54 +455,32 @@ def create_submission_file(decision_vector, problem_id, filename="submission.jso
         json.dump(submission, f, indent=4)
     print(f"Submission file '{filename}' created successfully!")
 
+
 if __name__ == "__main__":
     random.seed(42)
-    problem_id = "easy"  # You can change this to 'medium' or 'hard'
+
+    # Get problem ID from user input
+    while True:
+        problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
+        if problem_id in problems:
+            break
+        else:
+            print("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'.")
+
     edges = load_graph(problem_id)
 
-    # Hill Climbing with Swap
-    print("Starting Hill Climbing with Swap...")
-    pareto_front_swap = hill_climbing(
+    # Hill Climbing with Random Operator Selection
+    print("Starting Hill Climbing with Random Operator Selection...")
+    pareto_front_random_op = hill_climbing(
         edges,
-        neighbor_generation_method="swap",
+        neighbor_generation_method="random_operator",
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
-        save_interval=50, # Save every 50 iterations
+        save_interval=50,  # Save every 50 iterations
     )
 
-    # Hill Climbing with LGBM
-    print("Starting Hill Climbing with LGBM...")
-    pareto_front_lgbm = hill_climbing(
-        edges,
-        neighbor_generation_method="lgbm_ml",
-        max_iterations=500,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50, # Save every 50 iterations
-    )
-
-    # Hill Climbing with XGBoost
-    print("Starting Hill Climbing with XGBoost...")
-    pareto_front_xgboost = hill_climbing(
-        edges,
-        neighbor_generation_method="xgboost_ml",
-        max_iterations=500,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50, # Save every 50 iterations
-    )
-
-    # Hill Climbing with Hybrid LGBM/XGBoost
-    print("Starting Hill Climbing with Hybrid LGBM/XGBoost...")
-    pareto_front_hybrid = hill_climbing(
-        edges,
-        neighbor_generation_method="hybrid_ml",
-        ml_switch_interval=25,  # Switch between models every 25 iterations
-        max_iterations=500,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50, # Save every 50 iterations
-    )
-
-    # Example: Select the Pareto front from the hybrid approach
-    best_pareto_front = pareto_front_hybrid
+    # Example: Select the Pareto front from the random operator approach
+    best_pareto_front = pareto_front_random_op
 
     # Create Final Submission File
     for i, solution in enumerate(best_pareto_front):
