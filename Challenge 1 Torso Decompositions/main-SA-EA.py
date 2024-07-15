@@ -262,7 +262,9 @@ def simulated_annealing(
 def evaluate_population(population, edges):
     """Evaluates a population of solutions in parallel."""
     with Pool() as pool:
-        scores = pool.starmap(evaluate_solution, zip(population, [edges] * len(population)))
+        scores = pool.starmap(
+            evaluate_solution, zip(population, [edges] * len(population))
+        )
     return scores
 
 
@@ -299,7 +301,7 @@ def evolutionary_algorithm(
         # Evaluate population in parallel
         scores = evaluate_population(population, edges)
 
-        # Select parents for the next generation
+        # Select parents for the next generation using tournament selection
         parents = []
         for i in range(population_size):
             tournament = random.sample(range(population_size), 2)
@@ -328,9 +330,13 @@ def evolutionary_algorithm(
         # Combine parents and offspring
         population = parents + offspring
 
-        # Select the best individuals for the next generation
-        population = sorted(population, key=lambda x: evaluate_solution(x, edges))
-        population = population[:population_size]
+        # Select the best individuals for the next generation using non-dominated sorting
+        ranked_population = non_dominated_sort(population, scores)
+        population = []
+        rank_idx = 0
+        while len(population) < population_size:
+            population.extend(ranked_population[rank_idx])
+            rank_idx += 1
 
         # Extract Pareto front
         pareto_front = []
@@ -349,7 +355,9 @@ def evolutionary_algorithm(
                 pareto_front.append(solution1)
 
         # Calculate the average score of the Pareto front
-        pareto_front_scores = [evaluate_solution(sol, edges) for sol in pareto_front]
+        pareto_front_scores = [
+            evaluate_solution(sol, edges) for sol in pareto_front
+        ]
         avg_pareto_front_score = np.mean(pareto_front_scores)
 
         # Early stopping
@@ -371,6 +379,37 @@ def evolutionary_algorithm(
 
     print(f"Final Pareto Front: {pareto_front}")
     return pareto_front
+
+
+def non_dominated_sort(population, scores):
+    """Performs non-dominated sorting on the population."""
+    dominating_counts = [0 for _ in range(len(population))]
+    dominated_by = [[] for _ in range(len(population))]
+
+    for i in range(len(population)):
+        for j in range(i + 1, len(population)):
+            if dominates(scores[i], scores[j]):
+                dominating_counts[i] += 1
+                dominated_by[j].append(i)
+            elif dominates(scores[j], scores[i]):
+                dominating_counts[j] += 1
+                dominated_by[i].append(j)
+
+    ranked_population = [[] for _ in range(len(population))]
+    front = [i for i in range(len(population)) if dominating_counts[i] == 0]
+    rank = 0
+    while front:
+        ranked_population[rank] = [population[i] for i in front]
+        next_front = []
+        for i in front:
+            for j in dominated_by[i]:
+                dominating_counts[j] -= 1
+                if dominating_counts[j] == 0:
+                    next_front.append(j)
+        front = next_front
+        rank += 1
+
+    return ranked_population
 
 
 def hybrid_algorithm(
@@ -425,7 +464,7 @@ def hybrid_algorithm(
         # Evaluate population in parallel
         scores = evaluate_population(population, edges)
 
-        # Select parents for the next generation
+        # Select parents for the next generation using tournament selection
         parents = []
         for i in range(population_size):
             tournament = random.sample(range(population_size), 2)
@@ -453,17 +492,23 @@ def hybrid_algorithm(
 
         # Apply Simulated Annealing as local search to improve offspring
         for i in range(len(offspring)):
-            temperature = initial_temperature
-            for _ in range(sa_iterations):
-                offspring[i] = generate_neighbor(offspring[i], edges, temperature)
-                temperature *= cooling_rate
+            offspring[i], _ = simulated_annealing(
+                edges,
+                initial_temperature=initial_temperature,
+                cooling_rate=cooling_rate,
+                max_iterations=sa_iterations,
+            )
 
         # Combine parents and offspring
         population = parents + offspring
 
-        # Select the best individuals for the next generation
-        population = sorted(population, key=lambda x: evaluate_solution(x, edges))
-        population = population[:population_size]
+        # Select the best individuals for the next generation using non-dominated sorting
+        ranked_population = non_dominated_sort(population, scores)
+        population = []
+        rank_idx = 0
+        while len(population) < population_size:
+            population.extend(ranked_population[rank_idx])
+            rank_idx += 1
 
         # Extract Pareto front
         pareto_front = []
@@ -482,7 +527,9 @@ def hybrid_algorithm(
                 pareto_front.append(solution1)
 
         # Calculate the average score of the Pareto front
-        pareto_front_scores = [evaluate_solution(sol, edges) for sol in pareto_front]
+        pareto_front_scores = [
+            evaluate_solution(sol, edges) for sol in pareto_front
+        ]
         avg_pareto_front_score = np.mean(pareto_front_scores)
 
         # Early stopping
@@ -527,11 +574,15 @@ if __name__ == "__main__":
 
     # Get problem ID from user input
     while True:
-        problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
+        problem_id = input(
+            "Select a problem instance (easy, medium, hard): "
+        ).lower()
         if problem_id in problems:
             break
         else:
-            print("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'.")
+            print(
+                "Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'."
+            )
 
     edges = load_graph(problem_id)
 
@@ -564,7 +615,9 @@ if __name__ == "__main__":
         )
         for i, solution in enumerate(pareto_front):
             create_submission_file(
-                solution, problem_id, f"evolutionary_algorithm_solution_{i+1}.json"
+                solution,
+                problem_id,
+                f"evolutionary_algorithm_solution_{i+1}.json",
             )
 
     elif algorithm == "hybrid_algorithm":
