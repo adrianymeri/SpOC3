@@ -5,6 +5,7 @@ from typing import List, Tuple
 
 import numpy as np
 import urllib.request
+from multiprocessing import Pool
 
 # Define the problem instances
 problems = {
@@ -121,7 +122,9 @@ def generate_neighbor_torso_shift(
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
     shift_amount = int(perturbation_rate * n)
-    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount)))
+    neighbor[-1] = max(
+        0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount))
+    )
     return neighbor
 
 
@@ -133,7 +136,7 @@ def generate_neighbor_2opt(
     n = len(neighbor) - 1
     i = random.randint(0, n - 2)
     j = random.randint(i + 1, n - 1)
-    neighbor[i : j] = neighbor[i : j][::-1]  # Reverse the sublist
+    neighbor[i:j] = neighbor[i:j][::-1]  # Reverse the sublist
     return neighbor
 
 
@@ -211,6 +214,7 @@ def simulated_annealing(
     cooling_rate: float = 0.95,
     max_iterations: int = 1000,
     perturbation_rate: float = 0.2,
+    early_stopping_iterations: int = 100,
 ) -> Tuple[List[int], List[float]]:
     """Performs Simulated Annealing to find a good solution."""
     n = max(node for edge in edges for node in edge) + 1
@@ -222,6 +226,7 @@ def simulated_annealing(
 
     temperature = initial_temperature
 
+    iterations_without_improvement = 0
     for i in range(max_iterations):
         # Generate neighbor solution
         decision_vector = generate_neighbor(
@@ -233,17 +238,32 @@ def simulated_annealing(
         if dominates(current_score, best_score):
             best_decision_vector = decision_vector[:]
             best_score = current_score[:]
+            iterations_without_improvement = 0
             print(
                 f"Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
             )
+        else:
+            iterations_without_improvement += 1
 
         # Cool down the temperature
         temperature *= cooling_rate
+
+        # Early stopping
+        if iterations_without_improvement >= early_stopping_iterations:
+            print(f"Early stopping at iteration {i+1}.")
+            break
 
     print(
         f"Simulated Annealing completed. Best solution: {best_decision_vector}, Score: {best_score}"
     )
     return best_decision_vector, best_score
+
+
+def evaluate_population(population, edges):
+    """Evaluates a population of solutions in parallel."""
+    with Pool() as pool:
+        scores = pool.starmap(evaluate_solution, zip(population, [edges] * len(population)))
+    return scores
 
 
 def evolutionary_algorithm(
@@ -252,6 +272,7 @@ def evolutionary_algorithm(
     generations: int = 500,
     mutation_rate: float = 0.2,
     crossover_rate: float = 0.8,
+    early_stopping_generations: int = 50,
 ) -> List[List[int]]:
     """Performs an Evolutionary Algorithm to find a set of Pareto optimal solutions."""
     n = max(node for edge in edges for node in edge) + 1
@@ -270,9 +291,13 @@ def evolutionary_algorithm(
     # Initialize population
     population = [create_individual() for _ in range(population_size)]
 
+    generations_without_improvement = 0
+    best_pareto_front_score = float("inf")
     for generation in range(generations):
-        # Evaluate population
-        scores = [evaluate_solution(individual, edges) for individual in population]
+        start_time = time.time()
+
+        # Evaluate population in parallel
+        scores = evaluate_population(population, edges)
 
         # Select parents for the next generation
         parents = []
@@ -305,30 +330,44 @@ def evolutionary_algorithm(
 
         # Select the best individuals for the next generation
         population = sorted(population, key=lambda x: evaluate_solution(x, edges))
-        population = population[: population_size]
+        population = population[:population_size]
 
-        # Print best solution of the generation
-        best_solution = population[0]
-        best_score = evaluate_solution(best_solution, edges)
+        # Extract Pareto front
+        pareto_front = []
+        for i in range(len(population)):
+            solution1 = population[i]
+            score1 = evaluate_solution(solution1, edges)
+            dominated = False
+            for j in range(len(population)):
+                if i != j:
+                    solution2 = population[j]
+                    score2 = evaluate_solution(solution2, edges)
+                    if dominates(score2, score1):
+                        dominated = True
+                        break
+            if not dominated:
+                pareto_front.append(solution1)
+
+        # Calculate the average score of the Pareto front
+        pareto_front_scores = [evaluate_solution(sol, edges) for sol in pareto_front]
+        avg_pareto_front_score = np.mean(pareto_front_scores)
+
+        # Early stopping
+        if avg_pareto_front_score < best_pareto_front_score:
+            best_pareto_front_score = avg_pareto_front_score
+            generations_without_improvement = 0
+        else:
+            generations_without_improvement += 1
+
+        if generations_without_improvement >= early_stopping_generations:
+            print(f"Early stopping at generation {generation+1}.")
+            break
+
+        end_time = time.time()
+        generation_time = end_time - start_time
         print(
-            f"Generation {generation+1}: Best solution: {best_solution}, Score: {best_score}"
+            f"Generation {generation+1}: Best front score: {best_pareto_front_score:.4f}, Time: {generation_time:.2f}s"
         )
-
-    # Extract Pareto front
-    pareto_front = []
-    for i in range(len(population)):
-        solution1 = population[i]
-        score1 = evaluate_solution(solution1, edges)
-        dominated = False
-        for j in range(len(population)):
-            if i != j:
-                solution2 = population[j]
-                score2 = evaluate_solution(solution2, edges)
-                if dominates(score2, score1):
-                    dominated = True
-                    break
-        if not dominated:
-            pareto_front.append(solution1)
 
     print(f"Final Pareto Front: {pareto_front}")
     return pareto_front
@@ -343,6 +382,7 @@ def hybrid_algorithm(
     sa_iterations: int = 100,
     initial_temperature: float = 1000,
     cooling_rate: float = 0.95,
+    early_stopping_generations: int = 25,
 ) -> List[List[int]]:
     """
     Hybrid algorithm combining elements of Simulated Annealing and Evolutionary Algorithm.
@@ -356,6 +396,7 @@ def hybrid_algorithm(
         sa_iterations (int): Number of iterations for the SA local search.
         initial_temperature (float): Initial temperature for SA.
         cooling_rate (float): Cooling rate for SA.
+        early_stopping_generations (int): Number of generations without improvement to trigger early stopping.
 
     Returns:
         List[List[int]]: Pareto front of non-dominated solutions.
@@ -376,9 +417,13 @@ def hybrid_algorithm(
     # Initialize population
     population = [create_individual() for _ in range(population_size)]
 
+    generations_without_improvement = 0
+    best_pareto_front_score = float("inf")
     for generation in range(generations):
-        # Evaluate population
-        scores = [evaluate_solution(individual, edges) for individual in population]
+        start_time = time.time()
+
+        # Evaluate population in parallel
+        scores = evaluate_population(population, edges)
 
         # Select parents for the next generation
         parents = []
@@ -410,9 +455,7 @@ def hybrid_algorithm(
         for i in range(len(offspring)):
             temperature = initial_temperature
             for _ in range(sa_iterations):
-                offspring[i] = generate_neighbor(
-                    offspring[i], edges, temperature
-                )
+                offspring[i] = generate_neighbor(offspring[i], edges, temperature)
                 temperature *= cooling_rate
 
         # Combine parents and offspring
@@ -420,30 +463,44 @@ def hybrid_algorithm(
 
         # Select the best individuals for the next generation
         population = sorted(population, key=lambda x: evaluate_solution(x, edges))
-        population = population[: population_size]
+        population = population[:population_size]
 
-        # Print best solution of the generation
-        best_solution = population[0]
-        best_score = evaluate_solution(best_solution, edges)
+        # Extract Pareto front
+        pareto_front = []
+        for i in range(len(population)):
+            solution1 = population[i]
+            score1 = evaluate_solution(solution1, edges)
+            dominated = False
+            for j in range(len(population)):
+                if i != j:
+                    solution2 = population[j]
+                    score2 = evaluate_solution(solution2, edges)
+                    if dominates(score2, score1):
+                        dominated = True
+                        break
+            if not dominated:
+                pareto_front.append(solution1)
+
+        # Calculate the average score of the Pareto front
+        pareto_front_scores = [evaluate_solution(sol, edges) for sol in pareto_front]
+        avg_pareto_front_score = np.mean(pareto_front_scores)
+
+        # Early stopping
+        if avg_pareto_front_score < best_pareto_front_score:
+            best_pareto_front_score = avg_pareto_front_score
+            generations_without_improvement = 0
+        else:
+            generations_without_improvement += 1
+
+        if generations_without_improvement >= early_stopping_generations:
+            print(f"Early stopping at generation {generation+1}.")
+            break
+
+        end_time = time.time()
+        generation_time = end_time - start_time
         print(
-            f"Generation {generation+1}: Best solution: {best_solution}, Score: {best_score}"
+            f"Generation {generation+1}: Best front score: {best_pareto_front_score:.4f}, Time: {generation_time:.2f}s"
         )
-
-    # Extract Pareto front
-    pareto_front = []
-    for i in range(len(population)):
-        solution1 = population[i]
-        score1 = evaluate_solution(solution1, edges)
-        dominated = False
-        for j in range(len(population)):
-            if i != j:
-                solution2 = population[j]
-                score2 = evaluate_solution(solution2, edges)
-                if dominates(score2, score1):
-                    dominated = True
-                    break
-        if not dominated:
-            pareto_front.append(solution1)
 
     print(f"Final Pareto Front: {pareto_front}")
     return pareto_front
@@ -479,7 +536,9 @@ if __name__ == "__main__":
     edges = load_graph(problem_id)
 
     # Choose an algorithm: 'simulated_annealing', 'evolutionary_algorithm', or 'hybrid_algorithm'
-    algorithm = input("Choose an algorithm (simulated_annealing, evolutionary_algorithm, or hybrid_algorithm): ")
+    algorithm = input(
+        "Choose an algorithm (simulated_annealing, evolutionary_algorithm, or hybrid_algorithm): "
+    )
 
     if algorithm == "simulated_annealing":
         best_solution, best_score = simulated_annealing(
@@ -488,8 +547,11 @@ if __name__ == "__main__":
             cooling_rate=0.95,  # Adjust as needed
             max_iterations=1000,  # Adjust as needed
             perturbation_rate=0.2,  # Adjust as needed
+            early_stopping_iterations=100,  # Adjust as needed
         )
-        create_submission_file(best_solution, problem_id, f"simulated_annealing_solution.json")
+        create_submission_file(
+            best_solution, problem_id, f"simulated_annealing_solution.json"
+        )
 
     elif algorithm == "evolutionary_algorithm":
         pareto_front = evolutionary_algorithm(
@@ -498,9 +560,12 @@ if __name__ == "__main__":
             generations=500,  # Adjust as needed
             mutation_rate=0.2,  # Adjust as needed
             crossover_rate=0.8,  # Adjust as needed
+            early_stopping_generations=50,  # Adjust as needed
         )
         for i, solution in enumerate(pareto_front):
-            create_submission_file(solution, problem_id, f"evolutionary_algorithm_solution_{i+1}.json")
+            create_submission_file(
+                solution, problem_id, f"evolutionary_algorithm_solution_{i+1}.json"
+            )
 
     elif algorithm == "hybrid_algorithm":
         pareto_front = hybrid_algorithm(
@@ -512,9 +577,14 @@ if __name__ == "__main__":
             sa_iterations=100,  # Adjust as needed
             initial_temperature=1000,  # Adjust as needed
             cooling_rate=0.95,  # Adjust as needed
+            early_stopping_generations=25,  # Adjust as needed
         )
         for i, solution in enumerate(pareto_front):
-            create_submission_file(solution, problem_id, f"hybrid_algorithm_solution_{i+1}.json")
+            create_submission_file(
+                solution, problem_id, f"hybrid_algorithm_solution_{i+1}.json"
+            )
 
     else:
-        print("Invalid algorithm choice. Please choose from 'simulated_annealing', 'evolutionary_algorithm', or 'hybrid_algorithm'.")
+        print(
+            "Invalid algorithm choice. Please choose from 'simulated_annealing', 'evolutionary_algorithm', or 'hybrid_algorithm'."
+        )
