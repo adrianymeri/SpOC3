@@ -78,11 +78,11 @@ def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) ->
 
 def evaluate_solution(
     decision_vector: List[int], edges: List[List[int]]
-) -> List[float]:
+) -> Tuple[int, int]:
     """Evaluates the given solution and returns the torso size and width."""
     torso_size = calculate_torso_size(decision_vector)
     torso_width = calculate_torso_width(decision_vector, edges)
-    return [torso_size, torso_width]
+    return torso_size, torso_width
 
 
 def generate_neighbor_swap(
@@ -167,10 +167,10 @@ def generate_neighbor_inversion(
     return neighbor
 
 
-def dominates(score1: List[float], score2: List[float]) -> bool:
+def dominates(score1: Tuple[int, int], score2: Tuple[int, int]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
-    return all(x <= y for x, y in zip(score1, score2)) and any(
-        x < y for x, y in zip(score1, score2)
+    return (score1[0] <= score2[0] and score1[1] <= score2[1]) and (
+        score1[0] < score2[0] or score1[1] < score2[1]
     )
 
 
@@ -192,19 +192,31 @@ def generate_neighbor(
         generate_neighbor_inversion,
     ]
 
-    current_score = evaluate_solution(decision_vector, edges)
+    current_size, current_width = evaluate_solution(decision_vector, edges)
+    current_score = (current_size, current_width)
 
     # Try different operators with decreasing probability based on temperature
     for operator in sorted(neighbor_functions, key=lambda x: random.random()):
         neighbor = operator(decision_vector, perturbation_rate)
-        neighbor_score = evaluate_solution(neighbor, edges)
+        neighbor_size, neighbor_width = evaluate_solution(neighbor, edges)
+        neighbor_score = (neighbor_size, neighbor_width)
 
         # Metropolis acceptance criterion
         if dominates(neighbor_score, current_score) or random.random() < np.exp(
-            -np.sum(np.subtract(neighbor_score, current_score)) / temperature
+            -(
+                (neighbor_size - current_size)
+                + 0.5 * (neighbor_width - current_width)
+            )
+            / temperature
         ):
+            print(
+                f"    Neighbor accepted - Size: {neighbor_size}, Width: {neighbor_width}"
+            )
             return neighbor
 
+    print(
+        f"    No better neighbor found - Size: {current_size}, Width: {current_width}"
+    )
     return decision_vector  # Return current solution if no better neighbor is found
 
 
@@ -215,32 +227,36 @@ def simulated_annealing(
     max_iterations: int = 1000,
     perturbation_rate: float = 0.2,
     early_stopping_iterations: int = 100,
-) -> Tuple[List[int], List[float]]:
+) -> Tuple[List[int], Tuple[int, int]]:
     """Performs Simulated Annealing to find a good solution."""
     n = max(node for edge in edges for node in edge) + 1
 
     # Generate random initial solution
     decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
     best_decision_vector = decision_vector[:]
-    best_score = evaluate_solution(decision_vector, edges)
+    best_size, best_width = evaluate_solution(decision_vector, edges)
+    best_score = (best_size, best_width)
 
     temperature = initial_temperature
 
     iterations_without_improvement = 0
     for i in range(max_iterations):
+        print(f"Iteration {i+1}, Temperature: {temperature:.2f}")
         # Generate neighbor solution
         decision_vector = generate_neighbor(
             decision_vector, edges, temperature, perturbation_rate
         )
-        current_score = evaluate_solution(decision_vector, edges)
+        current_size, current_width = evaluate_solution(decision_vector, edges)
+        current_score = (current_size, current_width)
 
         # Update best solution
         if dominates(current_score, best_score):
             best_decision_vector = decision_vector[:]
-            best_score = current_score[:]
+            best_score = current_score
+            best_size, best_width = best_score
             iterations_without_improvement = 0
             print(
-                f"Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
+                f"  New best solution found - Size: {best_size}, Width: {best_width}"
             )
         else:
             iterations_without_improvement += 1
@@ -250,11 +266,11 @@ def simulated_annealing(
 
         # Early stopping
         if iterations_without_improvement >= early_stopping_iterations:
-            print(f"Early stopping at iteration {i+1}.")
+            print(f"  Early stopping at iteration {i+1}.")
             break
 
     print(
-        f"Simulated Annealing completed. Best solution: {best_decision_vector}, Score: {best_score}"
+        f"Simulated Annealing completed. Best solution: Size: {best_size}, Width: {best_width}"
     )
     return best_decision_vector, best_score
 
@@ -358,11 +374,16 @@ def evolutionary_algorithm(
         pareto_front_scores = [
             evaluate_solution(sol, edges) for sol in pareto_front
         ]
-        avg_pareto_front_score = np.mean(pareto_front_scores)
+        avg_pareto_front_score = np.mean(pareto_front_scores, axis=0)
 
         # Early stopping
-        if avg_pareto_front_score < best_pareto_front_score:
-            best_pareto_front_score = avg_pareto_front_score
+        if (
+            avg_pareto_front_score[0] < best_pareto_front_score
+            or avg_pareto_front_score[1] < best_pareto_front_score
+        ):
+            best_pareto_front_score = min(
+                avg_pareto_front_score[0], avg_pareto_front_score[1]
+            )
             generations_without_improvement = 0
         else:
             generations_without_improvement += 1
@@ -492,6 +513,7 @@ def hybrid_algorithm(
 
         # Apply Simulated Annealing as local search to improve offspring
         for i in range(len(offspring)):
+            print(f"Generation {generation+1}, Offspring {i+1}:")
             offspring[i], _ = simulated_annealing(
                 edges,
                 initial_temperature=initial_temperature,
@@ -530,11 +552,16 @@ def hybrid_algorithm(
         pareto_front_scores = [
             evaluate_solution(sol, edges) for sol in pareto_front
         ]
-        avg_pareto_front_score = np.mean(pareto_front_scores)
+        avg_pareto_front_score = np.mean(pareto_front_scores, axis=0)
 
         # Early stopping
-        if avg_pareto_front_score < best_pareto_front_score:
-            best_pareto_front_score = avg_pareto_front_score
+        if (
+            avg_pareto_front_score[0] < best_pareto_front_score
+            or avg_pareto_front_score[1] < best_pareto_front_score
+        ):
+            best_pareto_front_score = min(
+                avg_pareto_front_score[0], avg_pareto_front_score[1]
+            )
             generations_without_improvement = 0
         else:
             generations_without_improvement += 1
