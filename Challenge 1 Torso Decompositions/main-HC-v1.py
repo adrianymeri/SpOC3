@@ -28,6 +28,8 @@ def torso_scorer(
     y_true, y_pred, size_weight=-1, width_weight=-0.5
 ):  # Default weights
     """Combines torso size and width into a single score for optimization."""
+    # Convert y_pred to a NumPy array if it's not already
+    y_pred = np.array(y_pred)
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
 
@@ -263,7 +265,7 @@ def generate_neighbor_ml(
     # Select the best neighbor based on predictions and weights
     best_neighbor_idx = np.argmin(
         [
-            torso_scorer([[0, 0]], pred, size_weight, width_weight)
+            torso_scorer([[0, 0]], [pred], size_weight, width_weight)
             for pred in predictions
         ]
     )
