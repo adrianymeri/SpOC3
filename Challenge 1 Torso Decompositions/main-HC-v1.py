@@ -3,6 +3,15 @@ import random
 import time
 from typing import List, Tuple
 
+import numpy as np
+import urllib.request
+from lightgbm import LGBMRegressor
+from sklearn.metrics import make_scorer
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.multioutput import MultiOutputRegressor
+from xgboost import XGBRegressor
+from joblib import Parallel, delayed
+
 # Define the problem instances
 problems = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -168,12 +177,97 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     )
 
 
+def train_model(X, y, model_type="lgbm"):
+    """Trains an LGBM or XGBoost model with hyperparameter tuning."""
+    print(f"Training {model_type} model...")
+    best_model = None
+    best_score = float("inf")
+
+    param_grid = {
+        "n_estimators": [100, 200],
+        "learning_rate": [0.01, 0.1],
+        "max_depth": [3, 5],
+    }
+
+    for n_estimators in param_grid["n_estimators"]:
+        for learning_rate in param_grid["learning_rate"]:
+            for max_depth in param_grid["max_depth"]:
+                if model_type == "lgbm":
+                    model = MultiOutputRegressor(
+                        LGBMRegressor(
+                            n_estimators=n_estimators,
+                            learning_rate=learning_rate,
+                            max_depth=max_depth,
+                            random_state=42,
+                        )
+                    )
+                else:  # XGBoost
+                    model = MultiOutputRegressor(
+                        XGBRegressor(
+                            n_estimators=n_estimators,
+                            learning_rate=learning_rate,
+                            max_depth=max_depth,
+                            random_state=42,
+                        )
+                    )
+                cv_scores = cross_val_score(
+                    model,
+                    X,
+                    y,
+                    cv=KFold(n_splits=3, shuffle=True, random_state=42),
+                    scoring="neg_mean_squared_error",
+                )
+                mean_score = -cv_scores.mean()  # Use negative mean for minimization
+                print(
+                    f"Model with {n_estimators}, {learning_rate}, {max_depth}: {mean_score}"
+                )  # Verbose output
+                if mean_score < best_score:
+                    best_score = mean_score
+                    best_model = model
+    print(f"Best {model_type} model: {best_model}")  # Verbose output
+    print(f"{model_type} training completed.")
+    return best_model
+
+
+def generate_neighbor_ml(
+    decision_vector: List[int],
+    edges: List[List[int]],
+    model: MultiOutputRegressor,
+) -> List[int]:
+    """Generates neighbors using ML models for prediction."""
+    n = len(decision_vector) - 1
+
+    # Prepare data for training
+    X = []
+    y = []
+    for _ in range(100):  # Generate some training data
+        neighbor = generate_neighbor_swap(decision_vector, 0.2)
+        X.append(neighbor)
+        y.append(evaluate_solution(neighbor, edges))
+
+    X = np.array(X)
+    y = np.array(y)
+
+    # Predict scores for potential neighbors
+    neighbors = [generate_neighbor_swap(decision_vector, 0.2) for _ in range(100)]
+    predictions = model.predict(np.array(neighbors))
+
+    # Select the best neighbor based on predictions
+    best_neighbor_idx = np.argmin(
+        [torso_scorer([[0, 0]], pred) for pred in predictions]
+    )
+    return neighbors[best_neighbor_idx]
+
+
 def hill_climbing_single_restart(
     edges: List[List[int]],
     restart: int,
     max_iterations: int = 100,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
+    lgbm_model=None,
+    xgboost_model=None,
+    ml_switch_interval: int = 5,
     save_interval: int = 50,  # Save every 50 iterations
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the hill climbing algorithm."""
@@ -214,6 +308,21 @@ def hill_climbing_single_restart(
             neighbor = neighbor_functions[selected_operator](
                 decision_vector, perturbation_rate
             )
+        elif neighbor_generation_method == "lgbm_ml":
+            neighbor = generate_neighbor_ml(decision_vector, edges, lgbm_model)
+        elif neighbor_generation_method == "xgboost_ml":
+            neighbor = generate_neighbor_ml(decision_vector, edges, xgboost_model)
+        elif neighbor_generation_method == "hybrid_ml":
+            if i % ml_switch_interval < ml_switch_interval // 2:
+                model = lgbm_model
+                model_name = "LGBM"
+            else:
+                model = xgboost_model
+                model_name = "XGBoost"
+            neighbor = generate_neighbor_ml(decision_vector, edges, model)
+            print(
+                f"Iteration {i+1}: Used {model_name} to generate neighbor."
+            )  # Indicate which model was used
         else:  # Default to 'swap'
             neighbor = generate_neighbor_swap(decision_vector, perturbation_rate)
 
@@ -266,23 +375,50 @@ def hill_climbing(
     num_restarts: int = 10,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
+    use_hybrid_ml: bool = False,
+    ml_switch_interval: int = 5,
     save_interval: int = 50,  # Save every 50 iterations
+    n_jobs: int = -1,  # Use all available cores for parallelization
 ) -> List[List[int]]:
     """Performs hill climbing to find a set of Pareto optimal solutions."""
+    n = max(node for edge in edges for node in edge) + 1
     pareto_front = []
     start_time = time.time()
 
-    # Run hill climbing with multiple restarts
-    for restart in range(num_restarts):
-        solution, score = hill_climbing_single_restart(
+    # Train models only once at the beginning if using ML
+    if neighbor_generation_method.endswith("ml"):
+        print("Training models for the first time...")
+        X = []
+        y = []
+        for _ in range(100):
+            decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
+            X.append(decision_vector)
+            y.append(evaluate_solution(decision_vector, edges))
+        X = np.array(X)
+        y = np.array(y)
+        lgbm_model = train_model(X, y, "lgbm")
+        xgboost_model = train_model(X, y, "xgboost")
+    else:
+        lgbm_model = None
+        xgboost_model = None
+
+    # Run hill climbing with multiple restarts in parallel
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(hill_climbing_single_restart)(
             edges,
             restart,
             max_iterations,
             perturbation_rate,
             neighbor_generation_method,
+            lgbm_model,
+            xgboost_model,
+            ml_switch_interval,
             save_interval,
         )
-        pareto_front.append((solution, score))
+        for restart in range(num_restarts)
+    )
+
+    pareto_front = results  # Results now contain solutions from all restarts
 
     print(f"Pareto Front: {pareto_front}")
 
