@@ -19,11 +19,15 @@ problems = {
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
+# Define a global variable to store the best score found so far
+global_best_score = float("inf")
+
+
 # Define a scorer function for multi-objective optimization
-def torso_scorer(y_true, y_pred):
+def torso_scorer(
+    y_true, y_pred, size_weight=-1, width_weight=-0.5
+):  # Default weights
     """Combines torso size and width into a single score for optimization."""
-    size_weight = -0.7  # Prioritize minimizing size
-    width_weight = -0.3  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
 
@@ -127,7 +131,9 @@ def generate_neighbor_torso_shift(
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
     shift_amount = int(perturbation_rate * n)
-    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount)))
+    neighbor[-1] = max(
+        0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount))
+    )
     return neighbor
 
 
@@ -139,7 +145,7 @@ def generate_neighbor_2opt(
     n = len(neighbor) - 1
     i = random.randint(0, n - 2)
     j = random.randint(i + 1, n - 1)
-    neighbor[i : j] = neighbor[i : j][::-1]  # Reverse the sublist
+    neighbor[i:j] = neighbor[i:j][::-1]  # Reverse the sublist
     return neighbor
 
 
@@ -233,6 +239,8 @@ def generate_neighbor_ml(
     decision_vector: List[int],
     edges: List[List[int]],
     model: MultiOutputRegressor,
+    size_weight: float,
+    width_weight: float,
 ) -> List[int]:
     """Generates neighbors using ML models for prediction."""
     n = len(decision_vector) - 1
@@ -252,9 +260,12 @@ def generate_neighbor_ml(
     neighbors = [generate_neighbor_swap(decision_vector, 0.2) for _ in range(100)]
     predictions = model.predict(np.array(neighbors))
 
-    # Select the best neighbor based on predictions
+    # Select the best neighbor based on predictions and weights
     best_neighbor_idx = np.argmin(
-        [torso_scorer([[0, 0]], pred) for pred in predictions]
+        [
+            torso_scorer([[0, 0]], pred, size_weight, width_weight)
+            for pred in predictions
+        ]
     )
     return neighbors[best_neighbor_idx]
 
@@ -262,15 +273,18 @@ def generate_neighbor_ml(
 def hill_climbing_single_restart(
     edges: List[List[int]],
     restart: int,
-    max_iterations: int = 1000,
+    max_iterations: int = 100,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
     lgbm_model=None,
     xgboost_model=None,
     ml_switch_interval: int = 5,
     save_interval: int = 50,  # Save every 50 iterations
+    size_weight: float = -1,
+    width_weight: float = -0.5,
 ) -> Tuple[List[int], List[float]]:
     """Performs a single restart of the hill climbing algorithm."""
+    global global_best_score  # Access the global best score
     n = max(node for edge in edges for node in edge) + 1
 
     # Generate random initial solution
@@ -309,9 +323,13 @@ def hill_climbing_single_restart(
                 decision_vector, perturbation_rate
             )
         elif neighbor_generation_method == "lgbm_ml":
-            neighbor = generate_neighbor_ml(decision_vector, edges, lgbm_model)
+            neighbor = generate_neighbor_ml(
+                decision_vector, edges, lgbm_model, size_weight, width_weight
+            )
         elif neighbor_generation_method == "xgboost_ml":
-            neighbor = generate_neighbor_ml(decision_vector, edges, xgboost_model)
+            neighbor = generate_neighbor_ml(
+                decision_vector, edges, xgboost_model, size_weight, width_weight
+            )
         elif neighbor_generation_method == "hybrid_ml":
             if i % ml_switch_interval < ml_switch_interval // 2:
                 model = lgbm_model
@@ -319,7 +337,9 @@ def hill_climbing_single_restart(
             else:
                 model = xgboost_model
                 model_name = "XGBoost"
-            neighbor = generate_neighbor_ml(decision_vector, edges, model)
+            neighbor = generate_neighbor_ml(
+                decision_vector, edges, model, size_weight, width_weight
+            )
             print(
                 f"Iteration {i+1}: Used {model_name} to generate neighbor."
             )  # Indicate which model was used
@@ -330,7 +350,10 @@ def hill_climbing_single_restart(
         neighbor_score = evaluate_solution(neighbor, edges)
 
         # Update current solution if neighbor is better or equal
-        if dominates(neighbor_score, current_score) or neighbor_score == current_score:
+        if (
+            dominates(neighbor_score, current_score)
+            or neighbor_score == current_score
+        ):
             decision_vector = neighbor[:]
             current_score = neighbor_score[:]
             print(
@@ -339,7 +362,9 @@ def hill_climbing_single_restart(
 
             # Update operator probabilities (reinforcement learning)
             if neighbor_generation_method == "random_operator":
-                operator_probabilities[selected_operator] *= 1.1  # Increase probability
+                operator_probabilities[selected_operator] *= (
+                    1.1  # Increase probability
+                )
                 # Normalize probabilities
                 total_prob = sum(operator_probabilities.values())
                 operator_probabilities = {
@@ -353,6 +378,13 @@ def hill_climbing_single_restart(
             best_score = current_score[:]
             print(
                 f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
+            )
+
+        # Update global best score if current best is better
+        if torso_scorer([[0, 0]], [best_score]) < global_best_score:
+            global_best_score = torso_scorer([[0, 0]], [best_score])
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: New global best score: {global_best_score}"
             )
 
         # Save intermediate solutions
@@ -371,14 +403,16 @@ def hill_climbing_single_restart(
 
 def hill_climbing(
     edges: List[List[int]],
-    max_iterations: int = 1000,
-    num_restarts: int = 100,
+    max_iterations: int = 100,
+    num_restarts: int = 10,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
     use_hybrid_ml: bool = False,
     ml_switch_interval: int = 5,
     save_interval: int = 50,  # Save every 50 iterations
     n_jobs: int = -1,  # Use all available cores for parallelization
+    size_weight: float = -1,
+    width_weight: float = -0.5,
 ) -> List[List[int]]:
     """Performs hill climbing to find a set of Pareto optimal solutions."""
     n = max(node for edge in edges for node in edge) + 1
@@ -414,11 +448,15 @@ def hill_climbing(
             xgboost_model,
             ml_switch_interval,
             save_interval,
+            size_weight,
+            width_weight,
         )
         for restart in range(num_restarts)
     )
 
-    pareto_front = results  # Results now contain solutions from all restarts
+    pareto_front = (
+        results  # Results now contain solutions from all restarts
+    )
 
     print(f"Pareto Front: {pareto_front}")
 
@@ -461,11 +499,15 @@ if __name__ == "__main__":
 
     # Get problem ID from user input
     while True:
-        problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
+        problem_id = input(
+            "Select a problem instance (easy, medium, hard): "
+        ).lower()
         if problem_id in problems:
             break
         else:
-            print("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'.")
+            print(
+                "Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'."
+            )
 
     edges = load_graph(problem_id)
 
@@ -477,6 +519,8 @@ if __name__ == "__main__":
         max_iterations=500,  # Adjust as needed
         num_restarts=20,  # Adjust as needed
         save_interval=50,  # Save every 50 iterations
+        size_weight=-1,  # Example: Prioritize size
+        width_weight=-0.5,  # Example: Less emphasis on width
     )
 
     # Example: Select the Pareto front from the random operator approach
