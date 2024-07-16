@@ -22,8 +22,8 @@ problems = {
 # Define a scorer function for multi-objective optimization
 def torso_scorer(y_true, y_pred):
     """Combines torso size and width into a single score for optimization."""
-    size_weight = -1  # Prioritize minimizing size
-    width_weight = -0.5  # Penalize width but less than size
+    size_weight = -0.7  # Prioritize minimizing size
+    width_weight = -0.3  # Penalize width but less than size
     return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
 
@@ -262,7 +262,7 @@ def generate_neighbor_ml(
 def hill_climbing_single_restart(
     edges: List[List[int]],
     restart: int,
-    max_iterations: int = 100,
+    max_iterations: int = 1000,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
     lgbm_model=None,
@@ -371,8 +371,8 @@ def hill_climbing_single_restart(
 
 def hill_climbing(
     edges: List[List[int]],
-    max_iterations: int = 100,
-    num_restarts: int = 10,
+    max_iterations: int = 1000,
+    num_restarts: int = 100,
     perturbation_rate: float = 0.2,
     neighbor_generation_method: str = "random_operator",
     use_hybrid_ml: bool = False,
