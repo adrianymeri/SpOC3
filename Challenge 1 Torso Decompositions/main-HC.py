@@ -4,161 +4,358 @@ import time
 from typing import List, Tuple
 
 import numpy as np
-import pygmo as pg  # For hypervolume calculation
-from loguru import logger
+import urllib.request
+from joblib import Parallel, delayed
 
-# Logger configuration
-log_format = "<green>{time:YYYY-MM-DD@HH:mm:ss}</green> | <level>{message}</level>"
-log_config = {"handlers": [{"sink": sys.stdout, "format": log_format}]}
-logger.configure(**log_config)
+# Define the problem instances
+problems = {
+    "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
+    "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
+    "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
+}
 
-# ... (graph_torso_udp class definition - same as before) ...
+# Define a scorer function for multi-objective optimization
+def torso_scorer(y_true, y_pred):
+    """Combines torso size and width into a single score for optimization."""
+    size_weight = -0.5  # Prioritize minimizing size
+    width_weight = -0.5  # Penalize width but less than size
+    return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
-def generate_neighbor_swap(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def load_graph(problem_id: str) -> List[List[int]]:
+    """Loads the graph data for the given problem ID."""
+    url = problems[problem_id]
+    print(f"Loading graph data from: {url}")
+    with urllib.request.urlopen(url) as f:
+        edges = []
+        for line in f:
+            if line.startswith(b"#"):
+                continue
+            u, v = map(int, line.strip().split())
+            edges.append([u, v])
+    print(f"Loaded graph with {len(edges)} edges.")
+    return edges
+
+
+def calculate_torso_size(decision_vector: List[int]) -> int:
+    """Calculates the size of the torso for the given decision vector."""
+    n = len(decision_vector) - 1
+    t = decision_vector[-1]
+    return n - t
+
+
+def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
+    """Calculates the width of the torso for the given decision vector and edges."""
+    n = len(decision_vector) - 1
+    t = decision_vector[-1]
+    permutation = decision_vector[:-1]
+
+    adj_list = [[] for _ in range(n)]
+    for u, v in edges:
+        adj_list[u].append(v)
+        adj_list[v].append(u)
+
+    oriented_edges = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if permutation[i] in adj_list[permutation[j]]:
+                oriented_edges.append((permutation[i], permutation[j]))
+
+    outdegrees = [0 for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if (permutation[i], permutation[j]) in oriented_edges:
+                for k in range(j + 1, n):
+                    if (
+                        (permutation[i], permutation[k]) in oriented_edges
+                        and (permutation[j], permutation[k]) not in oriented_edges
+                    ):
+                        if permutation[j] >= t and permutation[k] >= t:
+                            outdegrees[permutation[j]] += 1
+
+    return max(outdegrees)
+
+
+def evaluate_solution(
+    decision_vector: List[int], edges: List[List[int]]
+) -> List[float]:
+    """Evaluates the given solution and returns the torso size and width."""
+    torso_size = calculate_torso_size(decision_vector)
+    torso_width = calculate_torso_width(decision_vector, edges)
+    return [torso_size, torso_width]
+
+
+def generate_neighbor_swap(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by swapping two random elements."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    i, j = random.sample(range(n), 2)
-    neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
+    num_perturbations = max(1, int(perturbation_rate * n))
+    swap_indices = random.sample(range(n), num_perturbations * 2)
+    for i in range(0, len(swap_indices), 2):
+        neighbor[swap_indices[i]], neighbor[swap_indices[i + 1]] = (
+            neighbor[swap_indices[i + 1]],
+            neighbor[swap_indices[i]],
+        )
     return neighbor
 
-def generate_neighbor_shuffle(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def generate_neighbor_shuffle(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by shuffling a sublist of elements."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    sublist_length = random.randint(1, int(0.2 * n))  # Adaptive sublist length
+    sublist_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - sublist_length)
-    sublist = neighbor[start_index: start_index + sublist_length].copy() #Important: Create a copy to avoid modifying original array
+    sublist = neighbor[start_index : start_index + sublist_length]
     random.shuffle(sublist)
-    neighbor[start_index: start_index + sublist_length] = sublist
+    neighbor[start_index : start_index + sublist_length] = sublist
     return neighbor
 
-def generate_neighbor_torso_shift(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def generate_neighbor_torso_shift(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by shifting the torso threshold."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    shift_amount = random.randint(1, int(0.2 * n)) # Adaptive shift amount
-    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.choice([-shift_amount, shift_amount])))
+    shift_amount = int(perturbation_rate * n)
+    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount)))
     return neighbor
 
-def generate_neighbor_2opt(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def generate_neighbor_2opt(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution using the 2-opt heuristic."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
     i = random.randint(0, n - 2)
     j = random.randint(i + 1, n - 1)
-    neighbor[i:j+1] = neighbor[i:j+1][::-1]  # Corrected 2-opt
+    neighbor[i : j] = neighbor[i : j][::-1]  # Reverse the sublist
     return neighbor
 
-def generate_neighbor_insert(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def generate_neighbor_insert(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by inserting an element at a random position."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
     index1 = random.randint(0, n - 1)
     index2 = random.randint(0, n)
-    value = neighbor[index1]
-    neighbor = np.delete(neighbor, index1)
-    neighbor = np.insert(neighbor, index2, value)
+    value = neighbor.pop(index1)
+    neighbor.insert(index2, value)
     return neighbor
 
-def generate_neighbor_inversion(decision_vector: np.ndarray) -> np.ndarray:
-    neighbor = decision_vector.copy()
+
+def generate_neighbor_inversion(
+    decision_vector: List[int], perturbation_rate: float = 0.2
+) -> List[int]:
+    """Generates a neighbor solution by inverting a sublist of elements."""
+    neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    sublist_length = random.randint(1, int(0.2 * n))  # Adaptive sublist length
+    sublist_length = max(1, int(perturbation_rate * n))
     start_index = random.randint(0, n - sublist_length)
-    neighbor[start_index: start_index + sublist_length] = neighbor[start_index: start_index + sublist_length][::-1]
+    neighbor[start_index : start_index + sublist_length] = neighbor[
+        start_index : start_index + sublist_length
+    ][::-1]
     return neighbor
 
-def generate_neighbor_all(decision_vector: np.ndarray) -> np.ndarray:
-    operators = [
-        generate_neighbor_swap,
-        generate_neighbor_shuffle,
-        generate_neighbor_torso_shift,
-        generate_neighbor_2opt,
-        generate_neighbor_insert,
-        generate_neighbor_inversion
-    ]
-    op = random.choice(operators)
-    return op(decision_vector)
-
-def generate_random_solution(n: int) -> np.ndarray:
-    """Generates a random solution (permutation + threshold)."""
-    perm = np.arange(n)
-    np.random.shuffle(perm)
-    return np.concatenate([perm, [random.randint(0, n - 1)]])
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
     """Checks if score1 dominates score2 in multi-objective optimization."""
-    return all(x <= y for x, y in zip(score1, score2)) and any(x < y for x, y in zip(score1, score2))
-
-def update_pareto_front(pareto_front: List[np.ndarray], solution: np.ndarray, udp: graph_torso_udp) -> List[np.ndarray]:
-    """Updates the Pareto front with a new solution."""
-    fitness = np.array(udp.fitness(solution))  # Calculate fitness only once
-    new_solution_entry = np.concatenate([solution, fitness])  # Store solution and fitness together
-
-    if not pareto_front:  # Initialize Pareto front if it's empty
-        return [new_solution_entry]
-    
-    updated_pareto_front = []
-    is_dominated = False
-
-    for existing_solution_entry in pareto_front:
-        existing_fitness = existing_solution_entry[-2:]  # Extract existing fitness
-        if all(fitness <= existing_fitness) and any(fitness < existing_fitness):
-            is_dominated = True
-            break  # New solution is dominated, no need to add it
-        elif all(fitness >= existing_fitness) and any(fitness > existing_fitness):
-            continue  # Existing solution is dominated by the new one
-        else:
-            updated_pareto_front.append(existing_solution_entry)  # Keep non-dominated existing solutions
-    
-    if not is_dominated:
-      updated_pareto_front.append(new_solution_entry)
-
-    return updated_pareto_front
-
-def combine_scores(points: np.ndarray, udp: graph_torso_udp) -> float:
-    """Combines Pareto front scores into a single hypervolume score."""
-    ref_point = np.array([udp.n_nodes, udp.n_nodes])  # Reference point for hypervolume
-    if len(points) == 0:
-        return 0.0
-    hv = pg.hypervolume(points)
-    return -hv.compute(ref_point)  # Negative because we want to maximize
+    return all(x <= y for x, y in zip(score1, score2)) and any(
+        x < y for x, y in zip(score1, score2)
+    )
 
 
-def hill_climbing(udp: graph_torso_udp, max_iterations: int = 1000, num_restarts: int = 20):
-    """Hill climbing with Pareto front and hypervolume calculation."""
+def hill_climbing_single_restart(
+    edges: List[List[int]],
+    restart: int,
+    max_iterations: int = 1000,
+    perturbation_rate: float = 0.2,
+    neighbor_generation_method: str = "random_operator",
+    save_interval: int = 50,  # Save every 50 iterations
+) -> Tuple[List[int], List[float]]:
+    """Performs a single restart of the hill climbing algorithm."""
+    n = max(node for edge in edges for node in edge) + 1
 
-    best_hypervolume = -np.inf
-    best_pareto_front = []
+    # Generate random initial solution
+    decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
 
-    for restart in range(num_restarts):
-        pareto_front = []  # Initialize Pareto front for each restart
-        n = udp.n_nodes
-        S = generate_random_solution(n)
-        pareto_front = update_pareto_front(pareto_front, S, udp)
+    # Evaluate initial solution
+    current_score = evaluate_solution(decision_vector, edges)
+    print(
+        f"Restart {restart+1} - Initial solution: {decision_vector}, Score: {current_score}"
+    )
 
-        for i in range(max_iterations):
-            R = generate_neighbor_all(S)  # Generate a neighbor
-            pareto_front = update_pareto_front(pareto_front, R, udp) # Update pareto front
+    best_decision_vector = decision_vector[:]
+    best_score = current_score[:]
 
-            S = R.copy()  # Move to the neighbor
+    # Define neighbor generation functions and their initial probabilities
+    neighbor_functions = {
+        "swap": generate_neighbor_swap,
+        "shuffle": generate_neighbor_shuffle,
+        "torso_shift": generate_neighbor_torso_shift,
+        "2opt": generate_neighbor_2opt,
+        "insert": generate_neighbor_insert,
+        "inversion": generate_neighbor_inversion,
+    }
+    operator_probabilities = {
+        op_name: 1 / len(neighbor_functions) for op_name in neighbor_functions
+    }
 
-            if (i+1) % 100 == 0:  # Log every 100 iterations
-                hv = combine_scores(np.array([p[-2:] for p in pareto_front]), udp) #Hypervolume calculation
-                logger.info(f"Restart {restart+1}, Iteration {i+1}: Pareto front size = {len(pareto_front)}, Hypervolume = {hv:.3f}")
+    for i in range(max_iterations):
+        # Choose neighbor generation method based on probabilities
+        if neighbor_generation_method == "random_operator":
+            selected_operator = random.choices(
+                list(operator_probabilities.keys()),
+                weights=list(operator_probabilities.values()),
+            )[0]
+            neighbor = neighbor_functions[selected_operator](
+                decision_vector, perturbation_rate
+            )
+        else:  # Default to 'swap'
+            neighbor = generate_neighbor_swap(decision_vector, perturbation_rate)
 
-        hv = combine_scores(np.array([p[-2:] for p in pareto_front]), udp) #Hypervolume calculation
-        logger.info(f"Restart {restart+1} finished. Pareto front size = {len(pareto_front)}, Hypervolume = {hv:.3f}")
+        # Evaluate neighbor solution
+        neighbor_score = evaluate_solution(neighbor, edges)
 
-        if hv > best_hypervolume:
-            best_hypervolume = hv
-            best_pareto_front = pareto_front
+        # Update current solution if neighbor is better or equal
+        if dominates(neighbor_score, current_score) or neighbor_score == current_score:
+            decision_vector = neighbor[:]
+            current_score = neighbor_score[:]
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: Found better solution - {decision_vector}, Score: {current_score}"
+            )
 
-    return best_pareto_front, best_hypervolume
+            # Update operator probabilities (reinforcement learning)
+            if neighbor_generation_method == "random_operator":
+                operator_probabilities[selected_operator] *= 1.1  # Increase probability
+                # Normalize probabilities
+                total_prob = sum(operator_probabilities.values())
+                operator_probabilities = {
+                    op: prob / total_prob
+                    for op, prob in operator_probabilities.items()
+                }
+
+        # Update best solution if current solution is better
+        if dominates(current_score, best_score):
+            best_decision_vector = decision_vector[:]
+            best_score = current_score[:]
+            print(
+                f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
+            )
+
+        # Save intermediate solutions
+        if (i + 1) % save_interval == 0:
+            create_submission_file(
+                best_decision_vector,
+                problem_id,
+                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
+            )
+
+    print(
+        f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}"
+    )
+    return best_decision_vector, best_score
+
+
+def hill_climbing(
+    edges: List[List[int]],
+    max_iterations: int = 1000,
+    num_restarts: int = 100,
+    perturbation_rate: float = 0.2,
+    neighbor_generation_method: str = "random_operator",
+    save_interval: int = 50,  # Save every 50 iterations
+    n_jobs: int = -1,  # Use all available cores for parallelization
+) -> List[List[int]]:
+    """Performs hill climbing to find a set of Pareto optimal solutions."""
+    n = max(node for edge in edges for node in edge) + 1
+    pareto_front = []
+    start_time = time.time()
+
+    # Run hill climbing with multiple restarts in parallel
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(hill_climbing_single_restart)(
+            edges,
+            restart,
+            max_iterations,
+            perturbation_rate,
+            neighbor_generation_method,
+            save_interval,
+        )
+        for restart in range(num_restarts)
+    )
+
+    pareto_front = results  # Results now contain solutions from all restarts
+
+    print(f"Pareto Front: {pareto_front}")
+
+    # Filter for non-dominated solutions
+    filtered_pareto_front = []
+    for i in range(len(pareto_front)):
+        solution1, score1 = pareto_front[i]
+        dominated = False
+        for j in range(len(pareto_front)):
+            if i != j:
+                solution2, score2 = pareto_front[j]
+                if dominates(score2, score1):
+                    dominated = True
+                    break
+        if not dominated:
+            filtered_pareto_front.append(solution1)
+
+    print(f"Filtered Pareto Front: {filtered_pareto_front}")
+    return filtered_pareto_front
+
+
+def create_submission_file(
+    decision_vector, problem_id, filename="submission.json"
+):
+    """Creates a valid submission file."""
+    submission = {
+        "decisionVector": [
+            decision_vector
+        ],  # Wrap in a list for multiple solutions
+        "problem": problem_id,
+        "challenge": "spoc-3-torso-decompositions",
+    }
+    with open(filename, "w") as f:
+        json.dump(submission, f, indent=4)
+    print(f"Submission file '{filename}' created successfully!")
 
 
 if __name__ == "__main__":
-    import sys
     random.seed(42)
-    np.random.seed(42)
 
-    problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
-    udp = graph_torso_udp(f"data/spoc3/torso/{problem_id}.gr")  # Load graph using UDP class
+    # Get problem ID from user input
+    while True:
+        problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
+        if problem_id in problems:
+            break
+        else:
+            print("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'.")
 
-    best_pareto_front, best_hypervolume = hill_climbing(udp, max_iterations=5
+    edges = load_graph(problem_id)
+
+    # Hill Climbing with Random Operator Selection
+    print("Starting Hill Climbing with Random Operator Selection...")
+    pareto_front_random_op = hill_climbing(
+        edges,
+        neighbor_generation_method="random_operator",
+        max_iterations=500,  # Adjust as needed
+        num_restarts=20,  # Adjust as needed
+        save_interval=50,  # Save every 50 iterations
+    )
+
+    # Example: Select the Pareto front from the random operator approach
+    best_pareto_front = pareto_front_random_op
+
+    # Create Final Submission File
+    for i, solution in enumerate(best_pareto_front):
+        create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
+    print("All submission files created successfully!")
