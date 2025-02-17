@@ -2,24 +2,16 @@ import json
 import random
 import time
 from typing import List, Tuple
-
 import numpy as np
 import urllib.request
-from joblib import Parallel, delayed
+import math
 
-# Define the problem instances
+# Problem configurations
 problems = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
-
-# Define a scorer function for multi-objective optimization
-def torso_scorer(y_true, y_pred):
-    """Combines torso size and width into a single score for optimization."""
-    size_weight = -0.5  # Prioritize minimizing size
-    width_weight = -0.5  # Penalize width but less than size
-    return size_weight * y_pred[:, 0] + width_weight * y_pred[:, 1]
 
 
 def load_graph(problem_id: str) -> List[List[int]]:
@@ -37,290 +29,185 @@ def load_graph(problem_id: str) -> List[List[int]]:
     return edges
 
 
-def calculate_torso_size(decision_vector: List[int]) -> int:
-    """Calculates the size of the torso for the given decision vector."""
+def evaluate_solution(decision_vector: List[int], edges: List[List[int]]) -> List[float]:
+    """
+    Evaluates the given solution and returns [torso_size, torso_width].
+    Torso size = n - t  (we want this to be as high as possible, so t should be small).
+    Torso width is the maximum degree (number of adjacent nodes) for nodes in the torso.
+    Width > 500 is penalized (set to 501).
+    """
     n = len(decision_vector) - 1
     t = decision_vector[-1]
-    return n - t
-
-
-def calculate_torso_width(decision_vector: List[int], edges: List[List[int]]) -> int:
-    """Calculates the width of the torso for the given decision vector and edges."""
-    n = len(decision_vector) - 1
-    t = decision_vector[-1]
-    permutation = decision_vector[:-1]
-
-    adj_list = [[] for _ in range(n)]
+    size = n - t
+    adj_list = {i: set() for i in range(n)}
     for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    oriented_edges = []
+        adj_list[u].add(v)
+        adj_list[v].add(u)
+    max_width = 0
     for i in range(n):
-        for j in range(i + 1, n):
-            if permutation[i] in adj_list[permutation[j]]:
-                oriented_edges.append((permutation[i], permutation[j]))
-
-    outdegrees = [0 for _ in range(n)]
-    for i in range(n):
-        for j in range(i + 1, n):
-            if (permutation[i], permutation[j]) in oriented_edges:
-                for k in range(j + 1, n):
-                    if (
-                        (permutation[i], permutation[k]) in oriented_edges
-                        and (permutation[j], permutation[k]) not in oriented_edges
-                    ):
-                        if permutation[j] >= t and permutation[k] >= t:
-                            outdegrees[permutation[j]] += 1
-
-    return max(outdegrees)
+        if i >= t:
+            max_width = max(max_width, len(adj_list[i]))
+    if max_width > 500:
+        max_width = 501
+    return [size, max_width]
 
 
-def evaluate_solution(
-    decision_vector: List[int], edges: List[List[int]]
-) -> List[float]:
-    """Evaluates the given solution and returns the torso size and width."""
-    torso_size = calculate_torso_size(decision_vector)
-    torso_width = calculate_torso_width(decision_vector, edges)
-    return [torso_size, torso_width]
-
-
-def generate_neighbor_swap(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution by swapping two random elements."""
+# Define neighbor operators
+def neighbor_swap(decision_vector: List[int]) -> List[int]:
+    """Swap two random nodes in the permutation part."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    num_perturbations = max(1, int(perturbation_rate * n))
-    swap_indices = random.sample(range(n), num_perturbations * 2)
-    for i in range(0, len(swap_indices), 2):
-        neighbor[swap_indices[i]], neighbor[swap_indices[i + 1]] = (
-            neighbor[swap_indices[i + 1]],
-            neighbor[swap_indices[i]],
-        )
+    i, j = random.sample(range(n), 2)
+    neighbor[i], neighbor[j] = neighbor[j], neighbor[i]
     return neighbor
 
 
-def generate_neighbor_shuffle(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution by shuffling a sublist of elements."""
+def neighbor_shuffle(decision_vector: List[int]) -> List[int]:
+    """Shuffle a random sublist of the permutation part."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    sublist_length = max(1, int(perturbation_rate * n))
-    start_index = random.randint(0, n - sublist_length)
-    sublist = neighbor[start_index : start_index + sublist_length]
-    random.shuffle(sublist)
-    neighbor[start_index : start_index + sublist_length] = sublist
+    sub_len = max(2, int(0.1 * n))
+    start = random.randint(0, n - sub_len)
+    sub = neighbor[start:start + sub_len]
+    random.shuffle(sub)
+    neighbor[start:start + sub_len] = sub
     return neighbor
 
 
-def generate_neighbor_torso_shift(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution by shifting the torso threshold."""
-    neighbor = decision_vector[:]
-    n = len(neighbor) - 1
-    shift_amount = int(perturbation_rate * n)
-    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift_amount, shift_amount)))
-    return neighbor
-
-
-def generate_neighbor_2opt(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution using the 2-opt heuristic."""
+def neighbor_inversion(decision_vector: List[int]) -> List[int]:
+    """Invert a random segment of the permutation part."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
     i = random.randint(0, n - 2)
     j = random.randint(i + 1, n - 1)
-    neighbor[i : j] = neighbor[i : j][::-1]  # Reverse the sublist
+    neighbor[i:j] = neighbor[i:j][::-1]
     return neighbor
 
 
-def generate_neighbor_insert(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution by inserting an element at a random position."""
+def neighbor_insert(decision_vector: List[int]) -> List[int]:
+    """Remove a node and insert it at a random position in the permutation part."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    index1 = random.randint(0, n - 1)
-    index2 = random.randint(0, n)
-    value = neighbor.pop(index1)
-    neighbor.insert(index2, value)
+    i = random.randint(0, n - 1)
+    node = neighbor.pop(i)
+    j = random.randint(0, n - 1)
+    neighbor.insert(j, node)
     return neighbor
 
 
-def generate_neighbor_inversion(
-    decision_vector: List[int], perturbation_rate: float = 0.2
-) -> List[int]:
-    """Generates a neighbor solution by inverting a sublist of elements."""
+def neighbor_torso_shift(decision_vector: List[int], perturbation_rate: float = 0.2) -> List[int]:
+    """Shift the torso threshold by a random amount."""
     neighbor = decision_vector[:]
     n = len(neighbor) - 1
-    sublist_length = max(1, int(perturbation_rate * n))
-    start_index = random.randint(0, n - sublist_length)
-    neighbor[start_index : start_index + sublist_length] = neighbor[
-        start_index : start_index + sublist_length
-    ][::-1]
+    shift = int(perturbation_rate * n)
+    neighbor[-1] = max(0, min(n - 1, neighbor[-1] + random.randint(-shift, shift)))
     return neighbor
+
+
+neighbor_operators = [
+    neighbor_swap,
+    neighbor_shuffle,
+    neighbor_inversion,
+    neighbor_insert,
+    neighbor_torso_shift,
+]
 
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
-    """Checks if score1 dominates score2 in multi-objective optimization."""
-    return all(x <= y for x, y in zip(score1, score2)) and any(
-        x < y for x, y in zip(score1, score2)
-    )
+    """
+    Checks if score1 dominates score2.
+    We want a higher torso size (size) and a lower torso width.
+    """
+    return (score1[0] > score2[0] and score1[1] <= score2[1]) or (score1[0] >= score2[0] and score1[1] < score2[1])
 
 
-def hill_climbing_single_restart(
-    edges: List[List[int]],
-    restart: int,
-    max_iterations: int = 1000,
-    perturbation_rate: float = 0.2,
-    neighbor_generation_method: str = "random_operator",
-    save_interval: int = 50,  # Save every 50 iterations
-) -> Tuple[List[int], List[float]]:
-    """Performs a single restart of the hill climbing algorithm."""
-    n = max(node for edge in edges for node in edge) + 1
-
-    # Generate random initial solution
-    decision_vector = [i for i in range(n)] + [random.randint(0, n - 1)]
-
-    # Evaluate initial solution
-    current_score = evaluate_solution(decision_vector, edges)
-    print(
-        f"Restart {restart+1} - Initial solution: {decision_vector}, Score: {current_score}"
-    )
-
-    best_decision_vector = decision_vector[:]
-    best_score = current_score[:]
-
-    # Define neighbor generation functions and their initial probabilities
-    neighbor_functions = {
-        "swap": generate_neighbor_swap,
-        "shuffle": generate_neighbor_shuffle,
-        "torso_shift": generate_neighbor_torso_shift,
-        "2opt": generate_neighbor_2opt,
-        "insert": generate_neighbor_insert,
-        "inversion": generate_neighbor_inversion,
-    }
-    operator_probabilities = {
-        op_name: 1 / len(neighbor_functions) for op_name in neighbor_functions
-    }
-
-    for i in range(max_iterations):
-        # Choose neighbor generation method based on probabilities
-        if neighbor_generation_method == "random_operator":
-            selected_operator = random.choices(
-                list(operator_probabilities.keys()),
-                weights=list(operator_probabilities.values()),
-            )[0]
-            neighbor = neighbor_functions[selected_operator](
-                decision_vector, perturbation_rate
-            )
-        else:  # Default to 'swap'
-            neighbor = generate_neighbor_swap(decision_vector, perturbation_rate)
-
-        # Evaluate neighbor solution
-        neighbor_score = evaluate_solution(neighbor, edges)
-
-        # Update current solution if neighbor is better or equal
-        if dominates(neighbor_score, current_score) or neighbor_score == current_score:
-            decision_vector = neighbor[:]
-            current_score = neighbor_score[:]
-            print(
-                f"Restart {restart+1} - Iteration {i+1}: Found better solution - {decision_vector}, Score: {current_score}"
-            )
-
-            # Update operator probabilities (reinforcement learning)
-            if neighbor_generation_method == "random_operator":
-                operator_probabilities[selected_operator] *= 1.1  # Increase probability
-                # Normalize probabilities
-                total_prob = sum(operator_probabilities.values())
-                operator_probabilities = {
-                    op: prob / total_prob
-                    for op, prob in operator_probabilities.items()
-                }
-
-        # Update best solution if current solution is better
-        if dominates(current_score, best_score):
-            best_decision_vector = decision_vector[:]
-            best_score = current_score[:]
-            print(
-                f"Restart {restart+1} - Iteration {i+1}: New best solution found - {best_decision_vector}, Score: {best_score}"
-            )
-
-        # Save intermediate solutions
-        if (i + 1) % save_interval == 0:
-            create_submission_file(
-                best_decision_vector,
-                problem_id,
-                f"intermediate_solution_{restart+1}_iter_{i+1}.json",
-            )
-
-    print(
-        f"Restart {restart+1} completed. Best solution: {best_decision_vector}, Score: {best_score}"
-    )
-    return best_decision_vector, best_score
+def scalar_objective(decision_vector: List[int], score: List[float]) -> float:
+    """
+    Scalar objective for simulated annealing:
+    We use f(sol) = t + torso_width, where t is the threshold.
+    Lower values are better.
+    """
+    return decision_vector[-1] + score[1]
 
 
-def hill_climbing(
-    edges: List[List[int]],
-    max_iterations: int = 1000,
-    num_restarts: int = 100,
-    perturbation_rate: float = 0.2,
-    neighbor_generation_method: str = "random_operator",
-    save_interval: int = 50,  # Save every 50 iterations
-    n_jobs: int = -1,  # Use all available cores for parallelization
-) -> List[List[int]]:
-    """Performs hill climbing to find a set of Pareto optimal solutions."""
+def hill_climbing(edges: List[List[int]], max_iterations: int = 10000, num_restarts: int = 100) -> List[List[int]]:
+    """
+    Performs hill climbing with multiple restarts and simulated annealing acceptance
+    to approximate the Pareto frontier.
+    """
     n = max(node for edge in edges for node in edge) + 1
     pareto_front = []
-    start_time = time.time()
 
-    # Run hill climbing with multiple restarts in parallel
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(hill_climbing_single_restart)(
-            edges,
-            restart,
-            max_iterations,
-            perturbation_rate,
-            neighbor_generation_method,
-            save_interval,
-        )
-        for restart in range(num_restarts)
-    )
+    # Adaptive operator weights
+    op_weights = {op: 1.0 for op in neighbor_operators}
 
-    pareto_front = results  # Results now contain solutions from all restarts
+    # Simulated annealing parameters
+    T0 = 1000.0  # initial temperature
+    cooling_rate = 0.9995  # cooling factor per iteration
 
-    print(f"Pareto Front: {pareto_front}")
+    for restart in range(num_restarts):
+        # Use two kinds of initialization: random and heuristic (by degree)
+        if restart % 10 == 0:  # every 10th restart, use heuristic init
+            # heuristic: sort nodes by ascending degree so that low-degree nodes appear in the torso part
+            degree = {}
+            # Build degree dictionary from edges
+            for u, v in edges:
+                degree[u] = degree.get(u, 0) + 1
+                degree[v] = degree.get(v, 0) + 1
+            permutation = sorted(range(n), key=lambda x: degree.get(x, 0))
+        else:
+            permutation = list(range(n))
+            random.shuffle(permutation)
+        initial_threshold = n // 2
+        decision_vector = permutation + [initial_threshold]
+        current_score = evaluate_solution(decision_vector, edges)
+        best_solution, best_score = decision_vector[:], current_score[:]
 
-    # Filter for non-dominated solutions
-    filtered_pareto_front = []
-    for i in range(len(pareto_front)):
-        solution1, score1 = pareto_front[i]
-        dominated = False
-        for j in range(len(pareto_front)):
-            if i != j:
-                solution2, score2 = pareto_front[j]
-                if dominates(score2, score1):
-                    dominated = True
-                    break
-        if not dominated:
-            filtered_pareto_front.append(solution1)
+        T = T0
+        for iteration in range(max_iterations):
+            T *= cooling_rate  # cool down
+            # Choose operator adaptively
+            op = random.choices(neighbor_operators, weights=[op_weights[o] for o in neighbor_operators])[0]
+            neighbor = op(decision_vector)
+            neighbor_score = evaluate_solution(neighbor, edges)
 
-    print(f"Filtered Pareto Front: {filtered_pareto_front}")
-    return filtered_pareto_front
+            # If neighbor dominates or is equal, accept it
+            if dominates(neighbor_score, current_score) or neighbor_score == current_score:
+                decision_vector, current_score = neighbor[:], neighbor_score[:]
+                op_weights[op] *= 1.05
+            else:
+                # Compute scalar objectives
+                f_current = scalar_objective(decision_vector, current_score)
+                f_neighbor = scalar_objective(neighbor, neighbor_score)
+                delta = f_neighbor - f_current
+                if delta < 0 or random.random() < math.exp(-delta / T):
+                    decision_vector, current_score = neighbor[:], neighbor_score[:]
+                    op_weights[op] *= 1.02
+            # Normalize operator weights
+            total_weight = sum(op_weights[o] for o in neighbor_operators)
+            for o in neighbor_operators:
+                op_weights[o] /= total_weight
+
+            if dominates(current_score, best_score):
+                best_solution, best_score = decision_vector[:], current_score[:]
+
+        pareto_front.append((best_solution, best_score))
+        print(
+            f"Restart {restart + 1}: Best score: {best_score} (scalar = {scalar_objective(best_solution, best_score):.2f})")
+
+    # Filter non-dominated solutions across all restarts
+    filtered = []
+    for sol1, score1 in pareto_front:
+        if not any(dominates(score2, score1) for _, score2 in pareto_front if score2 != score1):
+            filtered.append(sol1)
+
+    return filtered
 
 
-def create_submission_file(
-    decision_vector, problem_id, filename="submission.json"
-):
+def create_submission_file(decision_vector, problem_id, filename="submission.json"):
     """Creates a valid submission file."""
     submission = {
-        "decisionVector": [
-            decision_vector
-        ],  # Wrap in a list for multiple solutions
+        "decisionVector": [decision_vector],
         "problem": problem_id,
         "challenge": "spoc-3-torso-decompositions",
     }
@@ -331,31 +218,15 @@ def create_submission_file(
 
 if __name__ == "__main__":
     random.seed(42)
-
-    # Get problem ID from user input
-    while True:
-        problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
-        if problem_id in problems:
-            break
-        else:
-            print("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard'.")
-
+    problem_id = input("Select a problem instance (easy, medium, hard): ").lower()
+    while problem_id not in problems:
+        problem_id = input("Invalid problem ID. Please choose from 'easy', 'medium', or 'hard': ")
     edges = load_graph(problem_id)
 
-    # Hill Climbing with Random Operator Selection
-    print("Starting Hill Climbing with Random Operator Selection...")
-    pareto_front_random_op = hill_climbing(
-        edges,
-        neighbor_generation_method="random_operator",
-        max_iterations=500,  # Adjust as needed
-        num_restarts=20,  # Adjust as needed
-        save_interval=50,  # Save every 50 iterations
-    )
+    start_time = time.time()
+    pareto_front = hill_climbing(edges, max_iterations=10000, num_restarts=100)
+    end_time = time.time()
+    print(f"Hill climbing completed in {end_time - start_time:.2f} seconds.")
 
-    # Example: Select the Pareto front from the random operator approach
-    best_pareto_front = pareto_front_random_op
-
-    # Create Final Submission File
-    for i, solution in enumerate(best_pareto_front):
-        create_submission_file(solution, problem_id, f"final_solution_{i+1}.json")
-    print("All submission files created successfully!")
+    for i, solution in enumerate(pareto_front):
+        create_submission_file(solution, problem_id, f"final_solution_{i + 1}.json")
