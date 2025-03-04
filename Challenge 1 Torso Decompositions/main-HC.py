@@ -129,6 +129,11 @@ def community_aware_swap(current: List[int], communities: List[List[int]], degre
     return neighbor
 
 # ------------------- OPTIMIZED ALGORITHM CORE -------------------
+def dominates(score1: List[float], score2: List[float]) -> bool:
+    """Check if score1 Pareto-dominates score2"""
+    return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
+           (score1[0] >= score2[0] and score1[1] < score2[1])
+    
 def hill_climbing(edges: List[List[int]], max_iterations: int = 50000, num_restarts: int = 100) -> List[List[int]]:
     n = max(max(edge) for edge in edges) + 1
     degrees = precompute_degrees(edges, n)
