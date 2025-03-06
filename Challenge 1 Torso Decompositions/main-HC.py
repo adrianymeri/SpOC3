@@ -131,10 +131,15 @@ def community_shuffle(current: List[int], edges: List[List[int]]) -> List[int]:
     return neighbor
 
 def detect_communities(nodes: List[int], edges: List[List[int]]) -> List[List[int]]:
-    adj_list = [[] for _ in range(len(nodes))]
+    """Community detection for a subset of nodes"""
+    node_index = {node: idx for idx, node in enumerate(nodes)}
+    adj_list = [[] for _ in nodes]  # Create adjacency list based on subset
+    
+    # Only consider edges between nodes in the subset
     for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
+        if u in node_index and v in node_index:
+            adj_list[node_index[u]].append(node_index[v])
+            adj_list[node_index[v]].append(node_index[u])
 
     labels = list(range(len(nodes)))
     changed = True
@@ -147,7 +152,8 @@ def detect_communities(nodes: List[int], edges: List[List[int]]) -> List[List[in
         for i in order:
             counts = {}
             for neighbor in adj_list[i]:
-                counts[labels[neighbor]] = counts.get(labels[neighbor], 0) + 1
+                lbl = labels[neighbor]
+                counts[lbl] = counts.get(lbl, 0) + 1
 
             if counts:
                 max_label = max(counts, key=lambda k: (counts[k], -k))
@@ -155,9 +161,12 @@ def detect_communities(nodes: List[int], edges: List[List[int]]) -> List[List[in
                     labels[i] = max_label
                     changed = True
 
+    # Map back to original node IDs
     communities = {}
-    for i, label in enumerate(labels):
-        communities.setdefault(label, []).append(nodes[i])
+    for idx, label in enumerate(labels):
+        original_node = nodes[idx]
+        communities.setdefault(label, []).append(original_node)
+        
     return list(communities.values())
 
 # Initialize operator tracking
