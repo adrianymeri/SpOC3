@@ -54,19 +54,21 @@ def dominates(score1: List[float], score2: List[float]) -> bool:
     return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
            (score1[0] >= score2[0] and score1[1] < score2[1])
 
-# ------------------- NEIGHBORHOOD OPERATORS -------------------
+# ------------------- OPTIMIZED NEIGHBORHOOD OPERATORS -------------------
 def smart_torso_shift(current: List[int], degrees: List[int]) -> List[int]:
     n = len(current) - 1
     t = current[-1]
     current_score = evaluate_solution(current, degrees)
-    new_t = t
-
-    if current_score[1] > 400:
-        new_t = min(n - 1, t + random.randint(5, 10))
+    
+    # Dynamic shift size based on current width
+    if current_score[1] > 300:
+        shift = random.randint(5, 15)
     else:
-        shift = int(n * 0.04) + 1
-        new_t = max(0, min(n - 1, t + random.randint(-shift, shift)))
-
+        shift = random.randint(1, 5)
+        
+    new_t = t + shift if current_score[1] > 200 else t - shift
+    new_t = max(0, min(n-1, new_t))
+    
     neighbor = current.copy()
     neighbor[-1] = new_t
     return neighbor
@@ -75,15 +77,19 @@ def block_move(current: List[int], degrees: List[int]) -> List[int]:
     neighbor = current.copy()
     n = len(neighbor) - 1
     current_score = evaluate_solution(current, degrees)
-
-    base_size = 3 if current_score[1] < 100 else 5
-    block_size = random.randint(base_size, base_size + 2)
-
+    
+    # Adaptive block size based on problem size
+    base_size = max(2, int(n * 0.01))
+    block_size = random.randint(base_size, base_size + 3)
+    
     start = random.randint(0, n - block_size)
-    block = neighbor[start:start + block_size]
-    insert_pos = random.randint(0, n - block_size)
-
+    insert_pos = random.choice([
+        random.randint(0, n - block_size),
+        random.randint(max(0, start - 5), min(n - block_size, start + 5))
+    ])
+    
     if insert_pos != start:
+        block = neighbor[start:start + block_size]
         del neighbor[start:start + block_size]
         neighbor[insert_pos:insert_pos] = block
     return neighbor
@@ -93,19 +99,23 @@ def critical_swap(current: List[int], degrees: List[int]) -> List[int]:
     t = current[-1]
     perm = current[:-1]
     score_data = evaluate_solution(current, degrees)
-
+    
     if score_data[1] >= 500 or len(score_data[2]) == 0:
         return current
-
-    critical_node = random.choice(score_data[2])
+    
+    # Find top 5% critical nodes
+    critical_nodes = sorted(score_data[2], key=lambda x: -degrees[x])[:max(1, len(score_data[2])//20)]
+    to_remove = random.choice(critical_nodes)
+    
+    # Find best possible replacement
     non_torso = [node for node in perm[:t] if degrees[node] < score_data[1]]
-
     if not non_torso:
         return current
-
+    
     replacement = min(non_torso, key=lambda x: degrees[x])
+    
     neighbor = current.copy()
-    crit_idx = perm.index(critical_node)
+    crit_idx = perm.index(to_remove)
     rep_idx = perm.index(replacement)
     neighbor[crit_idx], neighbor[rep_idx] = neighbor[rep_idx], neighbor[crit_idx]
     return neighbor
@@ -113,60 +123,66 @@ def critical_swap(current: List[int], degrees: List[int]) -> List[int]:
 def community_shuffle(current: List[int], edges: List[List[int]]) -> List[int]:
     n = len(current) - 1
     perm = current[:-1]
+    
+    # Use efficient community detection
     communities = detect_communities(perm, edges)
     neighbor = current.copy()
     new_perm = neighbor[:-1]
-
+    
     for comm in communities:
         indices = [i for i, node in enumerate(new_perm) if node in comm]
-        if len(indices) < 2:
-            continue
-
-        community_nodes = [new_perm[i] for i in indices]
-        random.shuffle(community_nodes)
-        for i, idx in enumerate(indices):
-            new_perm[idx] = community_nodes[i]
-
+        if len(indices) >= 2:
+            # Swap random pair within community
+            i, j = random.sample(indices, 2)
+            new_perm[i], new_perm[j] = new_perm[j], new_perm[i]
+    
     neighbor[:-1] = new_perm
     return neighbor
 
 def detect_communities(nodes: List[int], edges: List[List[int]]) -> List[List[int]]:
-    """Community detection for a subset of nodes"""
-    node_index = {node: idx for idx, node in enumerate(nodes)}
-    adj_list = [[] for _ in nodes]  # Create adjacency list based on subset
+    """Fast approximate community detection using label propagation"""
+    node_map = {node: idx for idx, node in enumerate(nodes)}
+    adj_list = [[] for _ in nodes]
     
-    # Only consider edges between nodes in the subset
+    # Build local adjacency list
     for u, v in edges:
-        if u in node_index and v in node_index:
-            adj_list[node_index[u]].append(node_index[v])
-            adj_list[node_index[v]].append(node_index[u])
-
+        if u in node_map and v in node_map:
+            adj_list[node_map[u]].append(node_map[v])
+            adj_list[node_map[v]].append(node_map[u])
+    
     labels = list(range(len(nodes)))
     changed = True
-
-    while changed:
+    iterations = 0
+    
+    while changed and iterations < 5:
         changed = False
-        order = list(range(len(nodes)))
-        random.shuffle(order)
-
+        order = random.sample(range(len(nodes)), len(nodes))
+        
         for i in order:
+            if not adj_list[i]:
+                continue
+                
+            # Count neighboring labels
             counts = {}
             for neighbor in adj_list[i]:
-                lbl = labels[neighbor]
-                counts[lbl] = counts.get(lbl, 0) + 1
-
-            if counts:
-                max_label = max(counts, key=lambda k: (counts[k], -k))
-                if labels[i] != max_label:
-                    labels[i] = max_label
-                    changed = True
-
-    # Map back to original node IDs
+                counts[labels[neighbor]] = counts.get(labels[neighbor], 0) + 1
+            
+            # Find most frequent label
+            max_count = max(counts.values(), default=0)
+            candidates = [lbl for lbl, cnt in counts.items() if cnt == max_count]
+            new_label = random.choice(candidates)
+            
+            if labels[i] != new_label:
+                labels[i] = new_label
+                changed = True
+                
+        iterations += 1
+    
+    # Map back to original nodes
     communities = {}
-    for idx, label in enumerate(labels):
-        original_node = nodes[idx]
-        communities.setdefault(label, []).append(original_node)
-        
+    for idx, lbl in enumerate(labels):
+        communities.setdefault(lbl, []).append(nodes[idx])
+    
     return list(communities.values())
 
 # Initialize operator tracking
@@ -177,112 +193,135 @@ neighbor_operators = [
     community_shuffle
 ]
 
-op_scores = {op: 1.0 for op in neighbor_operators}
+op_weights = [3.0, 2.0, 4.0, 1.5]  # Initial weights based on operator effectiveness
 
-def update_operator_performance(op, success: bool):
+def update_operator_performance(op_idx: int, success: bool):
+    """Adaptive weight adjustment with momentum"""
+    global op_weights
+    learning_rate = 0.15
     if success:
-        op_scores[op] = min(op_scores[op] * 1.25, 15.0)
+        op_weights[op_idx] *= (1 + learning_rate)
     else:
-        op_scores[op] = max(op_scores[op] * 0.85, 0.05)
-
-    total = sum(math.exp(s) for s in op_scores.values())
-    for o in op_scores:
-        op_scores[o] = math.exp(op_scores[o]) / total
+        op_weights[op_idx] *= (1 - learning_rate)
+    
+    # Softmax normalization
+    total = sum(math.exp(w) for w in op_weights)
+    op_weights = [math.exp(w)/total for w in op_weights]
 
 def initialize_solution(n: int, strategy: str, edges: List[List[int]]) -> List[int]:
-    adj_list = [[] for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    if strategy == "community":
+    """Improved initialization with hybrid strategy"""
+    if strategy == "hybrid":
+        # Combine community and degree information
         communities = detect_communities(list(range(n)), edges)
-        communities.sort(key=lambda c: (-len(c), -sum(len(adj_list[n]) for n in c)))
+        comm_sizes = {i: len(comm) for i, comm in enumerate(communities)}
+        
         permutation = []
-        for comm in communities:
-            comm_sorted = sorted(comm, key=lambda x: -len(adj_list[x]))
-            permutation.extend(comm_sorted)
+        for comm in sorted(communities, key=lambda c: (-comm_sizes[id(c)], -sum(1 for _ in c))):
+            # Add nodes sorted by degree within community
+            permutation.extend(sorted(comm, key=lambda x: -precompute_degrees(edges)[x]))
+        
+        # Initial torso size based on community structure
+        t = n - int(n * 0.25)
     elif strategy == "degree":
-        permutation = sorted(range(n), key=lambda x: -len(adj_list[x]))
+        degrees = precompute_degrees(edges)
+        permutation = sorted(range(n), key=lambda x: -degrees[x])
+        t = n - int(n * 0.3)
     else:
         permutation = list(range(n))
         random.shuffle(permutation)
-
-    t = int(n * np.random.beta(1.5, 2.5))
+        t = n // 2
+    
     return permutation + [t]
 
-def hill_climbing(edges: List[List[int]], max_iterations: int = 25000, num_restarts: int = 250) -> List[List[int]]:
-    n = max(max(edge) for edge in edges) + 1
+def hill_climbing(edges: List[List[int]], max_iterations: int = 40000, num_restarts: int = 150) -> List[List[int]]:
+    n = max(max(u, v) for u, v in edges) + 1
     degrees = precompute_degrees(edges)
     pareto_front = []
     global_best = [0, float('inf')]
     start_time = time.time()
-
-    T0 = 3000.0
-    cooling_rate = 0.9992
-
+    
+    # Adaptive cooling parameters
+    T0 = 5000.0
+    cooling_rate = 0.9995
+    
     for restart in range(num_restarts):
-        init_strategy = random.choice(["community", "degree"])
-        current = initialize_solution(n, init_strategy, edges)
+        strategy = "hybrid" if restart % 3 == 0 else "degree"
+        current = initialize_solution(n, strategy, edges)
         current_score = evaluate_solution(current, degrees)
         best_local = current.copy()
         best_local_score = current_score.copy()
         T = T0
         last_improvement = 0
-
-        print(f"\n🌀 Restart {restart + 1}/{num_restarts} | Initial: {current_score[:2]}")
-
+        
+        print(f"\n🌀 Restart {restart+1}/{num_restarts} | Initial: {current_score[:2]}")
+        
         for iteration in range(max_iterations):
             T *= cooling_rate
-
-            op = random.choices(neighbor_operators, weights=[op_scores[o] for o in neighbor_operators])[0]
-            neighbor = op(current, degrees) if op != community_shuffle else op(current, edges)
+            
+            # Select operator based on adaptive weights
+            op_idx = random.choices(range(len(neighbor_operators)), weights=op_weights)[0]
+            op = neighbor_operators[op_idx]
+            
+            # Generate neighbor solution
+            if op == community_shuffle:
+                neighbor = op(current, edges)
+            else:
+                neighbor = op(current, degrees)
+            
             neighbor_score = evaluate_solution(neighbor, degrees)
-
+            
+            # Acceptance criteria
             accept = False
             if dominates(neighbor_score, current_score):
                 accept = True
             else:
-                size_gain = neighbor_score[0] - current_score[0]
-                width_diff = current_score[1] - neighbor_score[1]
-                delta = 2 * size_gain + width_diff
-                accept_prob = math.exp(delta / (T + 1e-6))
+                # Energy difference calculation favoring width reduction
+                delta_width = current_score[1] - neighbor_score[1]
+                delta_size = neighbor_score[0] - current_score[0]
+                accept_prob = math.exp((delta_width * 3 + delta_size) / T)
                 accept = random.random() < accept_prob
-
+            
             if accept:
                 current = neighbor
                 current_score = neighbor_score
-                update_operator_performance(op, True)
-
+                update_operator_performance(op_idx, True)
+                
                 if dominates(current_score, best_local_score):
                     best_local = current.copy()
                     best_local_score = current_score.copy()
                     last_improvement = iteration
-
+                    
                     if dominates(best_local_score, global_best):
                         global_best = best_local_score.copy()
-                        print(f"\n🔥 NEW BEST @ Iter {iteration}: Size={global_best[0]} Width={global_best[1]}")
-
-            if iteration % 300 == 299:
-                for _ in range(25):
-                    candidate = random.choice(neighbor_operators)(best_local, degrees) 
+                        print(f"🔥 NEW GLOBAL BEST @ Iter {iteration}: "
+                              f"Size={global_best[0]} Width={global_best[1]}")
+            
+            # Intensification phase
+            if iteration % 500 == 499:
+                # Local search around best solution
+                for _ in range(50):
+                    candidate = critical_swap(best_local, degrees)
                     candidate_score = evaluate_solution(candidate, degrees)
                     if dominates(candidate_score, best_local_score):
                         best_local = candidate.copy()
                         best_local_score = candidate_score.copy()
-
-            if iteration - last_improvement > 1500:
+            
+            # Adaptive restart
+            if iteration - last_improvement > 2000:
                 break
-
+        
         pareto_front.append((best_local, best_local_score))
-        print(f"✅ Restart {restart + 1} Completed | Best: {best_local_score[:2]}")
-
+        print(f"✅ Restart {restart+1} Completed | Best: {best_local_score[:2]}")
+    
+    # Extract Pareto front
     filtered = []
     for sol, score in pareto_front:
         if not any(dominates(other, score) for _, other in pareto_front):
             filtered.append(sol)
-
-    return sorted(filtered, key=lambda x: (-evaluate_solution(x, degrees)[0], evaluate_solution(x, degrees)[1]))[:5]
+    
+    return sorted(filtered,
+                 key=lambda x: (-evaluate_solution(x, degrees)[0],
+                            evaluate_solution(x, degrees)[1]))[:5]
 
 def create_submission_file(decision_vector, problem_id, filename="submission.json"):
     submission = {
@@ -305,5 +344,9 @@ if __name__ == "__main__":
     solutions = hill_climbing(edges)
     print(f"\n⏱️ Optimization completed in {time.time() - start_time:.2f} seconds")
 
-    for idx, sol in enumerate(solutions):
-        create_submission_file(sol, problem_id, f"best_solution_{idx + 1}.json")
+    # Select best solution considering both size and width
+    best_solution = max(solutions,
+                       key=lambda x: (evaluate_solution(x, precompute_degrees(edges))[0] * 1000 -
+                                   evaluate_solution(x, precompute_degrees(edges))[1])
+    
+    create_submission_file(best_solution, problem_id, "optimized_solution.json")
