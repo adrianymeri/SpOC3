@@ -231,8 +231,12 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
 def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
     filename = f"submission_{problem_id}.json"
     problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+    
+    # **FIXED HERE**: Convert all numbers to standard Python integers for JSON compatibility
+    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+    
     submission = {
-        "decisionVector": decision_vectors,
+        "decisionVector": final_vectors,
         "problem": problem_name_map.get(problem_id, problem_id),
         "challenge": "spoc-3-torso-decompositions",
     }
@@ -241,9 +245,7 @@ def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
     print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
-    # Setup for multiprocessing on all platforms
     multiprocessing.freeze_support()
-
     random.seed(42)
     np.random.seed(42)
 
@@ -252,7 +254,6 @@ if __name__ == "__main__":
         print("❌ Invalid problem ID. Exiting.")
         exit()
 
-    # **FIXED CONFIGURATION LOADING**
     config = CONFIG['general'].copy()
     config.update(CONFIG[problem_id])
 
