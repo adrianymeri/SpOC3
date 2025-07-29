@@ -11,13 +11,11 @@ import os
 import pickle
 
 # --- Algorithm & Problem Configuration ---
-# These are aggressive settings suitable for a university server.
-# For a quick test on a local machine, you can reduce generations and pop_size.
 CONFIG = {
     "general": {
         "mutation_rate": 0.6,
         "crossover_rate": 0.9,
-        "checkpoint_interval": 5,  # Save progress frequently
+        "checkpoint_interval": 5,
     },
     "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 20},
     "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 25},
@@ -189,7 +187,6 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
         population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
         adaptive_ls = AdaptiveLocalSearcher(n, adj)
 
-    # Use a context manager for the process pool
     with multiprocessing.Pool() as pool:
         if start_gen == 0:
             print("Evaluating initial population...")
@@ -244,6 +241,9 @@ def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
     print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
+    # Setup for multiprocessing on all platforms
+    multiprocessing.freeze_support()
+
     random.seed(42)
     np.random.seed(42)
 
