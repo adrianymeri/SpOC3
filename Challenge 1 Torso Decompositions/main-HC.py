@@ -12,15 +12,15 @@ import pickle
 
 # --- Algorithm & Problem Configuration ---
 # These are aggressive settings suitable for a university server.
-# For a quick test, you can reduce generations and pop_size.
+# For a quick test on a local machine, you can reduce generations and pop_size.
 CONFIG = {
     "general": {
         "mutation_rate": 0.6,
         "crossover_rate": 0.9,
-        "checkpoint_interval": 5, # Save progress frequently
+        "checkpoint_interval": 5,  # Save progress frequently
     },
-    "easy": {"pop_size": 100, "generations": 300, "local_search_intensity": 20},
-    "medium": {"pop_size": 150, "generations": 500, "local_search_intensity": 25},
+    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 20},
+    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 25},
     "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 30},
 }
 
@@ -53,10 +53,7 @@ def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
     return n, adj
 
 def evaluate_solution_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
-    """
-    Worker function for multiprocessing. Correctly evaluates a single solution.
-    Returns the solution tuple and its score for mapping back.
-    """
+    """Worker function for multiprocessing. Correctly evaluates a single solution."""
     solution_tuple, n, adj = args
     
     t = solution_tuple[-1]
@@ -67,7 +64,6 @@ def evaluate_solution_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) ->
     pos = {node: i for i, node in enumerate(perm)}
     
     temp_adj = [s.copy() for s in adj]
-    # This is the accurate but computationally intensive part
     for i in range(n):
         u = perm[i]
         successors = [v for v in temp_adj[u] if pos.get(v, -1) > i]
@@ -117,33 +113,64 @@ class AdaptiveLocalSearcher:
         self.weights = np.ones(len(self.operators))
         self.n, self.adj = n, adj
 
-    def apply(self, args) -> List[int]:
+    def apply(self, args: Tuple[List[int], int]) -> List[int]:
         solution, intensity = args
-        best_sol = solution
-        _, best_score = evaluate_solution_task((tuple(best_sol), self.n, self.adj))
+        current_sol = solution
+        _, best_score = evaluate_solution_task((tuple(current_sol), self.n, self.adj))
         
         for _ in range(intensity):
             op_idx = np.random.choice(len(self.operators), p=self.weights / self.weights.sum())
             op = self.operators[op_idx]
             
-            neighbor = op(best_sol, self.n)
+            neighbor = op(current_sol, self.n)
             _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
 
             if dominates(neighbor_score, best_score):
-                best_sol = neighbor
+                current_sol = neighbor
                 best_score = neighbor_score
-                self.weights[op_idx] += 0.1 # Reward successful operators
-        return best_sol
+                self.weights[op_idx] += 0.1
+        return current_sol
 
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
 
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
     """Selects the new population based on non-domination rank and crowding distance."""
-    # (This function is complex but standard for NSGA-II)
-    # ...
-    # This implementation is assumed correct as per previous versions.
-    return population[:pop_size] # Placeholder for the full NSGA-II selection
-
+    # Non-Dominated Sort
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
+    fronts = [[]]
+    for i, p in enumerate(population):
+        for j, q in enumerate(population[i+1:]):
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q); q['dominated_by_count'] += 1
+            elif dominates(q['score'], p['score']): q['dominates_set'].append(p); p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    i = 0
+    while i < len(fronts) and fronts[i]:
+        next_front = []
+        for p in fronts[i]:
+            for q in p['dominates_set']:
+                q['dominated_by_count'] -= 1
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        fronts.append(next_front)
+        i += 1
+    
+    # Crowding Distance and Final Selection
+    new_population = []
+    for front in fronts:
+        if not front: continue
+        if len(new_population) + len(front) > pop_size:
+            for p in front: p['distance'] = 0.0
+            for i_obj in range(2):
+                front.sort(key=lambda p: p['score'][i_obj])
+                front[0]['distance'] = front[-1]['distance'] = float('inf')
+                f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
+                if f_max > f_min:
+                    for j in range(1, len(front) - 1):
+                        front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
+            front.sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(front[:pop_size - len(new_population)])
+            break
+        new_population.extend(front)
+    return new_population
 
 # --- Main Memetic Algorithm Loop ---
 
@@ -159,15 +186,16 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
         print(f"Resuming from generation {start_gen}")
     else:
         print("🌱 Initializing fresh population...")
-        population = [{'solution': list(np.random.permutation(n)) + [random.randint(0, n-1)]} for _ in range(config['pop_size'])]
+        population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
         adaptive_ls = AdaptiveLocalSearcher(n, adj)
 
+    # Use a context manager for the process pool
     with multiprocessing.Pool() as pool:
         if start_gen == 0:
             print("Evaluating initial population...")
             results = pool.map(evaluate_solution_task, [(tuple(p['solution']), n, adj) for p in population])
             sol_to_score = dict(results)
-            for p in population: p['score'] = sol_to_score[tuple(p['solution'])]
+            for p in population: p['score'] = sol_to_score.get(tuple(p['solution']), (0, 501))
 
         for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
             mating_pool = crowding_selection(population, config['pop_size'])
@@ -175,7 +203,7 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
             offspring_sols = []
             while len(offspring_sols) < config['pop_size']:
                 p1, p2 = random.sample(mating_pool, 2)
-                c_perm = p1['solution'][:-1]
+                c_perm = list(p1['solution'][:-1])
                 if random.random() < config['crossover_rate']:
                     start, end = sorted(random.sample(range(n), 2))
                     p2_slice = [item for item in p2['solution'][:-1] if item not in c_perm[start:end]]
@@ -186,17 +214,16 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
-            print(f"\nImproving {len(offspring_sols)} new solutions with local search...")
-            ls_results = pool.map(adaptive_ls.apply, [(sol, config['local_search_intensity']) for sol in offspring_sols])
+            ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
+            improved_offspring = pool.map(adaptive_ls.apply, ls_args)
             
-            print(f"Evaluating {len(ls_results)} improved solutions...")
-            eval_results = pool.map(evaluate_solution_task, [(tuple(sol), n, adj) for sol in ls_results])
+            eval_results = pool.map(evaluate_solution_task, [(tuple(sol), n, adj) for sol in improved_offspring])
             
             offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in eval_results]
             population = crowding_selection(population + offspring_pop, config['pop_size'])
 
             if (gen + 1) % config['checkpoint_interval'] == 0:
-                print(f"\n💾 Saving checkpoint at generation {gen + 1}...")
+                tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
                 with open(checkpoint_file, 'wb') as f:
                     pickle.dump({'pop': population, 'gen': gen, 'ls': adaptive_ls}, f)
 
@@ -225,7 +252,7 @@ if __name__ == "__main__":
         print("❌ Invalid problem ID. Exiting.")
         exit()
 
-    # Consolidate config
+    # **FIXED CONFIGURATION LOADING**
     config = CONFIG['general'].copy()
     config.update(CONFIG[problem_id])
 
