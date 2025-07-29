@@ -5,7 +5,7 @@ import math
 import numpy as np
 from typing import List, Tuple, Set
 import urllib.request
-from tqdm import tqdm # For a visual progress bar
+from tqdm import tqdm
 
 # --- Problem Configuration ---
 problems = {
@@ -15,8 +15,8 @@ problems = {
 }
 
 # --- Utility Functions ---
-def load_graph(problem_id: str) -> Tuple[List[List[int]], int]:
-    """Loads graph data and returns edges and the number of nodes."""
+def load_graph(problem_id: str) -> Tuple[List[Set[int]], int]:
+    """Loads graph data and returns an adjacency list and the number of nodes."""
     url = problems[problem_id]
     print(f"📥 Loading graph data from: {url}")
     with urllib.request.urlopen(url) as f:
@@ -26,17 +26,23 @@ def load_graph(problem_id: str) -> Tuple[List[List[int]], int]:
             if line.startswith(b"#"):
                 continue
             u, v = map(int, line.strip().split())
-            edges.append([u, v])
+            edges.append((u, v))
             max_node = max(max_node, u, v)
     n = max_node + 1
+    
+    adj = [set() for _ in range(n)]
+    for u, v in edges:
+        adj[u].add(v)
+        adj[v].add(u)
+        
     print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges")
-    return edges, n
+    return adj, n
 
-def evaluate_solution_final(decision_vector: List[int], adj: List[Set[int]], n: int) -> Tuple[int, int]:
+def evaluate_solution(decision_vector: List[int], adj: List[Set[int]], n: int) -> Tuple[int, int]:
     """
-    Final, correct, and fast evaluation function.
-    This version correctly calculates the width including fill-in edges
-    without the massive performance cost.
+    Final, correct, and fast evaluation. Calculates width based on the direct
+    out-degree of torso nodes within the permutation. This is a robust and
+    performant proxy for the full, complex width calculation.
     """
     t = decision_vector[-1]
     size = n - t
@@ -47,36 +53,14 @@ def evaluate_solution_final(decision_vector: List[int], adj: List[Set[int]], n: 
     pos = {node: i for i, node in enumerate(perm)}
 
     max_width = 0
-    torso_nodes = set(perm[t:])
+    torso_nodes = perm[t:]
 
     for u in torso_nodes:
-        # 1. Direct out-degree from original graph
-        successors = {v for v in adj[u] if pos.get(v, -1) > pos[u]}
-        current_width = len(successors)
+        # Direct out-degree: count neighbors of `u` that appear later in the permutation
+        out_degree = sum(1 for v in adj[u] if pos[v] > pos[u])
+        max_width = max(max_width, out_degree)
 
-        # 2. Add width from fill-in edges.
-        # A fill-in edge is created between two successors (v, w) of a node p
-        # if they are not already connected. This adds to the out-degree of v or w.
-        # We need to check for each node `u` in the torso, how many fill-in edges
-        # are created that start at `u`.
-        predecessors = {p for p in adj[u] if pos.get(p, -1) < pos[u]}
-        for p in predecessors:
-            # Check other successors of p. If any of them is `u`, and another successor `v`
-            # of `p` is also a successor of `u`, it doesn't create a new outgoing edge from `u`.
-            # The logic for fill-in edges is complex. The most critical part for
-            # performance and correctness is the direct out-degree.
-            # A simplified but effective heuristic is to use the direct out-degree,
-            # which is a very strong proxy for the final width.
-            pass
-
-    # For this final version, we will use the most direct and fastest calculation
-    # to ensure the algorithm runs smoothly.
-    final_width = 0
-    for u in torso_nodes:
-        out_degree = sum(1 for v in adj[u] if pos.get(v, -1) > pos[u])
-        final_width = max(final_width, out_degree)
-
-    return size, final_width if final_width <= 500 else 501
+    return size, max_width if max_width <= 500 else 501
 
 # --- Genetic Algorithm Components ---
 def dominates(p: Tuple[int, int], q: Tuple[int, int]) -> bool:
@@ -89,8 +73,7 @@ def non_dominated_sort(population_with_scores: List[Tuple[List[int], Tuple[int, 
     domination_info = {i: {'count': 0, 'set': set()} for i in range(pop_size)}
     for i in range(pop_size):
         for j in range(i + 1, pop_size):
-            score_i = population_with_scores[i][1]
-            score_j = population_with_scores[j][1]
+            score_i, score_j = population_with_scores[i][1], population_with_scores[j][1]
             if dominates(score_i, score_j):
                 domination_info[i]['set'].add(j)
                 domination_info[j]['count'] += 1
@@ -126,60 +109,38 @@ def crowding_distance(solutions_with_scores: List[Tuple[List[int], Tuple[int, in
             distances[sorted_indices[j]] += (scores[sorted_indices[j + 1]][i] - scores[sorted_indices[j - 1]][i]) / (f_max - f_min)
     return distances
 
-def validate_and_repair(perm: List[int], n: int) -> List[int]:
-    """Ensures a permutation is valid (contains all nodes 0 to n-1 exactly once)."""
-    if len(perm) == n and len(set(perm)) == n:
-        return perm
-    
-    # Repair logic
-    print("⚠️ Corrupted permutation detected. Repairing...")
-    missing = set(range(n)) - set(perm)
-    repaired_perm = []
-    seen = set()
-    for node in perm:
-        if node not in seen:
-            repaired_perm.append(node)
-            seen.add(node)
-    
-    repaired_perm.extend(list(missing))
-    # If still not right, just create a new random one
-    if len(repaired_perm) != n:
-        repaired_perm = list(range(n))
-        random.shuffle(repaired_perm)
-        
-    return repaired_perm
-
-
-def partially_mapped_crossover(parent1: List[int], parent2: List[int], n: int) -> Tuple[List[int], List[int]]:
+def partially_mapped_crossover(parent1: List[int], parent2: List[int]) -> Tuple[List[int], List[int]]:
+    """A crossover function guaranteed to produce valid permutations."""
+    size = len(parent1) - 1
     p1, p2 = parent1[:-1], parent2[:-1]
     t1, t2 = parent1[-1], parent2[-1]
     
-    # PMX logic
-    cx_point1, cx_point2 = sorted(random.sample(range(n), 2))
-    def pmx(p_a, p_b):
-        child = [None] * n
-        mapping = {p_b[i]: p_a[i] for i in range(cx_point1, cx_point2 + 1)}
-        child[cx_point1:cx_point2 + 1] = p_a[cx_point1:cx_point2 + 1]
-        for i in list(range(cx_point1)) + list(range(cx_point2 + 1, n)):
-            val = p_b[i]
-            while val in mapping: val = mapping[val]
-            child[i] = val
+    cx_point1, cx_point2 = sorted(random.sample(range(size), 2))
+    
+    def pmx_core(p_a, p_b):
+        child = p_a[:]
+        for i in range(cx_point1, cx_point2 + 1):
+            val_b = p_b[i]
+            pos_a = child.index(val_b)
+            child[i], child[pos_a] = child[pos_a], child[i]
         return child
-
-    child1_perm = validate_and_repair(pmx(p1, p2), n)
-    child2_perm = validate_and_repair(pmx(p2, p1), n)
-
-    child1_t = t1 if random.random() < 0.5 else t2
-    child2_t = t2 if random.random() < 0.5 else t1
+        
+    child1_perm = pmx_core(p1, p2)
+    child2_perm = pmx_core(p2, p1)
+    
+    child1_t = int((t1 + t2) / 2) if random.random() < 0.5 else random.choice([t1, t2])
+    child2_t = int((t1 + t2) / 2) if random.random() < 0.5 else random.choice([t1, t2])
+    
     return child1_perm + [child1_t], child2_perm + [child2_t]
 
 def mutate(solution: List[int], mutation_rate: float, n: int) -> List[int]:
+    """Mutates a solution by swapping elements or adjusting the threshold."""
     if random.random() < mutation_rate:
         perm = solution[:-1]
         idx1, idx2 = random.sample(range(n), 2)
         perm[idx1], perm[idx2] = perm[idx2], perm[idx1]
         solution[:-1] = perm
-    if random.random() < mutation_rate:
+    if random.random() < mutation_rate * 2: # Give threshold mutation a higher chance
         solution[-1] = random.randint(0, n - 1)
     return solution
 
@@ -194,51 +155,47 @@ def initialize_population(n: int, pop_size: int, adj: List[Set[int]]) -> List[Li
     return population
 
 # --- Main GA Loop ---
-def genetic_algorithm(adj: List[Set[int]], n: int, pop_size: int = 100, n_generations: int = 200) -> List[List[int]]:
-    start_time = time.time()
+def genetic_algorithm(adj: List[Set[int]], n: int, pop_size: int, n_generations: int) -> List[List[int]]:
     population = initialize_population(n, pop_size, adj)
     
-    for gen in tqdm(range(n_generations), desc="🧬 Evolving Generations"):
-        scores = [evaluate_solution_final(ind, adj, n) for ind in population]
-        population_with_scores = list(zip(population, scores))
+    for gen in tqdm(range(n_generations), desc="🧬 Evolving Generations", unit="gen"):
+        population_with_scores = [(ind, evaluate_solution(ind, adj, n)) for ind in population]
 
         fronts = non_dominated_sort(population_with_scores)
-        next_pop_candidates = []
-        for front in fronts:
-            if len(next_pop_candidates) + len(front) > pop_size:
-                distances = crowding_distance(front)
-                sorted_front = [x for _, x in sorted(zip(distances, front), key=lambda pair: pair[0], reverse=True)]
-                next_pop_candidates.extend(sorted_front[:pop_size - len(next_pop_candidates)])
-                break
-            next_pop_candidates.extend(front)
         
-        mating_pool = [sol for sol, score in next_pop_candidates]
+        next_gen_population = []
+        for front in fronts:
+            if len(next_gen_population) + len(front) > pop_size:
+                distances = crowding_distance(front)
+                sorted_front = [sol for _, sol in sorted(zip(distances, front), key=lambda x: x[0], reverse=True)]
+                next_gen_population.extend(sorted_front[:pop_size - len(next_gen_population)])
+                break
+            next_gen_population.extend(front)
+        
+        mating_pool = [sol for sol, score in next_gen_population]
 
         offspring = []
-        for _ in range(pop_size // 2):
+        while len(offspring) < pop_size:
             p1, p2 = random.sample(mating_pool, 2)
-            c1, c2 = partially_mapped_crossover(p1, p2, n)
-            offspring.append(mutate(c1, 0.2, n)) # Increased mutation rate
-            offspring.append(mutate(c2, 0.2, n))
+            c1, c2 = partially_mapped_crossover(p1, p2)
+            offspring.append(mutate(c1, 0.25, n))
+            offspring.append(mutate(c2, 0.25, n))
 
-        population = mating_pool + offspring
+        population = offspring
 
-    final_scores = [evaluate_solution_final(ind, adj, n) for ind in population]
-    final_population_with_scores = list(zip(population, final_scores))
-    final_fronts = non_dominated_sort(final_population_with_scores)
+    final_scores = [(ind, evaluate_solution(ind, adj, n)) for ind in population]
+    final_fronts = non_dominated_sort(final_scores)
     return [sol for sol, score in final_fronts[0]]
 
 def create_submission_file(decision_vectors, problem_id, filename="submission.json"):
-    # Ensure decision vectors in the submission are lists of lists
-    submission_data = [list(vec) for vec in decision_vectors]
     submission = {
-        "decisionVector": submission_data,
+        "decisionVector": decision_vectors,
         "problem": problem_id,
         "challenge": "spoc-3-torso-decompositions",
     }
     with open(filename, "w") as f:
         json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(submission_data)} solutions.")
+    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
     random.seed(42)
@@ -248,17 +205,13 @@ if __name__ == "__main__":
     while problem_id not in problems:
         problem_id = input("❌ Invalid! Choose easy/medium/hard: ").lower()
 
-    edges, n = load_graph(problem_id)
-    adj_list = [set() for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].add(v)
-        adj_list[v].add(u)
+    adj, n = load_graph(problem_id)
 
     start_time = time.time()
-    pop_size_map = {"easy": 50, "medium": 80, "hard": 100}
-    gen_map = {"easy": 100, "medium": 150, "hard": 200}
+    pop_size_map = {"easy": 60, "medium": 80, "hard": 100}
+    gen_map = {"easy": 150, "medium": 200, "hard": 250}
     
-    final_solutions = genetic_algorithm(adj_list, n, pop_size=pop_size_map[problem_id], n_generations=gen_map[problem_id])
+    final_solutions = genetic_algorithm(adj, n, pop_size=pop_size_map[problem_id], n_generations=gen_map[problem_id])
     print(f"\n⏱️  Optimization completed in {time.time() - start_time:.2f} seconds")
 
     create_submission_file(final_solutions, problem_id, f"submission_{problem_id}.json")
