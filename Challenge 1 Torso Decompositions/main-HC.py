@@ -11,15 +11,16 @@ import os
 import pickle
 
 # --- Algorithm & Problem Configuration ---
+# These are aggressive settings for a university server.
+# For your final runs, these parameters should be tuned using a tool like Optuna.
 CONFIG = {
     "general": {
-        "mutation_rate": 0.6,
-        "crossover_rate": 0.9,
+        "mutation_rate": 0.5,
         "checkpoint_interval": 5,
     },
-    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 20},
-    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 25},
-    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 30},
+    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 25, "vns_shake_strength": 0.1},
+    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 30, "vns_shake_strength": 0.15},
+    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 35, "vns_shake_strength": 0.2},
 }
 
 PROBLEMS = {
@@ -80,59 +81,79 @@ def evaluate_solution_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) ->
             
     return solution_tuple, (size, max_width)
 
-# --- Your Proven Local Search Operators ---
+# --- Advanced Genetic & Local Search Operators ---
 
-def smart_torso_shift(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
-    t = neighbor[-1]
-    shift = int(n * 0.05) + 1
-    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
-    return neighbor
+def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
+    """Edge Recombination Crossover (ERX)."""
+    n = len(p1)
+    adj_map = [set() for _ in range(n)]
+    for p in [p1, p2]:
+        for i in range(n):
+            adj_map[p[i]].add(p[i-1])
+            adj_map[p[i]].add(p[(i+1)%n])
 
-def block_move(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
-    perm = neighbor[:-1]
-    block_size = random.randint(3, max(4, int(n * 0.02)))
-    if n > block_size:
-        start = random.randint(0, n - block_size)
-        block = perm[start:start + block_size]
-        del perm[start:start + block_size]
-        insert_pos = random.randint(0, len(perm))
-        perm[insert_pos:insert_pos] = block
-        neighbor[:-1] = perm
-    return neighbor
+    current_node = p1[0]
+    child = [current_node]
+    unvisited = set(p1) - {current_node}
 
-# --- Memetic & NSGA-II Components ---
+    while len(child) < n:
+        adj_map[current_node].discard(current_node)
+        neighbors = list(adj_map[current_node])
+        
+        for neighbor in unvisited:
+            if neighbor in neighbors:
+                adj_map[neighbor].discard(current_node)
+        
+        if not neighbors or not any(n in unvisited for n in neighbors):
+            next_node = random.choice(list(unvisited))
+        else:
+            neighbors_in_unvisited = [n for n in neighbors if n in unvisited]
+            min_len = min(len(adj_map[n]) for n in neighbors_in_unvisited)
+            next_node = random.choice([n for n in neighbors_in_unvisited if len(adj_map[n]) == min_len])
+        
+        child.append(next_node)
+        unvisited.remove(next_node)
+        current_node = next_node
+        
+    return child
 
-class AdaptiveLocalSearcher:
-    """Manages and adaptively applies local search operators."""
+def inversion_mutation(perm: List[int]) -> List[int]:
+    """Inversion mutation for permutations."""
+    size = len(perm)
+    start, end = sorted(random.sample(range(size), 2))
+    perm[start:end+1] = reversed(perm[start:end+1])
+    return perm
+
+class VariableNeighborhoodSearcher:
+    """Applies VNS to a solution to find a better local optimum."""
     def __init__(self, n, adj):
-        self.operators = [smart_torso_shift, block_move]
-        self.weights = np.ones(len(self.operators))
+        self.neighborhoods = [block_move, smart_torso_shift]
         self.n, self.adj = n, adj
 
-    def apply(self, args: Tuple[List[int], int]) -> List[int]:
-        solution, intensity = args
-        current_sol = solution
-        _, best_score = evaluate_solution_task((tuple(current_sol), self.n, self.adj))
-        
-        for _ in range(intensity):
-            op_idx = np.random.choice(len(self.operators), p=self.weights / self.weights.sum())
-            op = self.operators[op_idx]
-            
-            neighbor = op(current_sol, self.n)
-            _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
+    def apply(self, args: Tuple[List[int], int, float]) -> List[int]:
+        solution, intensity, shake_strength = args
+        best_sol = solution
+        _, best_score = evaluate_solution_task((tuple(best_sol), self.n, self.adj))
 
-            if dominates(neighbor_score, best_score):
-                current_sol = neighbor
-                best_score = neighbor_score
-                self.weights[op_idx] += 0.1
-        return current_sol
+        k = 0
+        while k < len(self.neighborhoods):
+            # Exploration within the current neighborhood
+            for _ in range(intensity):
+                op = self.neighborhoods[k]
+                neighbor = op(best_sol, self.n)
+                _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
+                
+                if dominates(neighbor_score, best_score):
+                    best_sol = neighbor
+                    best_score = neighbor_score
+                    k = 0 # Go back to the first neighborhood
+                    continue
+            k += 1
+        return best_sol
 
+# (Dominates and Crowding Selection functions remain the same as the previous correct version)
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
-
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    """Selects the new population based on non-domination rank and crowding distance."""
     # Non-Dominated Sort
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
@@ -178,21 +199,18 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
     
     if os.path.exists(checkpoint_file):
         print(f"🔄 Resuming from checkpoint: {checkpoint_file}")
-        with open(checkpoint_file, 'rb') as f:
-            saved_state = pickle.load(f)
-        population, start_gen, adaptive_ls = saved_state['pop'], saved_state['gen'] + 1, saved_state['ls']
+        with open(checkpoint_file, 'rb') as f: saved_state = pickle.load(f)
+        population, start_gen, vns = saved_state['pop'], saved_state['gen'] + 1, saved_state['vns']
         print(f"Resuming from generation {start_gen}")
     else:
         print("🌱 Initializing fresh population...")
         population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
-        adaptive_ls = AdaptiveLocalSearcher(n, adj)
+        vns = VariableNeighborhoodSearcher(n, adj)
 
     with multiprocessing.Pool() as pool:
         if start_gen == 0:
-            print("Evaluating initial population...")
             results = pool.map(evaluate_solution_task, [(tuple(p['solution']), n, adj) for p in population])
-            sol_to_score = dict(results)
-            for p in population: p['score'] = sol_to_score.get(tuple(p['solution']), (0, 501))
+            for p, (sol_t, score) in zip(population, results): p['score'] = score
 
         for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
             mating_pool = crowding_selection(population, config['pop_size'])
@@ -200,48 +218,36 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
             offspring_sols = []
             while len(offspring_sols) < config['pop_size']:
                 p1, p2 = random.sample(mating_pool, 2)
-                c_perm = list(p1['solution'][:-1])
-                if random.random() < config['crossover_rate']:
-                    start, end = sorted(random.sample(range(n), 2))
-                    p2_slice = [item for item in p2['solution'][:-1] if item not in c_perm[start:end]]
-                    c_perm = p2_slice[:start] + c_perm[start:end] + p2_slice[start:]
+                c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
                 if random.random() < config['mutation_rate']:
-                    idx1, idx2 = random.sample(range(n), 2)
-                    c_perm[idx1], c_perm[idx2] = c_perm[idx2], c_perm[idx1]
+                    c_perm = inversion_mutation(c_perm)
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
-            ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
-            improved_offspring = pool.map(adaptive_ls.apply, ls_args)
+            ls_args = [(sol, config['local_search_intensity'], config['vns_shake_strength']) for sol in offspring_sols]
+            improved_offspring = pool.map(vns.apply, ls_args)
             
-            eval_results = pool.map(evaluate_solution_task, [(tuple(sol), n, adj) for sol in improved_offspring])
+            eval_args = [(tuple(sol), n, adj) for sol in improved_offspring]
+            results = pool.map(evaluate_solution_task, eval_args)
             
-            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in eval_results]
+            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in results]
             population = crowding_selection(population + offspring_pop, config['pop_size'])
 
             if (gen + 1) % config['checkpoint_interval'] == 0:
                 tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
                 with open(checkpoint_file, 'wb') as f:
-                    pickle.dump({'pop': population, 'gen': gen, 'ls': adaptive_ls}, f)
+                    pickle.dump({'pop': population, 'gen': gen, 'vns': vns}, f)
 
     return [p['solution'] for p in crowding_selection(population, 20)]
 
-# --- Main Execution ---
+# --- Main Execution & Submission ---
 
 def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
     filename = f"submission_{problem_id}.json"
     problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
-    
-    # **FIXED HERE**: Convert all numbers to standard Python integers for JSON compatibility
     final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
-    
-    submission = {
-        "decisionVector": final_vectors,
-        "problem": problem_name_map.get(problem_id, problem_id),
-        "challenge": "spoc-3-torso-decompositions",
-    }
-    with open(filename, "w") as f:
-        json.dump(submission, f, indent=4)
+    submission = { "decisionVector": final_vectors, "problem": problem_name_map.get(problem_id, problem_id), "challenge": "spoc-3-torso-decompositions" }
+    with open(filename, "w") as f: json.dump(submission, f, indent=4)
     print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
@@ -250,9 +256,7 @@ if __name__ == "__main__":
     np.random.seed(42)
 
     problem_id = input("🔍 Select problem (easy/medium/hard): ").lower()
-    if problem_id not in PROBLEMS:
-        print("❌ Invalid problem ID. Exiting.")
-        exit()
+    if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
 
     config = CONFIG['general'].copy()
     config.update(CONFIG[problem_id])
