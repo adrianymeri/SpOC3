@@ -104,8 +104,8 @@ def block_move(solution: List[int], n: int) -> List[int]:
         neighbor[:-1] = perm
     return neighbor
 
-def inversion_mutation(solution: List[int], n: int) -> List[int]:
-    """Inverts a random subsection of the permutation."""
+def inversion_mutation_op(solution: List[int], n: int) -> List[int]:
+    """Inverts a random subsection of the permutation. Renamed to avoid conflict."""
     neighbor = solution[:]
     perm = neighbor[:-1]
     start, end = sorted(random.sample(range(n), 2))
@@ -130,10 +130,10 @@ def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
 
     while len(child) < n:
         for neighbor in unvisited:
-            if current_node in adj_map[neighbor]:
+            if current_node in adj_map.get(neighbor, set()):
                 adj_map[neighbor].remove(current_node)
         
-        neighbors_in_unvisited = [node for node in adj_map[current_node] if node in unvisited]
+        neighbors_in_unvisited = [node for node in adj_map.get(current_node, set()) if node in unvisited]
 
         if not neighbors_in_unvisited:
             next_node = random.choice(list(unvisited))
@@ -150,7 +150,7 @@ def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
 class VariableNeighborhoodSearcher:
     """Applies VNS to a solution to find a better local optimum."""
     def __init__(self, n, adj):
-        self.neighborhoods = [block_move, smart_torso_shift, inversion_mutation]
+        self.neighborhoods = [block_move, smart_torso_shift, inversion_mutation_op]
         self.n, self.adj = n, adj
 
     def apply(self, args: Tuple[List[int], int]) -> List[int]:
@@ -158,8 +158,8 @@ class VariableNeighborhoodSearcher:
         best_sol = solution
         _, best_score = evaluate_solution_task((tuple(best_sol), self.n, self.adj))
 
-        k = 0
         iters_since_improvement = 0
+        k = 0
         while iters_since_improvement < intensity:
             op = self.neighborhoods[k]
             neighbor = op(best_sol, self.n)
@@ -168,7 +168,7 @@ class VariableNeighborhoodSearcher:
             if dominates(neighbor_score, best_score):
                 best_sol = neighbor
                 best_score = neighbor_score
-                k = 0 # Go back to the first, most intensive neighborhood
+                k = 0 # Go back to the first neighborhood
                 iters_since_improvement = 0
             else:
                 k = (k + 1) % len(self.neighborhoods) # Cycle to the next neighborhood
@@ -176,7 +176,7 @@ class VariableNeighborhoodSearcher:
                 
         return best_sol
 
-# (Dominates and Crowding Selection functions remain the same)
+# --- NSGA-II Selection ---
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
@@ -243,7 +243,9 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 p1, p2 = random.sample(mating_pool, 2)
                 c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
                 if random.random() < config['mutation_rate']:
-                    c_perm = inversion_mutation(c_perm, n)
+                    # Simple swap mutation
+                    idx1, idx2 = random.sample(range(n), 2)
+                    c_perm[idx1], c_perm[idx2] = c_perm[idx2], c_perm[idx1]
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
