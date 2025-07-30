@@ -16,7 +16,7 @@ CONFIG = {
     "general": {
         "mutation_rate": 0.5,
         "checkpoint_interval": 20,
-        "stagnation_limit": 50, 
+        "stagnation_limit": 50,  # Generations without improvement before a reset
     },
     "easy": {"pop_size": 200, "generations": 1000, "local_search_intensity": 30},
     "medium": {"pop_size": 250, "generations": 1500, "local_search_intensity": 35},
@@ -52,10 +52,7 @@ def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
     return n, adj
 
 def evaluate_heuristic_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
-    """
-    Your original, high-speed heuristic evaluation.
-    This guides the main search.
-    """
+    """Your original, high-speed heuristic evaluation. This guides the main search."""
     solution_tuple, n, adj = args
     t = solution_tuple[-1]
     size = n - t
@@ -167,8 +164,8 @@ class VariableNeighborhoodSearcher:
         best_sol = solution
         _, best_score = evaluate_heuristic_task((tuple(best_sol), self.n, self.adj))
 
-        iters_since_improvement = 0
         k = 0
+        iters_since_improvement = 0
         while iters_since_improvement < intensity:
             op = self.neighborhoods[k % len(self.neighborhoods)]
             neighbor = op(best_sol, self.n)
@@ -186,10 +183,41 @@ class VariableNeighborhoodSearcher:
 
 # --- NSGA-II Selection ---
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
-
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    # (Implementation remains the same as the previous correct version)
-    pass # For brevity
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
+    fronts = [[]]
+    for i, p in enumerate(population):
+        for j, q in enumerate(population[i+1:]):
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q); q['dominated_by_count'] += 1
+            elif dominates(q['score'], p['score']): q['dominates_set'].append(p); p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    i = 0
+    while i < len(fronts) and fronts[i]:
+        next_front = []
+        for p in fronts[i]:
+            for q in p['dominates_set']:
+                q['dominated_by_count'] -= 1
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        fronts.append(next_front)
+        i += 1
+    
+    new_population = []
+    for front in fronts:
+        if not front: continue
+        if len(new_population) + len(front) > pop_size:
+            for p in front: p['distance'] = 0.0
+            for i_obj in range(2):
+                front.sort(key=lambda p: p['score'][i_obj])
+                front[0]['distance'] = front[-1]['distance'] = float('inf')
+                f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
+                if f_max > f_min:
+                    for j in range(1, len(front) - 1):
+                        front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
+            front.sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(front[:pop_size - len(new_population)])
+            break
+        new_population.extend(front)
+    return new_population
 
 # --- Main Memetic Algorithm Loop ---
 
@@ -200,8 +228,10 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
     generations_since_improvement = 0
     
     if os.path.exists(checkpoint_file):
-        # ... (Resuming logic)
-        pass 
+        print(f"🔄 Resuming from checkpoint: {checkpoint_file}")
+        with open(checkpoint_file, 'rb') as f: saved_state = pickle.load(f)
+        population, start_gen, vns = saved_state['pop'], saved_state['gen'] + 1, saved_state['vns']
+        print(f"Resuming from generation {start_gen}")
     else:
         print("🌱 Initializing fresh population...")
         population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
@@ -209,19 +239,51 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
 
     with multiprocessing.Pool() as pool:
         if start_gen == 0:
+            print("Evaluating initial population with fast heuristic...")
             results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in population])
             for p, (sol_t, score) in zip(population, results): p['score'] = score
 
         for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
-            # (Main loop is the same, but uses VNS and ERX)
-            # ...
+            current_ls_intensity = int(config['local_search_intensity'] * (1 - gen / config['generations'])**0.5) + 5
+            mating_pool = crowding_selection(population, config['pop_size'])
+            
+            current_best_score = min([p['score'] for p in mating_pool], key=lambda x: (x[1], -x[0]))
+            if dominates(current_best_score, best_overall_score):
+                generations_since_improvement = 0
+                best_overall_score = current_best_score
+            else:
+                generations_since_improvement += 1
 
             if generations_since_improvement >= config['stagnation_limit']:
-                # (Stagnation logic)
-                pass
+                tqdm.write(f"\n⚠️ Stagnation detected! Resetting 30% of population.")
+                num_to_reset = int(0.3 * len(population))
+                population[-num_to_reset:] = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(num_to_reset)]
+                results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in population[-num_to_reset:]])
+                for p, (sol_t, score) in zip(population[-num_to_reset:], results): p['score'] = score
+                generations_since_improvement = 0
+
+            offspring_sols = []
+            while len(offspring_sols) < config['pop_size']:
+                p1, p2 = random.sample(mating_pool, 2)
+                c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
+                if random.random() < config['mutation_rate']:
+                    c_perm = inversion_mutation_op(c_perm, n)
+                c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                offspring_sols.append(c_perm + [c_t])
             
-            # (Checkpointing logic)
-            pass
+            ls_args = [(sol, current_ls_intensity) for sol in offspring_sols]
+            improved_offspring = pool.map(vns.apply, ls_args)
+            
+            eval_args = [(tuple(sol), n, adj) for sol in improved_offspring]
+            results = pool.map(evaluate_heuristic_task, eval_args)
+            
+            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in results]
+            population = crowding_selection(population + offspring_pop, config['pop_size'])
+
+            if (gen + 1) % config['checkpoint_interval'] == 0:
+                tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
+                with open(checkpoint_file, 'wb') as f:
+                    pickle.dump({'pop': population, 'gen': gen, 'vns': vns}, f)
 
     # *** FINAL RE-EVALUATION STEP ***
     print(f"\n🔬 Performing final accurate evaluation of {len(population)} elite solutions...")
@@ -233,10 +295,30 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
     return [p['solution'] for p in crowding_selection(final_population, 20)]
 
 # --- Main Execution & Submission ---
+
 def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
-    # (Implementation remains the same as the previous correct version)
-    pass # For brevity
+    filename = f"submission_{problem_id}.json"
+    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+    submission = { "decisionVector": final_vectors, "problem": problem_name_map.get(problem_id, problem_id), "challenge": "spoc-3-torso-decompositions" }
+    with open(filename, "w") as f: json.dump(submission, f, indent=4)
+    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
-    # (Main execution block is the same as the previous correct version)
-    pass # For brevity
+    multiprocessing.freeze_support()
+    random.seed(42)
+    np.random.seed(42)
+
+    problem_id = input("🔍 Select problem (easy/medium/hard): ").lower()
+    if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
+
+    config = CONFIG['general'].copy()
+    config.update(CONFIG[problem_id])
+
+    n, adj = load_graph(problem_id)
+    
+    start_time = time.time()
+    final_solutions = memetic_algorithm(n, adj, config, problem_id)
+    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
+
+    create_submission_file(final_solutions, problem_id)
