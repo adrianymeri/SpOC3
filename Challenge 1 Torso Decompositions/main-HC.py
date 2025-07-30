@@ -11,8 +11,6 @@ import os
 import pickle
 
 # --- Algorithm & Problem Configuration ---
-# These are aggressive settings for a university server.
-# For your final runs, these parameters should be tuned using a tool like Optuna.
 CONFIG = {
     "general": {
         "mutation_rate": 0.5,
@@ -81,6 +79,40 @@ def evaluate_solution_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) ->
             
     return solution_tuple, (size, max_width)
 
+# --- Neighborhood Operator Functions ---
+# RESTORED these function definitions to fix the NameError
+
+def smart_torso_shift(solution: List[int], n: int) -> List[int]:
+    """Adjusts the threshold value t."""
+    neighbor = solution[:]
+    t = neighbor[-1]
+    shift = int(n * 0.05) + 1
+    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
+    return neighbor
+
+def block_move(solution: List[int], n: int) -> List[int]:
+    """Moves a contiguous block of nodes in the permutation."""
+    neighbor = solution[:]
+    perm = neighbor[:-1]
+    block_size = random.randint(3, max(4, int(n * 0.02)))
+    if n > block_size:
+        start = random.randint(0, n - block_size)
+        block = perm[start:start + block_size]
+        del perm[start:start + block_size]
+        insert_pos = random.randint(0, len(perm))
+        perm[insert_pos:insert_pos] = block
+        neighbor[:-1] = perm
+    return neighbor
+
+def inversion_mutation(solution: List[int], n: int) -> List[int]:
+    """Inverts a random subsection of the permutation."""
+    neighbor = solution[:]
+    perm = neighbor[:-1]
+    start, end = sorted(random.sample(range(n), 2))
+    perm[start:end+1] = reversed(perm[start:end+1])
+    neighbor[:-1] = perm
+    return neighbor
+
 # --- Advanced Genetic & Local Search Operators ---
 
 def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
@@ -97,17 +129,14 @@ def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
     unvisited = set(p1) - {current_node}
 
     while len(child) < n:
-        adj_map[current_node].discard(current_node)
-        neighbors = list(adj_map[current_node])
-        
         for neighbor in unvisited:
-            if neighbor in neighbors:
-                adj_map[neighbor].discard(current_node)
+            if current_node in adj_map[neighbor]:
+                adj_map[neighbor].remove(current_node)
         
-        if not neighbors or not any(n in unvisited for n in neighbors):
+        if not adj_map[current_node] or not any(n in unvisited for n in adj_map[current_node]):
             next_node = random.choice(list(unvisited))
         else:
-            neighbors_in_unvisited = [n for n in neighbors if n in unvisited]
+            neighbors_in_unvisited = [n for n in adj_map[current_node] if n in unvisited]
             min_len = min(len(adj_map[n]) for n in neighbors_in_unvisited)
             next_node = random.choice([n for n in neighbors_in_unvisited if len(adj_map[n]) == min_len])
         
@@ -117,27 +146,19 @@ def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
         
     return child
 
-def inversion_mutation(perm: List[int]) -> List[int]:
-    """Inversion mutation for permutations."""
-    size = len(perm)
-    start, end = sorted(random.sample(range(size), 2))
-    perm[start:end+1] = reversed(perm[start:end+1])
-    return perm
-
 class VariableNeighborhoodSearcher:
     """Applies VNS to a solution to find a better local optimum."""
     def __init__(self, n, adj):
-        self.neighborhoods = [block_move, smart_torso_shift]
+        self.neighborhoods = [block_move, smart_torso_shift, inversion_mutation]
         self.n, self.adj = n, adj
 
     def apply(self, args: Tuple[List[int], int, float]) -> List[int]:
-        solution, intensity, shake_strength = args
+        solution, intensity, _ = args # shake_strength is not used in this simplified VNS
         best_sol = solution
         _, best_score = evaluate_solution_task((tuple(best_sol), self.n, self.adj))
 
         k = 0
         while k < len(self.neighborhoods):
-            # Exploration within the current neighborhood
             for _ in range(intensity):
                 op = self.neighborhoods[k]
                 neighbor = op(best_sol, self.n)
@@ -220,7 +241,7 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 p1, p2 = random.sample(mating_pool, 2)
                 c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
                 if random.random() < config['mutation_rate']:
-                    c_perm = inversion_mutation(c_perm)
+                    c_perm = inversion_mutation(c_perm, n)
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
