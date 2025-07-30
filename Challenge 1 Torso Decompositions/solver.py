@@ -6,6 +6,7 @@ import time
 import math
 import numpy as np
 from typing import List
+import urllib.request  # <--- FIXED: Added the missing import
 
 # --- All of your original helper functions remain here ---
 
@@ -76,7 +77,6 @@ def block_move(current: List[int], n: int, adj_list: List[set]) -> List[int]:
         neighbor[:-1] = perm
     return neighbor
 
-# (Other operators like critical_swap can be added here if desired)
 neighbor_operators = [smart_torso_shift, block_move]
 
 def initialize_solution(n: int, adj_list: List[set]) -> List[int]:
@@ -146,14 +146,14 @@ def hill_climbing(
             if iteration - last_improvement > 1500: # Early restart
                 break
         
-        # Add the best solution from this restart to our collection
         pareto_front_solutions.append({'solution': best_local, 'score': best_local_score})
 
     # Filter for the final non-dominated front
     final_pareto_front = []
     for candidate in pareto_front_solutions:
         is_dominated = False
-        for other in pareto_front_solutions:
+        # Create a copy of the list to iterate over while potentially modifying the original list indirectly
+        for other in list(pareto_front_solutions):
             if dominates(other['score'], candidate['score']):
                 is_dominated = True
                 break
