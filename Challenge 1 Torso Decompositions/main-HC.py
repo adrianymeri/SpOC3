@@ -3,415 +3,264 @@ import random
 import time
 import math
 import numpy as np
-from typing import List, Set
+from typing import List, Set, Tuple, Dict
 import urllib.request
+from tqdm import tqdm
+import multiprocessing
+import os
+import pickle
 
-# Problem configurations
-problems = {
+# --- Algorithm & Problem Configuration ---
+CONFIG = {
+    "general": {
+        "mutation_rate": 0.6,
+        "crossover_rate": 0.9,
+        "checkpoint_interval": 5,
+    },
+    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 20},
+    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 25},
+    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 30},
+}
+
+PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
+# --- Core Data Loading and Correct Evaluation ---
 
-def load_graph(problem_id: str) -> List[List[int]]:
-    """Loads the graph data for the given problem ID."""
-    url = problems[problem_id]
-    print(f"📥 Loading graph data from: {url}")
+def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
+    """Loads graph data and returns the number of nodes and an adjacency list."""
+    url = PROBLEMS[problem_id]
+    print(f"📥 Loading graph data for '{problem_id}'...")
+    edges = []
+    max_node = 0
     with urllib.request.urlopen(url) as f:
-        edges = []
         for line in f:
-            if line.startswith(b"#"):
-                continue
+            if line.startswith(b'#'): continue
             u, v = map(int, line.strip().split())
-            edges.append([u, v])
-    print(f"✅ Loaded graph with {len(edges)} edges")
-    return edges
+            edges.append((u, v))
+            max_node = max(max_node, u, v)
+    n = max_node + 1
+    adj = [set() for _ in range(n)]
+    for u, v in edges:
+        adj[u].add(v)
+        adj[v].add(u)
+    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
+    return n, adj
 
-
-def evaluate_solution(decision_vector: List[int], edges: List[List[int]]) -> List[float]:
-    """Optimized evaluation with early termination and width tracking"""
-    n = len(decision_vector) - 1
-    t = decision_vector[-1]
+def evaluate_solution_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
+    """Worker function for multiprocessing. Correctly evaluates a single solution."""
+    solution_tuple, n, adj = args
+    
+    t = solution_tuple[-1]
+    perm = solution_tuple[:-1]
     size = n - t
+    if size <= 0: return solution_tuple, (0, 501)
 
-    # Build adjacency list
-    adj_list = [set() for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].add(v)
-        adj_list[v].add(u)
-
+    pos = {node: i for i, node in enumerate(perm)}
+    
+    temp_adj = [s.copy() for s in adj]
+    for i in range(n):
+        u = perm[i]
+        successors = [v for v in temp_adj[u] if pos.get(v, -1) > i]
+        for j1 in range(len(successors)):
+            for j2 in range(j1 + 1, len(successors)):
+                v1, v2 = successors[j1], successors[j2]
+                if v2 not in temp_adj[v1]:
+                    temp_adj[v1].add(v2)
+                    temp_adj[v2].add(v1)
+    
     max_width = 0
-    critical_nodes = []
-    for i in range(t, n):
-        node = decision_vector[i]
-        current_width = len(adj_list[node])
-        if current_width > max_width:
-            max_width = current_width
-            critical_nodes = [node]
-            if max_width >= 500:
-                return [size, 501, critical_nodes]
-        elif current_width == max_width:
-            critical_nodes.append(node)
+    for u in perm[t:]:
+        out_degree = sum(1 for v in temp_adj[u] if pos.get(v, -1) > pos[u])
+        max_width = max(max_width, out_degree)
+        if max_width >= 500: return solution_tuple, (size, 501)
+            
+    return solution_tuple, (size, max_width)
 
-    return [size, max_width, critical_nodes]
+# --- Your Proven Local Search Operators ---
 
+def smart_torso_shift(solution: List[int], n: int) -> List[int]:
+    neighbor = solution[:]
+    t = neighbor[-1]
+    shift = int(n * 0.05) + 1
+    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
+    return neighbor
 
-# ------------------- ENHANCED NEIGHBOR OPERATORS -------------------
-def smart_torso_shift(current: List[int], edges: List[List[int]]) -> List[int]:
-    """Adaptive threshold adjustment with width awareness"""
-    n = len(current) - 1
-    t = current[-1]
-    current_score = evaluate_solution(current, edges)
-    new_t = t
+def block_move(solution: List[int], n: int) -> List[int]:
+    neighbor = solution[:]
+    perm = neighbor[:-1]
+    block_size = random.randint(3, max(4, int(n * 0.02)))
+    if n > block_size:
+        start = random.randint(0, n - block_size)
+        block = perm[start:start + block_size]
+        del perm[start:start + block_size]
+        insert_pos = random.randint(0, len(perm))
+        perm[insert_pos:insert_pos] = block
+        neighbor[:-1] = perm
+    return neighbor
 
-    if current_score[1] > 400:
-        # Aggressive reduction for high width
-        new_t = min(n - 1, t + random.randint(5, 10))
+# --- Memetic & NSGA-II Components ---
+
+class AdaptiveLocalSearcher:
+    """Manages and adaptively applies local search operators."""
+    def __init__(self, n, adj):
+        self.operators = [smart_torso_shift, block_move]
+        self.weights = np.ones(len(self.operators))
+        self.n, self.adj = n, adj
+
+    def apply(self, args: Tuple[List[int], int]) -> List[int]:
+        solution, intensity = args
+        current_sol = solution
+        _, best_score = evaluate_solution_task((tuple(current_sol), self.n, self.adj))
+        
+        for _ in range(intensity):
+            op_idx = np.random.choice(len(self.operators), p=self.weights / self.weights.sum())
+            op = self.operators[op_idx]
+            
+            neighbor = op(current_sol, self.n)
+            _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
+
+            if dominates(neighbor_score, best_score):
+                current_sol = neighbor
+                best_score = neighbor_score
+                self.weights[op_idx] += 0.1
+        return current_sol
+
+def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
+
+def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
+    """Selects the new population based on non-domination rank and crowding distance."""
+    # Non-Dominated Sort
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
+    fronts = [[]]
+    for i, p in enumerate(population):
+        for j, q in enumerate(population[i+1:]):
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q); q['dominated_by_count'] += 1
+            elif dominates(q['score'], p['score']): q['dominates_set'].append(p); p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    i = 0
+    while i < len(fronts) and fronts[i]:
+        next_front = []
+        for p in fronts[i]:
+            for q in p['dominates_set']:
+                q['dominated_by_count'] -= 1
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        fronts.append(next_front)
+        i += 1
+    
+    # Crowding Distance and Final Selection
+    new_population = []
+    for front in fronts:
+        if not front: continue
+        if len(new_population) + len(front) > pop_size:
+            for p in front: p['distance'] = 0.0
+            for i_obj in range(2):
+                front.sort(key=lambda p: p['score'][i_obj])
+                front[0]['distance'] = front[-1]['distance'] = float('inf')
+                f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
+                if f_max > f_min:
+                    for j in range(1, len(front) - 1):
+                        front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
+            front.sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(front[:pop_size - len(new_population)])
+            break
+        new_population.extend(front)
+    return new_population
+
+# --- Main Memetic Algorithm Loop ---
+
+def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str) -> List[List[int]]:
+    start_gen = 0
+    checkpoint_file = f"checkpoint_{problem_id}.pkl"
+    
+    if os.path.exists(checkpoint_file):
+        print(f"🔄 Resuming from checkpoint: {checkpoint_file}")
+        with open(checkpoint_file, 'rb') as f:
+            saved_state = pickle.load(f)
+        population, start_gen, adaptive_ls = saved_state['pop'], saved_state['gen'] + 1, saved_state['ls']
+        print(f"Resuming from generation {start_gen}")
     else:
-        # Balanced exploration
-        shift = int(n * 0.04) + 1
-        new_t = max(0, min(n - 1, t + random.randint(-shift, shift)))
-
-    neighbor = current.copy()
-    neighbor[-1] = new_t
-    return neighbor
-
-
-def block_move(current: List[int], edges: List[List[int]]) -> List[int]:
-    """Move a block of nodes with size based on current width"""
-    neighbor = current.copy()
-    n = len(neighbor) - 1
-    current_score = evaluate_solution(current, edges)
-
-    # Dynamic block size based on width
-    base_size = 3 if current_score[1] < 100 else 5
-    block_size = random.randint(base_size, base_size + 2)
-
-    start = random.randint(0, n - block_size)
-    block = neighbor[start:start + block_size]
-    insert_pos = random.randint(0, n - block_size)
-
-    if insert_pos != start:
-        del neighbor[start:start + block_size]
-        neighbor[insert_pos:insert_pos] = block
-    return neighbor
-
-
-def critical_swap(current: List[int], edges: List[List[int]]) -> List[int]:
-    """Swap critical high-degree nodes with low-degree alternatives"""
-    n = len(current) - 1
-    t = current[-1]
-    perm = current[:-1]
-    score_data = evaluate_solution(current, edges)
-
-    if score_data[1] >= 500 or len(score_data[2]) == 0:
-        return current
-
-    # Build degree list
-    adj_list = [set() for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].add(v)
-        adj_list[v].add(u)
-    degrees = [len(nb) for nb in adj_list]
-
-    # Find swap candidates
-    critical_node = random.choice(score_data[2])
-    non_torso = [node for node in perm[:t] if degrees[node] < score_data[1]]
-
-    if not non_torso:
-        return current
-
-    replacement = min(non_torso, key=lambda x: degrees[x])
-
-    neighbor = current.copy()
-    crit_idx = perm.index(critical_node)
-    rep_idx = perm.index(replacement)
-    neighbor[crit_idx], neighbor[rep_idx] = neighbor[rep_idx], neighbor[crit_idx]
-    return neighbor
-
-
-def greedy_expand(current: List[int], edges: List[List[int]]) -> List[int]:
-    """Systematically test potential expansions of the torso"""
-    n = len(current) - 1
-    t = current[-1]
-    original_score = evaluate_solution(current, edges)
-    best_t = t
-    best_score = original_score
-
-    # Test expansion candidates
-    for delta in range(-3, 0):
-        new_t = max(0, t + delta)
-        if new_t == t:
-            continue
-
-        test_sol = current.copy()
-        test_sol[-1] = new_t
-        test_score = evaluate_solution(test_sol, edges)
-
-        if (test_score[0] > best_score[0] or
-                (test_score[0] == best_score[0] and test_score[1] < best_score[1])):
-            best_t = new_t
-            best_score = test_score
-
-    neighbor = current.copy()
-    neighbor[-1] = best_t
-    return neighbor
-
-
-def community_shuffle(current: List[int], edges: List[List[int]]) -> List[int]:
-    """Shuffle nodes within detected communities"""
-    n = len(current) - 1
-    perm = current[:-1]
-
-    # Detect communities using label propagation
-    communities = detect_communities(perm, edges)
-
-    neighbor = current.copy()
-    new_perm = neighbor[:-1]
-
-    for comm in communities:
-        # Find all indices of community members in the permutation
-        indices = [i for i, node in enumerate(new_perm) if node in comm]
-        if len(indices) < 2:
-            continue
-
-        # Extract and shuffle community nodes
-        community_nodes = [new_perm[i] for i in indices]
-        random.shuffle(community_nodes)
-
-        # Replace nodes while maintaining positions
-        for i, idx in enumerate(indices):
-            new_perm[idx] = community_nodes[i]
-
-    neighbor[:-1] = new_perm
-    return neighbor
-
-
-def detect_communities(nodes: List[int], edges: List[List[int]]) -> List[List[int]]:
-    """Community detection using label propagation"""
-    adj_list = [[] for _ in range(len(nodes))]
-    for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    labels = list(range(len(nodes)))
-    changed = True
-
-    while changed:
-        changed = False
-        order = list(range(len(nodes)))
-        random.shuffle(order)
-
-        for i in order:
-            counts = {}
-            for neighbor in adj_list[i]:
-                counts[labels[neighbor]] = counts.get(labels[neighbor], 0) + 1
-
-            if counts:
-                max_label = max(counts, key=lambda k: (counts[k], -k))
-                if labels[i] != max_label:
-                    labels[i] = max_label
-                    changed = True
-
-    communities = {}
-    for i, label in enumerate(labels):
-        communities.setdefault(label, []).append(nodes[i])
-
-    return list(communities.values())
-
-
-# Initialize operator tracking
-neighbor_operators = [
-    smart_torso_shift,
-    block_move,
-    critical_swap,
-    greedy_expand,
-    community_shuffle
-]
-
-op_scores = {op: 1.0 for op in neighbor_operators}
-op_usage = {op: 0 for op in neighbor_operators}
-
-
-def dominates(score1: List[float], score2: List[float]) -> bool:
-    return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
-        (score1[0] >= score2[0] and score1[1] < score2[1])
-
-
-def update_operator_performance(op, success: bool):
-    """Adaptive weight updates with momentum"""
-    if success:
-        op_scores[op] = min(op_scores[op] * 1.25, 15.0)
-    else:
-        op_scores[op] = max(op_scores[op] * 0.85, 0.05)
-
-    # Softmax normalization
-    total = sum(math.exp(s) for s in op_scores.values())
-    for o in op_scores:
-        op_scores[o] = math.exp(op_scores[o]) / total
-
-
-def initialize_solution(n: int, strategy: str, edges: List[List[int]]) -> List[int]:
-    """Advanced initialization with community detection"""
-    # Build adjacency list
-    adj_list = [[] for _ in range(n)]
-    for u, v in edges:
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    if strategy == "community":
-        communities = detect_communities(list(range(n)), edges)
-        communities.sort(key=lambda c: (-len(c), -sum(len(adj_list[n]) for n in c)))
-        permutation = []
-        for comm in communities:
-            # Sort community nodes by degree (high to low)
-            comm_sorted = sorted(comm, key=lambda x: -len(adj_list[x]))
-            permutation.extend(comm_sorted)
-    elif strategy == "degree":
-        permutation = sorted(range(n), key=lambda x: -len(adj_list[x]))
-    elif strategy == "reverse_degree":
-        permutation = sorted(range(n), key=lambda x: len(adj_list[x]))
-    else:
-        permutation = list(range(n))
-        random.shuffle(permutation)
-
-    # Initialize threshold with exploration bias
-    t = int(n * np.random.beta(1.5, 2.5))  # Favor larger initial torso
-    return permutation + [t]
-
-
-def hill_climbing(edges: List[List[int]], max_iterations: int = 25000, num_restarts: int = 250) -> List[List[int]]:
-    n = max(max(edge) for edge in edges) + 1
-    pareto_front = []
-    global_best = [0, float('inf')]
-    start_time = time.time()
-
-    # Adaptive cooling parameters
-    T0 = 3000.0
-    cooling_rate = 0.9992
-
-    for restart in range(num_restarts):
-        # Initialize with progress tracking
-        init_strategy = random.choice(["community", "degree", "reverse_degree"])
-        current = initialize_solution(n, init_strategy, edges)
-        current_score = evaluate_solution(current, edges)[:2]
-
-        best_local = current.copy()
-        best_local_score = current_score.copy()
-        T = T0
-        last_improvement = 0
-        tabu = set()
-        tabu.add(tuple(current))
-
-        print(f"\n🌀 Restart {restart + 1}/{num_restarts} | Initial Score: {current_score}")
-
-        for iteration in range(max_iterations):
-            T *= cooling_rate
-
-            # Dynamic operator selection
-            op = random.choices(
-                neighbor_operators,
-                weights=[op_scores[o] for o in neighbor_operators]
-            )[0]
-
-            neighbor = op(current, edges)
-            if tuple(neighbor) in tabu:
-                continue
-
-            neighbor_score = evaluate_solution(neighbor, edges)[:2]
-
-            # Update tabu list (adaptive size)
-            tabu.add(tuple(neighbor))
-            if len(tabu) > 50 + 10 * (restart % 5):
-                tabu.pop()
-
-            # Enhanced acceptance criteria
-            accept = False
-            if dominates(neighbor_score, current_score):
-                accept = True
-            else:
-                # Weighted acceptance favoring size
-                size_gain = neighbor_score[0] - current_score[0]
-                width_diff = current_score[1] - neighbor_score[1]
-                delta = 2 * size_gain + width_diff
-                accept_prob = math.exp(delta / (T + 1e-6))
-                accept = random.random() < accept_prob
-
-            if accept:
-                current = neighbor
-                current_score = neighbor_score
-                update_operator_performance(op, True)
-
-                if dominates(current_score, best_local_score):
-                    best_local = current.copy()
-                    best_local_score = current_score.copy()
-                    last_improvement = iteration
-
-                    if dominates(best_local_score, global_best):
-                        global_best = best_local_score.copy()
-                        print(f"\n🔥 NEW GLOBAL BEST @ Iter {iteration}: "
-                              f"Size={global_best[0]} Width={global_best[1]} "
-                              f"Time={time.time() - start_time:.1f}s")
-            else:
-                update_operator_performance(op, False)
-
-            # Intensification every 300 iterations
-            if iteration % 300 == 299:
-                for _ in range(25):
-                    candidate = random.choice(neighbor_operators)(best_local, edges)
-                    candidate_score = evaluate_solution(candidate, edges)[:2]
-                    if dominates(candidate_score, best_local_score):
-                        best_local = candidate.copy()
-                        best_local_score = candidate_score.copy()
-
-            # Progress reporting
-            if iteration % 200 == 0:
-                print(f"Iter {iteration:5d} | Temp: {T:7.1f} | "
-                      f"Current: {current_score} | Best: {best_local_score}")
-
-            # Early restart if stuck
-            if iteration - last_improvement > 1500:
-                print(f"🔄 Early restart at iteration {iteration}")
-                break
-
-        # Update Pareto front
-        pareto_front.append((best_local, best_local_score))
-        print(f"\n✅ Restart {restart + 1} Completed | Best: {best_local_score} | "
-              f"Time: {time.time() - start_time:.1f}s")
-
-    # Filter and sort Pareto front
-    filtered = []
-    for sol, score in pareto_front:
-        if not any(dominates(other, score) for _, other in pareto_front):
-            filtered.append(sol)
-
-    return sorted(filtered,
-                  key=lambda x: (-evaluate_solution(x, edges)[0], evaluate_solution(x, edges)[1]))[:5]
-
-
-def create_submission_file(decision_vector, problem_id, filename="submission.json"):
+        print("🌱 Initializing fresh population...")
+        population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
+        adaptive_ls = AdaptiveLocalSearcher(n, adj)
+
+    with multiprocessing.Pool() as pool:
+        if start_gen == 0:
+            print("Evaluating initial population...")
+            results = pool.map(evaluate_solution_task, [(tuple(p['solution']), n, adj) for p in population])
+            sol_to_score = dict(results)
+            for p in population: p['score'] = sol_to_score.get(tuple(p['solution']), (0, 501))
+
+        for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
+            mating_pool = crowding_selection(population, config['pop_size'])
+            
+            offspring_sols = []
+            while len(offspring_sols) < config['pop_size']:
+                p1, p2 = random.sample(mating_pool, 2)
+                c_perm = list(p1['solution'][:-1])
+                if random.random() < config['crossover_rate']:
+                    start, end = sorted(random.sample(range(n), 2))
+                    p2_slice = [item for item in p2['solution'][:-1] if item not in c_perm[start:end]]
+                    c_perm = p2_slice[:start] + c_perm[start:end] + p2_slice[start:]
+                if random.random() < config['mutation_rate']:
+                    idx1, idx2 = random.sample(range(n), 2)
+                    c_perm[idx1], c_perm[idx2] = c_perm[idx2], c_perm[idx1]
+                c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                offspring_sols.append(c_perm + [c_t])
+            
+            ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
+            improved_offspring = pool.map(adaptive_ls.apply, ls_args)
+            
+            eval_results = pool.map(evaluate_solution_task, [(tuple(sol), n, adj) for sol in improved_offspring])
+            
+            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in eval_results]
+            population = crowding_selection(population + offspring_pop, config['pop_size'])
+
+            if (gen + 1) % config['checkpoint_interval'] == 0:
+                tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
+                with open(checkpoint_file, 'wb') as f:
+                    pickle.dump({'pop': population, 'gen': gen, 'ls': adaptive_ls}, f)
+
+    return [p['solution'] for p in crowding_selection(population, 20)]
+
+# --- Main Execution ---
+
+def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
+    filename = f"submission_{problem_id}.json"
+    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+    
+    # **FIXED HERE**: Convert all numbers to standard Python integers for JSON compatibility
+    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+    
     submission = {
-        "decisionVector": [decision_vector],
-        "problem": problem_id,
+        "decisionVector": final_vectors,
+        "problem": problem_name_map.get(problem_id, problem_id),
         "challenge": "spoc-3-torso-decompositions",
     }
     with open(filename, "w") as f:
         json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename}")
-
+    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     random.seed(42)
+    np.random.seed(42)
+
     problem_id = input("🔍 Select problem (easy/medium/hard): ").lower()
-    while problem_id not in problems:
-        problem_id = input("❌ Invalid! Choose easy/medium/hard: ").lower()
+    if problem_id not in PROBLEMS:
+        print("❌ Invalid problem ID. Exiting.")
+        exit()
 
-    edges = load_graph(problem_id)
+    config = CONFIG['general'].copy()
+    config.update(CONFIG[problem_id])
 
+    n, adj = load_graph(problem_id)
+    
     start_time = time.time()
-    solutions = hill_climbing(edges)
-    print(f"\n⏱️ Optimization completed in {time.time() - start_time:.2f} seconds")
+    final_solutions = memetic_algorithm(n, adj, config, problem_id)
+    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
 
-    for idx, sol in enumerate(solutions):
-        create_submission_file(sol, problem_id, f"best_solution_{idx + 1}.json")
+    create_submission_file(final_solutions, problem_id)
