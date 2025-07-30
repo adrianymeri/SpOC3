@@ -16,9 +16,9 @@ CONFIG = {
         "mutation_rate": 0.5,
         "checkpoint_interval": 5,
     },
-    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 25, "vns_shake_strength": 0.1},
-    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 30, "vns_shake_strength": 0.15},
-    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 35, "vns_shake_strength": 0.2},
+    "easy": {"pop_size": 100, "generations": 200, "local_search_intensity": 25},
+    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 30},
+    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 35},
 }
 
 PROBLEMS = {
@@ -118,7 +118,7 @@ def inversion_mutation(solution: List[int], n: int) -> List[int]:
 def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
     """Edge Recombination Crossover (ERX)."""
     n = len(p1)
-    adj_map = [set() for _ in range(n)]
+    adj_map = {node: set() for node in p1}
     for p in [p1, p2]:
         for i in range(n):
             adj_map[p[i]].add(p[i-1])
@@ -133,12 +133,13 @@ def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
             if current_node in adj_map[neighbor]:
                 adj_map[neighbor].remove(current_node)
         
-        if not adj_map[current_node] or not any(n in unvisited for n in adj_map[current_node]):
+        neighbors_in_unvisited = [node for node in adj_map[current_node] if node in unvisited]
+
+        if not neighbors_in_unvisited:
             next_node = random.choice(list(unvisited))
         else:
-            neighbors_in_unvisited = [n for n in adj_map[current_node] if n in unvisited]
-            min_len = min(len(adj_map[n]) for n in neighbors_in_unvisited)
-            next_node = random.choice([n for n in neighbors_in_unvisited if len(adj_map[n]) == min_len])
+            min_len = min(len(adj_map[node]) for node in neighbors_in_unvisited)
+            next_node = random.choice([node for node in neighbors_in_unvisited if len(adj_map[node]) == min_len])
         
         child.append(next_node)
         unvisited.remove(next_node)
@@ -152,30 +153,32 @@ class VariableNeighborhoodSearcher:
         self.neighborhoods = [block_move, smart_torso_shift, inversion_mutation]
         self.n, self.adj = n, adj
 
-    def apply(self, args: Tuple[List[int], int, float]) -> List[int]:
-        solution, intensity, _ = args # shake_strength is not used in this simplified VNS
+    def apply(self, args: Tuple[List[int], int]) -> List[int]:
+        solution, intensity = args
         best_sol = solution
         _, best_score = evaluate_solution_task((tuple(best_sol), self.n, self.adj))
 
         k = 0
-        while k < len(self.neighborhoods):
-            for _ in range(intensity):
-                op = self.neighborhoods[k]
-                neighbor = op(best_sol, self.n)
-                _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
+        iters_since_improvement = 0
+        while iters_since_improvement < intensity:
+            op = self.neighborhoods[k]
+            neighbor = op(best_sol, self.n)
+            _, neighbor_score = evaluate_solution_task((tuple(neighbor), self.n, self.adj))
+            
+            if dominates(neighbor_score, best_score):
+                best_sol = neighbor
+                best_score = neighbor_score
+                k = 0 # Go back to the first, most intensive neighborhood
+                iters_since_improvement = 0
+            else:
+                k = (k + 1) % len(self.neighborhoods) # Cycle to the next neighborhood
+                iters_since_improvement += 1
                 
-                if dominates(neighbor_score, best_score):
-                    best_sol = neighbor
-                    best_score = neighbor_score
-                    k = 0 # Go back to the first neighborhood
-                    continue
-            k += 1
         return best_sol
 
-# (Dominates and Crowding Selection functions remain the same as the previous correct version)
+# (Dominates and Crowding Selection functions remain the same)
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    # Non-Dominated Sort
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
     for i, p in enumerate(population):
@@ -193,7 +196,6 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
         fronts.append(next_front)
         i += 1
     
-    # Crowding Distance and Final Selection
     new_population = []
     for front in fronts:
         if not front: continue
@@ -245,7 +247,7 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
-            ls_args = [(sol, config['local_search_intensity'], config['vns_shake_strength']) for sol in offspring_sols]
+            ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
             improved_offspring = pool.map(vns.apply, ls_args)
             
             eval_args = [(tuple(sol), n, adj) for sol in improved_offspring]
