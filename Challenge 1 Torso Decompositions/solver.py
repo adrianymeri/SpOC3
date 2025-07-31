@@ -1,34 +1,39 @@
-# solver.py
-
 import json
 import random
 import time
 import math
 import numpy as np
 from typing import List
-import urllib.request  # <--- FIXED: Added the missing import
+import urllib.request
+from tqdm import tqdm
 
-# --- All of your original helper functions remain here ---
-
-problems = {
+# --- Problem Configurations ---
+PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-def load_graph(problem_id: str) -> List[List[int]]:
-    url = problems[problem_id]
-    print(f"📥 Loading graph data from: {url}")
+# --- Helper Functions ---
+
+def load_graph(problem_id: str) -> tuple[int, list[list[int]]]:
+    """Loads graph data and returns the number of nodes and edges."""
+    url = PROBLEMS[problem_id]
+    print(f"📥 Loading graph data for '{problem_id}'...")
     edges = []
+    max_node = 0
     with urllib.request.urlopen(url) as f:
         for line in f:
             if line.startswith(b"#"): continue
             u, v = map(int, line.strip().split())
             edges.append([u, v])
-    print(f"✅ Loaded graph with {len(edges)} edges")
-    return edges
+            max_node = max(max_node, u, v)
+    n = max_node + 1
+    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
+    return n, edges
 
 def evaluate_solution(decision_vector: List[int], n: int, adj_list: List[set]) -> List[float]:
+    """Your proven, high-speed evaluation function."""
     t = decision_vector[-1]
     size = n - t
     if size <= 0: return [0, 501, []]
@@ -47,10 +52,14 @@ def evaluate_solution(decision_vector: List[int], n: int, adj_list: List[set]) -
     return [size, max_width if max_width < 500 else 501, critical_nodes]
 
 def dominates(score1: List[float], score2: List[float]) -> bool:
+    """Checks if score1 dominates score2."""
     return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
            (score1[0] >= score2[0] and score1[1] < score2[1])
 
+# --- Neighborhood Operators ---
+
 def smart_torso_shift(current: List[int], n: int, adj_list: List[set]) -> List[int]:
+    """Adaptive threshold adjustment."""
     neighbor = current[:]
     t = neighbor[-1]
     score = evaluate_solution(neighbor, n, adj_list)
@@ -63,6 +72,7 @@ def smart_torso_shift(current: List[int], n: int, adj_list: List[set]) -> List[i
     return neighbor
 
 def block_move(current: List[int], n: int, adj_list: List[set]) -> List[int]:
+    """Moves a block of nodes."""
     neighbor = current[:]
     perm = neighbor[:-1]
     score = evaluate_solution(neighbor, n, adj_list)
@@ -77,36 +87,41 @@ def block_move(current: List[int], n: int, adj_list: List[set]) -> List[int]:
         neighbor[:-1] = perm
     return neighbor
 
-neighbor_operators = [smart_torso_shift, block_move]
+# --- Initialization ---
 
 def initialize_solution(n: int, adj_list: List[set]) -> List[int]:
+    """Creates a single solution to start a search run."""
     perm = sorted(range(n), key=lambda x: -len(adj_list[x]))
     if random.random() < 0.5:
         perm.reverse()
     t = int(n * np.random.beta(1.5, 2.5))
     return perm + [t]
 
+# --- Main Hill Climbing Algorithm ---
+
 def hill_climbing(
     problem_id: str,
+    n: int,
+    edges: List[List[int]],
     max_iterations: int,
     num_restarts: int,
     cooling_rate: float,
     initial_temp: float
 ) -> List[dict]:
     """
-    Main solver function, now parameterized for tuning.
+    Main solver function, using a given set of parameters.
     Returns a list of dictionaries, each representing a non-dominated solution.
     """
-    edges = load_graph(problem_id)
-    n = max(max(edge) for edge in edges) + 1 if edges else 0
     adj_list = [set() for _ in range(n)]
     for u, v in edges:
         adj_list[u].add(v)
         adj_list[v].add(u)
 
     pareto_front_solutions = []
-
-    for _ in range(num_restarts):
+    
+    neighbor_operators = [smart_torso_shift, block_move]
+    
+    for _ in tqdm(range(num_restarts), desc=f"🚀 Running Restarts for '{problem_id}'"):
         current = initialize_solution(n, adj_list)
         current_score = evaluate_solution(current, n, adj_list)[:2]
         
@@ -143,7 +158,7 @@ def hill_climbing(
                     best_local_score = current_score[:]
                     last_improvement = iteration
             
-            if iteration - last_improvement > 1500: # Early restart
+            if iteration - last_improvement > 2000:
                 break
         
         pareto_front_solutions.append({'solution': best_local, 'score': best_local_score})
@@ -152,15 +167,13 @@ def hill_climbing(
     final_pareto_front = []
     for candidate in pareto_front_solutions:
         is_dominated = False
-        # Create a copy of the list to iterate over while potentially modifying the original list indirectly
-        for other in list(pareto_front_solutions):
+        for other in pareto_front_solutions:
             if dominates(other['score'], candidate['score']):
                 is_dominated = True
                 break
         if not is_dominated:
             final_pareto_front.append(candidate)
             
-    # Remove duplicate solutions
     unique_solutions = []
     seen_solutions = set()
     for item in final_pareto_front:
@@ -170,3 +183,64 @@ def hill_climbing(
             seen_solutions.add(sol_tuple)
 
     return unique_solutions
+
+# --- Submission File Creation ---
+
+def create_submission_file(solutions: List[dict], problem_id: str):
+    """Creates a JSON submission file from the final Pareto front."""
+    filename = f"submission_{problem_id}.json"
+    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+    
+    decision_vectors = [p['solution'] for p in solutions]
+    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+
+    submission = {
+        "decisionVector": final_vectors[:20],
+        "problem": problem_name_map.get(problem_id, problem_id),
+        "challenge": "spoc-3-torso-decompositions",
+    }
+    with open(filename, "w") as f:
+        json.dump(submission, f, indent=4)
+    print(f"📄 Created submission file: {filename} with {len(submission['decisionVector'])} solutions.")
+
+
+# --- Main Execution Block ---
+
+if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
+
+    # --- Optimal parameters found by Optuna ---
+    TUNED_PARAMS = {
+        'max_iterations': 45000,
+        'num_restarts': 250,
+        'cooling_rate': 0.999408137776452,
+        'initial_temp': 4886.692842415465
+    }
+
+    problem_id = input("🔍 Select problem to run (easy/medium/hard): ").lower()
+    
+    if problem_id not in PROBLEMS:
+        print("❌ Invalid problem ID. Exiting.")
+        exit()
+
+    n, edges = load_graph(problem_id)
+    
+    print(f"\n⚙️  Running solver for '{problem_id}' with tuned parameters...")
+    
+    start_time = time.time()
+    
+    final_solutions = hill_climbing(
+        problem_id=problem_id,
+        n=n,
+        edges=edges,
+        **TUNED_PARAMS
+    )
+    
+    end_time = time.time()
+    
+    if final_solutions:
+        create_submission_file(final_solutions, problem_id)
+        print(f"\n⏱️  Finished '{problem_id}' in {end_time - start_time:.2f} seconds.")
+    else:
+        print(f"--- No non-dominated solutions found for '{problem_id}' ---")
