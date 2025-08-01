@@ -256,8 +256,9 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 for i in reset_indices:
                     population[i] = {'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]}
                 
-                results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in [population[i] for i in reset_indices]])
-                for p, (sol_t, score) in zip([population[i] for i in reset_indices], results): p['score'] = score
+                reset_solutions = [population[i] for i in reset_indices]
+                results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in reset_solutions])
+                for p, (sol_t, score) in zip(reset_solutions, results): p['score'] = score
                 generations_since_improvement = 0
 
             offspring_sols = []
@@ -265,8 +266,7 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 p1, p2 = random.sample(mating_pool, 2)
                 c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
                 if random.random() < config['mutation_rate']:
-                    idx1, idx2 = random.sample(range(n), 2)
-                    c_perm[idx1], c_perm[idx2] = c_perm[idx2], c_perm[idx1]
+                    c_perm = inversion_mutation_op(c_perm, n)
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
@@ -283,10 +283,10 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
                 with open(checkpoint_file, 'wb') as f:
                     pickle.dump({'pop': population, 'gen': gen, 'vns': vns}, f)
-        
-        # *** FINAL RE-EVALUATION STEP (MOVED INSIDE 'with' BLOCK) ***
+
+        # *** FINAL RE-EVALUATION STEP ***
         print(f"\n🔬 Performing final accurate evaluation of {len(population)} elite solutions...")
-        final_elite_solutions = [p['solution'] for p in crowding_selection(population, 40)] # Re-evaluate more than we need
+        final_elite_solutions = [p['solution'] for p in crowding_selection(population, 40)]
         final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, adj) for sol in final_elite_solutions])
         
         final_population = [{'solution': list(sol), 'score': score} for sol, score in final_results]
