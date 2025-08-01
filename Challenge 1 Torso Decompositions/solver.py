@@ -16,7 +16,7 @@ CONFIG = {
     "general": {
         "mutation_rate": 0.5,
         "checkpoint_interval": 50,
-        "stagnation_limit": 100, # Generations without heuristic improvement before a reset
+        "stagnation_limit": 100,  # Generations without heuristic improvement before a reset
     },
     "easy": {"pop_size": 200, "generations": 2000, "local_search_intensity": 25},
     "medium": {"pop_size": 250, "generations": 3000, "local_search_intensity": 30},
@@ -125,30 +125,25 @@ def inversion_mutation_op(solution: List[int], n: int) -> List[int]:
 # --- Advanced Genetic & Local Search Operators ---
 
 def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
-    """Edge Recombination Crossover (ERX)."""
     n = len(p1)
     adj_map = {node: set() for node in p1}
     for p in [p1, p2]:
         for i in range(n):
             adj_map[p[i]].add(p[i-1])
             adj_map[p[i]].add(p[(i+1)%n])
-
     current_node = p1[0]
     child = [current_node]
     unvisited = set(p1) - {current_node}
-
     while len(child) < n:
         for neighbor in unvisited:
             if current_node in adj_map.get(neighbor, set()):
                 adj_map[neighbor].remove(current_node)
-        
         neighbors_in_unvisited = [node for node in adj_map.get(current_node, set()) if node in unvisited]
         if not neighbors_in_unvisited:
             next_node = random.choice(list(unvisited))
         else:
             min_len = min(len(adj_map[node]) for node in neighbors_in_unvisited)
             next_node = random.choice([node for node in neighbors_in_unvisited if len(adj_map[node]) == min_len])
-        
         child.append(next_node)
         unvisited.remove(next_node)
         current_node = next_node
@@ -164,30 +159,25 @@ class VariableNeighborhoodSearcher:
         solution, intensity = args
         best_sol = solution
         _, best_score = evaluate_heuristic_task((tuple(best_sol), self.n, self.adj))
-
         k = 0
         iters_since_improvement = 0
-        # VNS will try each neighborhood type until no improvement is found in any of them
-        while k < len(self.neighborhoods):
-            op = self.neighborhoods[k]
-            improved = False
-            for _ in range(intensity): # Try to improve within this neighborhood
-                neighbor = op(best_sol, self.n)
-                _, neighbor_score = evaluate_heuristic_task((tuple(neighbor), self.n, self.adj))
-                
-                if dominates(neighbor_score, best_score):
-                    best_sol = neighbor
-                    best_score = neighbor_score
-                    k = 0 # Go back to the first neighborhood upon improvement
-                    improved = True
-                    break 
-            if not improved:
-                k += 1 # Move to the next neighborhood type
-                
+        while iters_since_improvement < intensity:
+            op = self.neighborhoods[k % len(self.neighborhoods)]
+            neighbor = op(best_sol, self.n)
+            _, neighbor_score = evaluate_heuristic_task((tuple(neighbor), self.n, self.adj))
+            if dominates(neighbor_score, best_score):
+                best_sol = neighbor
+                best_score = neighbor_score
+                k = 0
+                iters_since_improvement = 0
+            else:
+                k += 1
+                iters_since_improvement += 1
         return best_sol
 
 # --- NSGA-II Selection ---
 def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
+
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
@@ -275,7 +265,8 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 p1, p2 = random.sample(mating_pool, 2)
                 c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
                 if random.random() < config['mutation_rate']:
-                    c_perm = inversion_mutation_op(c_perm, n)
+                    idx1, idx2 = random.sample(range(n), 2)
+                    c_perm[idx1], c_perm[idx2] = c_perm[idx2], c_perm[idx1]
                 c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(c_perm + [c_t])
             
@@ -292,15 +283,15 @@ def memetic_algorithm(n: int, adj: List[Set[int]], config: Dict, problem_id: str
                 tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
                 with open(checkpoint_file, 'wb') as f:
                     pickle.dump({'pop': population, 'gen': gen, 'vns': vns}, f)
-
-    # *** FINAL RE-EVALUATION STEP ***
-    print(f"\n🔬 Performing final accurate evaluation of {len(population)} elite solutions...")
-    final_elite_solutions = [p['solution'] for p in crowding_selection(population, 40)] # Re-evaluate more than we need
-    final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, adj) for sol in final_elite_solutions])
-    
-    final_population = [{'solution': list(sol), 'score': score} for sol, score in final_results]
-    
-    return [p['solution'] for p in crowding_selection(final_population, 20)]
+        
+        # *** FINAL RE-EVALUATION STEP (MOVED INSIDE 'with' BLOCK) ***
+        print(f"\n🔬 Performing final accurate evaluation of {len(population)} elite solutions...")
+        final_elite_solutions = [p['solution'] for p in crowding_selection(population, 40)] # Re-evaluate more than we need
+        final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, adj) for sol in final_elite_solutions])
+        
+        final_population = [{'solution': list(sol), 'score': score} for sol, score in final_results]
+        
+        return [p['solution'] for p in crowding_selection(final_population, 20)]
 
 # --- Main Execution & Submission ---
 
