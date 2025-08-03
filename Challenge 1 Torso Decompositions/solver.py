@@ -58,7 +58,7 @@ def smart_torso_shift(current: List[int], n: int, adj_list: List[set]) -> List[i
     """Adaptive threshold adjustment."""
     neighbor = current[:]
     t = neighbor[-1]
-    shift = int(n * 0.05) + 1 # Increased shift range for more exploration
+    shift = int(n * 0.05) + 1
     neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
     return neighbor
 
@@ -66,7 +66,7 @@ def block_move(current: List[int], n: int, adj_list: List[set]) -> List[int]:
     """Moves a block of nodes."""
     neighbor = current[:]
     perm = neighbor[:-1]
-    block_size = random.randint(3, max(4, int(n * 0.03))) # Slightly larger blocks
+    block_size = random.randint(3, max(4, int(n * 0.03)))
     if n > block_size:
         start = random.randint(0, n - block_size)
         block = perm[start:start + block_size]
@@ -98,7 +98,7 @@ def initialize_solution(n: int, adj_list: List[set]) -> List[int]:
 def shake(solution: List[int], n: int, adj_list: List[set]) -> List[int]:
     """Applies several random moves to 'shake' a solution out of a local optimum."""
     shaken_sol = solution[:]
-    for _ in range(5): # Apply a sequence of 5 random moves
+    for _ in range(5):
         op = random.choice([block_move, smart_torso_shift, inversion_move])
         shaken_sol = op(shaken_sol, n, adj_list)
     return shaken_sol
@@ -117,10 +117,8 @@ def variable_neighborhood_search(
     neighborhoods = [block_move, smart_torso_shift, inversion_move]
     
     if best_known_solution and random.random() < 0.7:
-        # 70% of the time, start from a perturbed version of the best solution found so far
         current = shake(best_known_solution, n, adj_list)
     else:
-        # Otherwise, start from a random solution
         current = initialize_solution(n, adj_list)
 
     current_score = evaluate_solution(current, n, adj_list)[:2]
@@ -128,13 +126,12 @@ def variable_neighborhood_search(
     best_local_score = current_score[:]
     
     T = initial_temp
-    k = 0 # Neighborhood index
+    k = 0
     iters_since_improvement = 0
 
     for _ in range(max_iterations):
         T *= cooling_rate
         
-        # Cycle through neighborhoods
         op = neighborhoods[k]
         neighbor = op(current, n, adj_list)
         neighbor_score = evaluate_solution(neighbor, n, adj_list)[:2]
@@ -152,16 +149,16 @@ def variable_neighborhood_search(
         if accept:
             current = neighbor
             current_score = neighbor_score
-            k = 0 # Go back to the first neighborhood on improvement
+            k = 0
             iters_since_improvement = 0
             if dominates(current_score, best_local_score):
                 best_local = current[:]
                 best_local_score = current_score[:]
         else:
-            k = (k + 1) % len(neighborhoods) # Move to the next neighborhood
+            k = (k + 1) % len(neighborhoods)
             iters_since_improvement += 1
         
-        if iters_since_improvement > 2500: # Early exit if stuck
+        if iters_since_improvement > 2500:
             break
             
     return {'solution': best_local, 'score': best_local_score}
@@ -172,7 +169,7 @@ if __name__ == "__main__":
     random.seed(42)
     np.random.seed(42)
 
-    # --- Optimal parameters found by your Optuna run ---
+    # --- Use the Optimal Parameters Found by Your Optuna Run ---
     TUNED_PARAMS = {
         'max_iterations': 45000,
         'num_restarts': 250,
