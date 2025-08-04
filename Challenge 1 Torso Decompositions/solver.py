@@ -126,7 +126,7 @@ def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p
 def neuroevolution_search(n: int, adj: np.ndarray, node_features: torch.Tensor, config: Dict, problem_id: str) -> List[Dict]:
     """Main neuroevolutionary solver using advanced features."""
     B = config['population_size']
-    E = node_features.shape[1]
+    E = node_features.shape[1] # Get feature dimension directly from the features tensor
     device = node_features.device
     
     checkpoint_file = f"checkpoint_{problem_id}.pkl"
@@ -143,8 +143,11 @@ def neuroevolution_search(n: int, adj: np.ndarray, node_features: torch.Tensor, 
         elites = [None] * n 
         elite_scores = [(0, 501)] * n
 
+    # Transpose node features once for matrix multiplication
+    node_features_T = node_features.T
+
     for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving"):
-        logits = population @ node_features
+        logits = population @ node_features_T
         perms = logits.argsort(dim=1, descending=True).cpu().numpy()
         
         for i in range(B):
@@ -241,7 +244,7 @@ def create_submission_file(final_solutions: List[Dict], n: int, adj: np.ndarray,
         weights = sol['solution_weights']
         t = n - sol['heuristic_score'][0]
         if t < 0 or t >= n: t = random.randint(0, n - 1)
-        logits = weights @ node_features
+        logits = weights @ node_features.T
         perm = logits.argsort(descending=True).cpu().tolist()
         decision_vectors_to_score.append(perm + [t])
 
@@ -270,10 +273,10 @@ if __name__ == "__main__":
     config.update(CONFIG[problem_id])
 
     n, adj = load_graph(problem_id)
-    node_features_T = init_node_features(n, adj, config['eigenvectors']).T # Transposed for matmul
+    node_features = init_node_features(n, adj, config['eigenvectors'])
 
     start_time = time.time()
-    final_solutions = neuroevolution_search(n, adj, node_features_T, config, problem_id)
+    final_solutions = neuroevolution_search(n, adj, node_features, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
 
-    create_submission_file(final_solutions, n, adj, node_features_T, problem_id)
+    create_submission_file(final_solutions, n, adj, node_features, problem_id)
