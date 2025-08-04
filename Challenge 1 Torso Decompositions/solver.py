@@ -30,6 +30,7 @@ PROBLEMS = {
 # --- Graph Loading & Feature Generation ---
 
 def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
+    """Loads graph data and returns the number of nodes and an adjacency list."""
     url = PROBLEMS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
     edges = []
@@ -116,13 +117,16 @@ def neuroevolution_search(n: int, adj: List[Set[int]], node_features: torch.Tens
     
     population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
     
+    # Elites store the best WEIGHT VECTOR found for each threshold t
     elites = [None] * n 
     elite_scores = [(0, 501)] * n
 
     for gen in tqdm(range(config['generations']), desc="🧬 Evolving"):
+        # 1. Generate permutations from network weights
         logits = population @ node_features
         perms = logits.argsort(dim=1).cpu().numpy()
         
+        # 2. Evaluate all permutations against all thresholds using the fast heuristic
         for i in range(B):
             perm = perms[i]
             for t in range(n):
@@ -131,6 +135,7 @@ def neuroevolution_search(n: int, adj: List[Set[int]], node_features: torch.Tens
                     elite_scores[t] = score
                     elites[t] = population[i].clone()
         
+        # 3. Create the next generation from the best elites found so far
         non_dominated_elites = []
         for t1 in range(n):
             if elites[t1] is None: continue
@@ -144,13 +149,14 @@ def neuroevolution_search(n: int, adj: List[Set[int]], node_features: torch.Tens
 
         if not non_dominated_elites:
             non_dominated_elites = [e for e in elites if e is not None]
-            if not non_dominated_elites:
+            if not non_dominated_elites: # If no solutions found yet, re-initialize
                 population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
                 continue
 
         parent_indices = torch.randint(0, len(non_dominated_elites), (B,), device=device)
         population = torch.stack([non_dominated_elites[i] for i in parent_indices])
         
+        # 4. Mutate the weights
         mutation = torch.randn_like(population) * config['mutation_stdev']
         mask = torch.rand_like(population) < 0.4
         population[mask] += mutation[mask]
@@ -158,6 +164,7 @@ def neuroevolution_search(n: int, adj: List[Set[int]], node_features: torch.Tens
         if (gen + 1) % config['checkpoint_interval'] == 0:
             tqdm.write(f"\n💾 Checkpoint Gen {gen+1}: Found {len(non_dominated_elites)} non-dominated solutions.")
 
+    # Return the final set of non-dominated elites (weights and heuristic scores)
     final_pareto_front = []
     for t in range(n):
         if elites[t] is not None:
@@ -182,18 +189,20 @@ def create_submission_file(final_solutions: List[Dict], n: int, adj: List[Set[in
     decision_vectors_to_score = []
     for sol in final_solutions:
         weights = sol['solution_weights']
+        # Infer t from the heuristic score's size
         t = n - sol['heuristic_score'][0]
+        if t < 0 or t >= n: t = random.randint(0, n - 1) # Safeguard
         logits = weights @ node_features
         perm = logits.argsort().cpu().tolist()
         decision_vectors_to_score.append(perm + [t])
 
+    # Use multiprocessing on the CPU for the final, one-time correct evaluation
     with multiprocessing.Pool() as pool:
         results = pool.map(evaluate_correct_task, [(tuple(sol), n, adj) for sol in decision_vectors_to_score])
 
     final_population = [{'solution': list(sol), 'score': score} for sol, score in results]
 
     # Final selection based on CORRECT scores
-    # This requires a simple, non-parallel version of crowding_selection
     final_submission_pop = crowding_selection(final_population, 20)
     final_vectors_for_json = [[int(val) for val in p['solution']] for p in final_submission_pop]
 
@@ -202,6 +211,8 @@ def create_submission_file(final_solutions: List[Dict], n: int, adj: List[Set[in
     print(f"📄 Created submission file: {filename} with {len(final_vectors_for_json)} solutions.")
 
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
+    """NSGA-II selection, used here to select the final top 20 solutions."""
+    if not population: return []
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
     for i, p in enumerate(population):
@@ -251,11 +262,10 @@ if __name__ == "__main__":
     config.update(CONFIG[problem_id])
 
     n, adj = load_graph(problem_id)
-    # Generate features ONCE and pass them to the functions
-    node_features = init_node_features(n, adj, config['feature_dim']).T
+    node_features_T = init_node_features(n, adj, config['feature_dim']).T # Transposed for matmul
 
     start_time = time.time()
-    final_solutions = neuroevolution_search(n, adj, node_features, config, problem_id)
+    final_solutions = neuroevolution_search(n, adj, node_features_T, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
 
-    create_submission_file(final_solutions, n, adj, node_features, problem_id)
+    create_submission_file(final_solutions, n, adj, node_features_T, problem_id)
