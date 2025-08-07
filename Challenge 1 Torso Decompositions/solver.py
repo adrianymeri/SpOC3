@@ -7,23 +7,8 @@ from typing import List, Set, Tuple, Dict
 import urllib.request
 from tqdm import tqdm
 import multiprocessing
-import os
-import pickle
 
-# --- Algorithm & Problem Configuration ---
-# With the fast heuristic, we can afford much larger populations and many more generations.
-CONFIG = {
-    "general": {
-        "mutation_rate": 0.5,
-        "checkpoint_interval": 50,
-        "stagnation_limit": 100,  # Generations without heuristic improvement before a reset
-        "recalibration_interval": 50, # Recalibrate with correct scores every 50 generations
-    },
-    "easy": {"pop_size": 200, "generations": 2000, "local_search_intensity": 25},
-    "medium": {"pop_size": 250, "generations": 3000, "local_search_intensity": 30},
-    "hard": {"pop_size": 300, "generations": 5000, "local_search_intensity": 35},
-}
-
+# --- Problem Configurations ---
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
@@ -52,24 +37,21 @@ def load_graph(problem_id: str) -> Tuple[int, List[List[int]], List[Set[int]]]:
     print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
     return n, edges, adj_list
 
-def evaluate_heuristic_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
-    """Your original, high-speed heuristic evaluation. This guides the main search."""
-    solution_tuple, n, adj = args
-    t = solution_tuple[-1]
+def evaluate_heuristic(decision_vector: List[int], n: int, adj_list: List[Set[int]]) -> List[float]:
+    """Your proven, high-speed evaluation function."""
+    t = decision_vector[-1]
     size = n - t
-    if size <= 0: return solution_tuple, (0, 501)
-    
-    perm = solution_tuple[:-1]
+    if size <= 0: return [0, 501]
     max_width = 0
     for i in range(t, n):
-        node = perm[i]
-        width = len(adj[node])
-        if width > max_width:
-            max_width = width
-    return solution_tuple, (size, max_width if max_width < 500 else 501)
+        node = decision_vector[i]
+        current_width = len(adj_list[node])
+        if current_width > max_width:
+            max_width = current_width
+    return [size, max_width if max_width < 500 else 501]
 
 def evaluate_correct_task(args: Tuple[Tuple[int, ...], int, List[List[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
-    """The slow, but 100% correct evaluation function for final scoring and calibration."""
+    """The 100% correct evaluation function, wrapped for multiprocessing."""
     solution_tuple, n, edges = args
     adj = [set() for _ in range(n)]
     for u, v in edges:
@@ -97,19 +79,30 @@ def evaluate_correct_task(args: Tuple[Tuple[int, ...], int, List[List[int]]]) ->
         if max_width >= 500: return solution_tuple, (size, 501)
     return solution_tuple, (size, max_width)
 
-# --- Neighborhood Operators ---
+def dominates(score1: List[float], score2: List[float]) -> bool:
+    return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
+           (score1[0] >= score2[0] and score1[1] < score2[1])
 
-def smart_torso_shift(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
+# --- Your Original, Proven Search Algorithm Components ---
+
+def smart_torso_shift(current: List[int], n: int, adj_list: List[Set[int]]) -> List[int]:
+    neighbor = current[:]
     t = neighbor[-1]
-    shift = int(n * 0.05) + 1
-    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
+    score = evaluate_heuristic(neighbor, n, adj_list)
+    if score[1] > 400:
+        new_t = min(n - 1, t + random.randint(5, 10))
+    else:
+        shift = int(n * 0.04) + 1
+        new_t = max(0, min(n - 1, t + random.randint(-shift, shift)))
+    neighbor[-1] = new_t
     return neighbor
 
-def block_move(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
+def block_move(current: List[int], n: int, adj_list: List[Set[int]]) -> List[int]:
+    neighbor = current[:]
     perm = neighbor[:-1]
-    block_size = random.randint(3, max(4, int(n * 0.02)))
+    score = evaluate_heuristic(neighbor, n, adj_list)
+    base_size = 3 if score[1] < 100 else 5
+    block_size = random.randint(base_size, base_size + 2)
     if n > block_size:
         start = random.randint(0, n - block_size)
         block = perm[start:start + block_size]
@@ -119,218 +112,133 @@ def block_move(solution: List[int], n: int) -> List[int]:
         neighbor[:-1] = perm
     return neighbor
 
-def inversion_mutation_op(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
-    perm = neighbor[:-1]
-    start, end = sorted(random.sample(range(n), 2))
-    perm[start:end+1] = reversed(perm[start:end+1])
-    neighbor[:-1] = perm
-    return neighbor
+def initialize_solution(n: int, adj_list: List[Set[int]]) -> List[int]:
+    perm = sorted(range(n), key=lambda x: -len(adj_list[x]))
+    if random.random() < 0.5:
+        perm.reverse()
+    t = int(n * np.random.beta(1.5, 2.5))
+    return perm + [t]
 
-# --- Advanced Genetic & Local Search Operators ---
-
-def edge_recombination_crossover(p1: List[int], p2: List[int]) -> List[int]:
-    n = len(p1)
-    adj_map = {node: set() for node in p1}
-    for p in [p1, p2]:
-        for i in range(n):
-            adj_map[p[i]].add(p[i-1])
-            adj_map[p[i]].add(p[(i+1)%n])
-    current_node = p1[0]
-    child = [current_node]
-    unvisited = set(p1) - {current_node}
-    while len(child) < n:
-        for neighbor in unvisited:
-            if current_node in adj_map.get(neighbor, set()):
-                adj_map[neighbor].remove(current_node)
-        neighbors_in_unvisited = [node for node in adj_map.get(current_node, set()) if node in unvisited]
-        if not neighbors_in_unvisited:
-            next_node = random.choice(list(unvisited))
-        else:
-            min_len = min(len(adj_map[node]) for node in neighbors_in_unvisited)
-            next_node = random.choice([node for node in neighbors_in_unvisited if len(adj_map[node]) == min_len])
-        child.append(next_node)
-        unvisited.remove(next_node)
-        current_node = next_node
-    return child
-
-class VariableNeighborhoodSearcher:
-    """Applies VNS to a solution using the fast heuristic."""
-    def __init__(self, n, adj):
-        self.neighborhoods = [block_move, smart_torso_shift, inversion_mutation_op]
-        self.n, self.adj = n, adj
-
-    def apply(self, args: Tuple[List[int], int]) -> List[int]:
-        solution, intensity = args
-        best_sol = solution
-        _, best_score = evaluate_heuristic_task((tuple(best_sol), self.n, self.adj))
-        k = 0
-        iters_since_improvement = 0
-        while iters_since_improvement < intensity:
-            op = self.neighborhoods[k % len(self.neighborhoods)]
-            neighbor = op(best_sol, self.n)
-            _, neighbor_score = evaluate_heuristic_task((tuple(neighbor), self.n, self.adj))
-            if dominates(neighbor_score, best_score):
-                best_sol = neighbor
-                best_score = neighbor_score
-                k = 0
-                iters_since_improvement = 0
-            else:
-                k += 1
-                iters_since_improvement += 1
-        return best_sol
-
-# --- NSGA-II Selection ---
-def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
-
-def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
-    fronts = [[]]
-    for i, p in enumerate(population):
-        for j, q in enumerate(population[i+1:]):
-            if dominates(p['score'], q['score']): p['dominates_set'].append(q); q['dominated_by_count'] += 1
-            elif dominates(q['score'], p['score']): q['dominates_set'].append(p); p['dominated_by_count'] += 1
-        if p['dominated_by_count'] == 0: fronts[0].append(p)
-    i = 0
-    while i < len(fronts) and fronts[i]:
-        next_front = []
-        for p in fronts[i]:
-            for q in p['dominates_set']:
-                q['dominated_by_count'] -= 1
-                if q['dominated_by_count'] == 0: next_front.append(q)
-        fronts.append(next_front)
-        i += 1
+def hill_climbing_solver(
+    n: int,
+    adj_list: List[Set[int]],
+    max_iterations: int,
+    num_restarts: int,
+    cooling_rate: float,
+    initial_temp: float
+) -> List[Dict]:
+    """Your proven multi-start simulated annealing algorithm."""
     
-    new_population = []
-    for front in fronts:
-        if not front: continue
-        if len(new_population) + len(front) > pop_size:
-            for p in front: p['distance'] = 0.0
-            for i_obj in range(2):
-                front.sort(key=lambda p: p['score'][i_obj])
-                if len(front) > 1:
-                    front[0]['distance'] = front[-1]['distance'] = float('inf')
-                    f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
-                    if f_max > f_min:
-                        for j in range(1, len(front) - 1):
-                            front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
-            front.sort(key=lambda p: p['distance'], reverse=True)
-            new_population.extend(front[:pop_size - len(new_population)])
-            break
-        new_population.extend(front)
-    return new_population
+    all_solutions = []
+    neighbor_operators = [smart_torso_shift, block_move]
 
-# --- Main Memetic Algorithm Loop ---
+    for _ in tqdm(range(num_restarts), desc="🚀 Running Your Best Solver"):
+        current = initialize_solution(n, adj_list)
+        current_score = evaluate_heuristic(current, n, adj_list)
+        best_local = current[:]
+        best_local_score = current_score[:]
+        T = initial_temp
+        last_improvement = 0
 
-def memetic_algorithm(n: int, adj: List[Set[int]], edges: List[List[int]], config: Dict, problem_id: str) -> List[List[int]]:
-    start_gen = 0
-    checkpoint_file = f"checkpoint_{problem_id}.pkl"
-    best_overall_score = (0, float('inf'))
-    generations_since_improvement = 0
-    
-    if os.path.exists(checkpoint_file):
-        print(f"🔄 Resuming from checkpoint: {checkpoint_file}")
-        with open(checkpoint_file, 'rb') as f: saved_state = pickle.load(f)
-        population, start_gen, vns = saved_state['pop'], saved_state['gen'] + 1, saved_state['vns']
-        print(f"Resuming from generation {start_gen}")
-    else:
-        print("🌱 Initializing fresh population...")
-        population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]} for _ in range(config['pop_size'])]
-        vns = VariableNeighborhoodSearcher(n, adj)
-
-    with multiprocessing.Pool() as pool:
-        if start_gen == 0:
-            print("Evaluating initial population with fast heuristic...")
-            results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in population])
-            for p, (sol_t, score) in zip(population, results): p['score'] = score
-
-        for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
-            current_ls_intensity = int(config['local_search_intensity'] * (1 - gen / config['generations'])**0.5) + 5
-            mating_pool = crowding_selection(population, config['pop_size'])
+        for iteration in range(max_iterations):
+            T *= cooling_rate
+            op = random.choice(neighbor_operators)
+            neighbor = op(current, n, adj_list)
             
-            current_best_score = min([p['score'] for p in mating_pool], key=lambda x: (x[1], -x[0]))
-            if dominates(current_best_score, best_overall_score):
-                generations_since_improvement = 0
-                best_overall_score = current_best_score
+            neighbor_score = evaluate_heuristic(neighbor, n, adj_list)
+            
+            accept = False
+            if dominates(neighbor_score, current_score):
+                accept = True
             else:
-                generations_since_improvement += 1
+                size_gain = neighbor_score[0] - current_score[0]
+                width_diff = current_score[1] - neighbor_score[1]
+                delta = 2 * size_gain + width_diff
+                if T > 1e-6 and random.random() < math.exp(delta / T):
+                    accept = True
 
-            if generations_since_improvement >= config['stagnation_limit']:
-                tqdm.write(f"\n⚠️ Stagnation detected! Resetting 30% of population.")
-                num_to_reset = int(0.3 * len(population))
-                reset_indices = random.sample(range(len(population)), num_to_reset)
-                for i in reset_indices:
-                    population[i] = {'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.2), int(n*0.8))]}
-                
-                reset_solutions = [population[i] for i in reset_indices]
-                results = pool.map(evaluate_heuristic_task, [(tuple(p['solution']), n, adj) for p in reset_solutions])
-                for p, (sol_t, score) in zip(reset_solutions, results): p['score'] = score
-                generations_since_improvement = 0
-
-            # --- CALIBRATION STEP ---
-            if (gen + 1) % config['recalibration_interval'] == 0:
-                tqdm.write(f"\n🔬 Calibrating elite scores at generation {gen + 1}...")
-                elites_to_recalibrate = mating_pool[:int(0.1 * len(mating_pool))]
-                results = pool.map(evaluate_correct_task, [(tuple(p['solution']), n, edges) for p in elites_to_recalibrate])
-                for p, (sol_t, score) in zip(elites_to_recalibrate, results): p['score'] = score
-
-            offspring_sols = []
-            while len(offspring_sols) < config['pop_size']:
-                p1, p2 = random.sample(mating_pool, 2)
-                c_perm = edge_recombination_crossover(p1['solution'][:-1], p2['solution'][:-1])
-                if random.random() < config['mutation_rate']:
-                    c_perm = inversion_mutation_op(c_perm, n)
-                c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
-                offspring_sols.append(c_perm + [c_t])
+            if accept:
+                current = neighbor
+                current_score = neighbor_score
+                if dominates(current_score, best_local_score):
+                    best_local = current[:]
+                    best_local_score = current_score[:]
+                    last_improvement = iteration
             
-            ls_args = [(sol, current_ls_intensity) for sol in offspring_sols]
-            improved_offspring = pool.map(vns.apply, ls_args)
-            
-            eval_args = [(tuple(sol), n, adj) for sol in improved_offspring]
-            results = pool.map(evaluate_heuristic_task, eval_args)
-            
-            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in results]
-            population = crowding_selection(population + offspring_pop, config['pop_size'])
+            if iteration - last_improvement > 1500:
+                break
+        all_solutions.append({'solution': best_local, 'score': best_local_score})
+    
+    return all_solutions
 
-            if (gen + 1) % config['checkpoint_interval'] == 0:
-                tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
-                with open(checkpoint_file, 'wb') as f:
-                    pickle.dump({'pop': population, 'gen': gen, 'vns': vns}, f)
-        
-        # *** FINAL RE-EVALUATION STEP ***
-        print(f"\n🔬 Performing final accurate evaluation of all {len(population)} solutions...")
-        final_elite_solutions = [p['solution'] for p in population]
-        final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, edges) for sol in final_elite_solutions])
-        
-        final_population = [{'solution': list(sol), 'score': score} for sol, score in final_results]
-        
-        return [p['solution'] for p in crowding_selection(final_population, 20)]
-
-# --- Main Execution & Submission ---
-
-def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
-    filename = f"submission_{problem_id}.json"
-    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
-    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
-    submission = { "decisionVector": final_vectors, "problem": problem_name_map.get(problem_id, problem_id), "challenge": "spoc-3-torso-decompositions" }
-    with open(filename, "w") as f: json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
+# --- Main Execution Block ---
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     random.seed(42)
     np.random.seed(42)
 
-    problem_id = input("🔍 Select problem (easy/medium/hard): ").lower()
+    # --- Parameters from your best-performing code that scored -1,795,311 ---
+    PARAMS = {
+        'max_iterations': 25000,
+        'num_restarts': 250,
+        'cooling_rate': 0.9992,
+        'initial_temp': 3000.0
+    }
+
+    problem_id = input("🔍 Select problem to run (easy/medium/hard): ").lower()
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
 
-    config = CONFIG['general'].copy()
-    config.update(CONFIG[problem_id])
-
-    n, edges, adj = load_graph(problem_id)
+    n, edges, adj_list = load_graph(problem_id)
     
+    print(f"\n⚙️  Running your best solver for '{problem_id}'...")
     start_time = time.time()
-    final_solutions = memetic_algorithm(n, adj, edges, config, problem_id)
-    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
+    
+    # === STAGE 1: HIGH-SPEED GLOBAL EXPLORATION (Your Proven Code) ===
+    all_solutions = hill_climbing_solver(
+        n=n,
+        adj_list=adj_list,
+        **PARAMS
+    )
+    
+    # Filter for the non-dominated front based on HEURISTIC scores
+    heuristic_pareto_front = []
+    for candidate in all_solutions:
+        if not any(dominates(other['score'], candidate['score']) for other in all_solutions):
+            heuristic_pareto_front.append(candidate)
+    unique_solutions = {tuple(p['solution']): p for p in heuristic_pareto_front}
+    
+    # === STAGE 2: ACCURATE RE-EVALUATION STEP ===
+    print(f"\n🔬 Performing final accurate evaluation of {len(unique_solutions)} elite solutions...")
+    solutions_to_re_eval = [v['solution'] for v in unique_solutions.values()]
+    with multiprocessing.Pool() as pool:
+        final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, edges) for sol in solutions_to_re_eval])
 
-    create_submission_file(final_solutions, problem_id)
+    final_population = [{'solution': list(sol), 'score': list(score)} for sol, score in final_results]
+    
+    # --- Final Selection based on CORRECT scores ---
+    final_pareto_front = []
+    for candidate in final_population:
+        if not any(dominates(other['score'], candidate['score']) for other in final_population):
+            final_pareto_front.append(candidate)
+    unique_final_solutions = list({tuple(p['solution']): p for p in final_pareto_front}.values())
+    
+    end_time = time.time()
+
+    # --- Create Submission File ---
+    if unique_final_solutions:
+        filename = f"submission_{problem_id}.json"
+        problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+        decision_vectors = [p['solution'] for p in unique_final_solutions]
+        final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+        submission = {
+            "decisionVector": final_vectors[:20],
+            "problem": problem_name_map.get(problem_id, problem_id),
+            "challenge": "spoc-3-torso-decompositions",
+        }
+        with open(filename, "w") as f:
+            json.dump(submission, f, indent=4)
+        print(f"\n📄 Created submission file: {filename} with {len(submission['decisionVector'])} solutions.")
+        print(f"⏱️  Finished '{problem_id}' in {end_time - start_time:.2f} seconds.")
+    else:
+        print(f"--- No non-dominated solutions found for '{problem_id}' ---")
