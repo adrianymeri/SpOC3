@@ -7,30 +7,20 @@ from typing import List, Set, Tuple, Dict
 import urllib.request
 from tqdm import tqdm
 import multiprocessing
-import os
-import pickle
-import torch
+from scipy.sparse.csgraph import laplacian
+from numpy.linalg import eigh
 
-# --- Algorithm & Problem Configuration ---
-CONFIG = {
-    "general": {
-        "checkpoint_interval": 500,
-    },
-    "easy": {"population_size": 2048, "generations": 15000, "mutation_stdev": 0.05, "feature_dim": 16},
-    "medium": {"population_size": 2048, "generations": 20000, "mutation_stdev": 0.05, "feature_dim": 24},
-    "hard": {"population_size": 4096, "generations": 25000, "mutation_stdev": 0.05, "feature_dim": 32},
-}
-
+# --- Problem Configurations ---
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# --- Graph Loading & Feature Generation ---
+# --- Evaluation Functions ---
 
-def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
-    """Loads graph data and returns the number of nodes and an adjacency list."""
+def load_graph(problem_id: str) -> Tuple[int, List[List[int]], List[Set[int]]]:
+    """Loads graph data and returns n, edges, and adjacency list."""
     url = PROBLEMS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
     edges = []
@@ -39,50 +29,51 @@ def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
         for line in f:
             if line.startswith(b'#'): continue
             u, v = map(int, line.strip().split())
-            edges.append((u, v))
+            edges.append([u, v])
             max_node = max(max_node, u, v)
     n = max_node + 1
+    adj_list = [set() for _ in range(n)]
+    for u, v in edges:
+        adj_list[u].add(v)
+        adj_list[v].add(u)
+    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
+    return n, edges, adj_list
+
+def evaluate_heuristic_v2(decision_vector: List[int], n: int, adj_list: List[Set[int]]) -> List[float]:
+    """UPGRADE 1: An intelligent heuristic that penalizes the 'cut' size."""
+    t = decision_vector[-1]
+    perm = decision_vector[:-1]
+    size = n - t
+    if size <= 0: return [0, 501]
+
+    max_width = 0
+    torso_nodes = set(perm[t:])
+    for node in torso_nodes:
+        current_width = len(adj_list[node])
+        if current_width > max_width:
+            max_width = current_width
+    
+    # Calculate the "cut penalty" for edges crossing the boundary
+    cut_penalty = 0
+    boundary_start = max(0, t - int(n * 0.1)) # Check last 10% of non-torso
+    non_torso_boundary = perm[boundary_start:t]
+    for node in non_torso_boundary:
+        for neighbor in adj_list[node]:
+            if neighbor in torso_nodes:
+                cut_penalty += 1
+    
+    # The weight (0.1) adds a small penalty for a messy "cut"
+    final_width = max_width + 0.1 * cut_penalty
+    
+    return [size, final_width if final_width < 500 else 501]
+
+def evaluate_correct_task(args: Tuple[Tuple[int, ...], int, List[List[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
+    """The 100% correct evaluation function, wrapped for multiprocessing."""
+    solution_tuple, n, edges = args
     adj = [set() for _ in range(n)]
     for u, v in edges:
         adj[u].add(v)
         adj[v].add(u)
-    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
-    return n, adj
-
-def init_node_features(n: int, adj: List[Set[int]], feature_dim: int) -> torch.Tensor:
-    """Creates simple, effective node features based on degree propagation."""
-    print("🧬 Generating node features...")
-    features = np.zeros((n, feature_dim), dtype=np.float32)
-    degrees = np.array([len(neighbors) for neighbors in adj], dtype=np.float32)
-    
-    features[:, 0] = degrees / (degrees.max() + 1e-6)
-    
-    for i in range(1, feature_dim):
-        neighbor_degrees = np.array([np.mean(degrees[list(adj[j])]) if adj[j] else 0 for j in range(n)])
-        features[:, i] = neighbor_degrees / (neighbor_degrees.max() + 1e-6)
-        degrees = neighbor_degrees
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Tensor device: {device}")
-    return torch.from_numpy(features).to(device)
-
-# --- Evaluation Functions ---
-
-def evaluate_heuristic(perm: List[int], t: int, n: int, adj: List[Set[int]]) -> Tuple[int, int]:
-    """Your fast heuristic evaluation function."""
-    size = n - t
-    if size <= 0: return 0, 501
-    max_width = 0
-    for i in range(t, n):
-        node = perm[i]
-        width = len(adj[node])
-        if width > max_width:
-            max_width = width
-    return (size, max_width if max_width < 500 else 501)
-
-def evaluate_correct_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> Tuple[Tuple[int, ...], Tuple[int, int]]:
-    """The 100% correct evaluation function, wrapped for multiprocessing."""
-    solution_tuple, n, adj = args
     t = solution_tuple[-1]
     perm = solution_tuple[:-1]
     size = n - t
@@ -105,167 +96,195 @@ def evaluate_correct_task(args: Tuple[Tuple[int, ...], int, List[Set[int]]]) -> 
         if max_width >= 500: return solution_tuple, (size, 501)
     return solution_tuple, (size, max_width)
 
-def dominates(p, q): return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
+def dominates(score1: List[float], score2: List[float]) -> bool:
+    return (score1[0] > score2[0] and score1[1] <= score2[1]) or \
+           (score1[0] >= score2[0] and score1[1] < score2[1])
 
-# --- Neuroevolutionary Search Algorithm ---
+# --- Your Proven Search Algorithm Components ---
 
-def neuroevolution_search(n: int, adj: List[Set[int]], node_features: torch.Tensor, config: Dict, problem_id: str) -> List[Dict]:
-    """Main neuroevolutionary solver based on the winning architecture."""
-    B = config['population_size']
-    E = config['feature_dim']
-    device = node_features.device
+def smart_torso_shift(current: List[int], n: int, adj_list: List[Set[int]]) -> List[int]:
+    neighbor = current[:]
+    t = neighbor[-1]
+    shift = int(n * 0.05) + 1
+    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
+    return neighbor
+
+def block_move(current: List[int], n: int, adj_list: List[Set[int]]) -> List[int]:
+    neighbor = current[:]
+    perm = neighbor[:-1]
+    block_size = random.randint(3, max(4, int(n * 0.03)))
+    if n > block_size:
+        start = random.randint(0, n - block_size)
+        block = perm[start:start + block_size]
+        del perm[start:start + block_size]
+        insert_pos = random.randint(0, len(perm))
+        perm[insert_pos:insert_pos] = block
+        neighbor[:-1] = perm
+    return neighbor
+
+def initialize_solution(n: int, adj_list: List[Set[int]]) -> List[int]:
+    perm = sorted(range(n), key=lambda x: -len(adj_list[x]))
+    if random.random() < 0.5: perm.reverse()
+    t = int(n * np.random.beta(1.5, 2.5))
+    return perm + [t]
+
+def hill_climbing_run(
+    n: int,
+    adj_list: List[Set[int]],
+    max_iterations: int,
+    initial_temp: float,
+    cooling_rate: float
+) -> Dict:
+    """Performs a single run of your proven Simulated Annealing algorithm."""
+    neighbor_operators = [smart_torso_shift, block_move]
+    current = initialize_solution(n, adj_list)
+    current_score = evaluate_heuristic_v2(current, n, adj_list) # Using the upgraded heuristic
     
-    population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
+    best_local = current[:]
+    best_local_score = current_score[:]
     
-    # Elites store the best WEIGHT VECTOR found for each threshold t
-    elites = [None] * n 
-    elite_scores = [(0, 501)] * n
+    T = initial_temp
+    last_improvement = 0
 
-    for gen in tqdm(range(config['generations']), desc="🧬 Evolving"):
-        # 1. Generate permutations from network weights
-        logits = population @ node_features
-        perms = logits.argsort(dim=1).cpu().numpy()
+    for iteration in range(max_iterations):
+        T *= cooling_rate
+        op = random.choice(neighbor_operators)
+        neighbor = op(current, n, adj_list)
         
-        # 2. Evaluate all permutations against all thresholds using the fast heuristic
-        for i in range(B):
-            perm = perms[i]
-            for t in range(n):
-                score = evaluate_heuristic(perm, t, n, adj)
-                if dominates(score, elite_scores[t]):
-                    elite_scores[t] = score
-                    elites[t] = population[i].clone()
+        neighbor_score = evaluate_heuristic_v2(neighbor, n, adj_list)
         
-        # 3. Create the next generation from the best elites found so far
-        non_dominated_elites = []
-        for t1 in range(n):
-            if elites[t1] is None: continue
-            is_dominated = False
-            for t2 in range(n):
-                if elites[t2] is None: continue
-                if dominates(elite_scores[t2], elite_scores[t1]):
-                    is_dominated = True; break
-            if not is_dominated:
-                non_dominated_elites.append(elites[t1])
+        accept = False
+        if dominates(neighbor_score, current_score):
+            accept = True
+        else:
+            size_gain = neighbor_score[0] - current_score[0]
+            width_diff = current_score[1] - neighbor_score[1]
+            delta = 2 * size_gain + width_diff 
+            if T > 1e-6 and random.random() < math.exp(delta / T):
+                accept = True
 
-        if not non_dominated_elites:
-            non_dominated_elites = [e for e in elites if e is not None]
-            if not non_dominated_elites: # If no solutions found yet, re-initialize
-                population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
-                continue
-
-        parent_indices = torch.randint(0, len(non_dominated_elites), (B,), device=device)
-        population = torch.stack([non_dominated_elites[i] for i in parent_indices])
+        if accept:
+            current, current_score = neighbor, neighbor_score
+            if dominates(current_score, best_local_score):
+                best_local, best_local_score = current[:], current_score[:]
+                last_improvement = iteration
         
-        # 4. Mutate the weights
-        mutation = torch.randn_like(population) * config['mutation_stdev']
-        mask = torch.rand_like(population) < 0.4
-        population[mask] += mutation[mask]
-
-        if (gen + 1) % config['checkpoint_interval'] == 0:
-            tqdm.write(f"\n💾 Checkpoint Gen {gen+1}: Found {len(non_dominated_elites)} non-dominated solutions.")
-
-    # Return the final set of non-dominated elites (weights and heuristic scores)
-    final_pareto_front = []
-    for t in range(n):
-        if elites[t] is not None:
-            is_dominated = False
-            for t2 in range(n):
-                if elites[t2] is None: continue
-                if dominates(elite_scores[t2], elite_scores[t]):
-                    is_dominated = True; break
-            if not is_dominated:
-                final_pareto_front.append({'solution_weights': elites[t], 'heuristic_score': elite_scores[t]})
-    
-    return final_pareto_front
-
-# --- Main Execution & Submission ---
-
-def create_submission_file(final_solutions: List[Dict], n: int, adj: List[Set[int]], node_features: torch.Tensor, problem_id: str):
-    filename = f"submission_{problem_id}.json"
-    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
-    
-    print(f"\n🔬 Performing final accurate evaluation of {len(final_solutions)} elite solutions...")
-    
-    decision_vectors_to_score = []
-    for sol in final_solutions:
-        weights = sol['solution_weights']
-        # Infer t from the heuristic score's size
-        t = n - sol['heuristic_score'][0]
-        if t < 0 or t >= n: t = random.randint(0, n - 1) # Safeguard
-        logits = weights @ node_features
-        perm = logits.argsort().cpu().tolist()
-        decision_vectors_to_score.append(perm + [t])
-
-    # Use multiprocessing on the CPU for the final, one-time correct evaluation
-    with multiprocessing.Pool() as pool:
-        results = pool.map(evaluate_correct_task, [(tuple(sol), n, adj) for sol in decision_vectors_to_score])
-
-    final_population = [{'solution': list(sol), 'score': score} for sol, score in results]
-
-    # Final selection based on CORRECT scores
-    final_submission_pop = crowding_selection(final_population, 20)
-    final_vectors_for_json = [[int(val) for val in p['solution']] for p in final_submission_pop]
-
-    submission = { "decisionVector": final_vectors_for_json, "problem": problem_name_map.get(problem_id, problem_id), "challenge": "spoc-3-torso-decompositions" }
-    with open(filename, "w") as f: json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(final_vectors_for_json)} solutions.")
-
-def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    """NSGA-II selection, used here to select the final top 20 solutions."""
-    if not population: return []
-    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
-    fronts = [[]]
-    for i, p in enumerate(population):
-        for j, q in enumerate(population[i+1:]):
-            if dominates(p['score'], q['score']): p['dominates_set'].append(q); q['dominated_by_count'] += 1
-            elif dominates(q['score'], p['score']): q['dominates_set'].append(p); p['dominated_by_count'] += 1
-        if p['dominated_by_count'] == 0: fronts[0].append(p)
-    i = 0
-    while i < len(fronts) and fronts[i]:
-        next_front = []
-        for p in fronts[i]:
-            for q in p['dominates_set']:
-                q['dominated_by_count'] -= 1
-                if q['dominated_by_count'] == 0: next_front.append(q)
-        fronts.append(next_front)
-        i += 1
-    
-    new_population = []
-    for front in fronts:
-        if not front: continue
-        if len(new_population) + len(front) > pop_size:
-            for p in front: p['distance'] = 0.0
-            for i_obj in range(2):
-                front.sort(key=lambda p: p['score'][i_obj])
-                front[0]['distance'] = front[-1]['distance'] = float('inf')
-                f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
-                if f_max > f_min:
-                    for j in range(1, len(front) - 1):
-                        front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
-            front.sort(key=lambda p: p['distance'], reverse=True)
-            new_population.extend(front[:pop_size - len(new_population)])
+        if iteration - last_improvement > 1500:
             break
-        new_population.extend(front)
-    return new_population
+            
+    return {'solution': best_local, 'score': best_local_score}
+
+def path_relinking(sol1: Dict, sol2: Dict, n: int, adj_list: List[Set[int]]) -> List[Dict]:
+    """UPGRADE 2: Explores the path between two elite solutions."""
+    print("🔬 Performing Path Relinking between top 2 solutions...")
+    path_solutions = []
+    
+    start_sol = sol1['solution']
+    end_perm = sol2['solution'][:-1]
+    
+    current_perm = start_sol[:-1][:]
+    
+    for i in tqdm(range(n), desc="  -> Relinking Path", leave=False):
+        if current_perm[i] != end_perm[i]:
+            node_to_move = end_perm[i]
+            try:
+                current_pos = current_perm.index(node_to_move)
+                current_perm[i], current_perm[current_pos] = current_perm[current_pos], current_perm[i]
+            except ValueError:
+                continue # Node not found, should not happen in a valid permutation
+            
+            new_t = int((start_sol[-1] + sol2['solution'][-1]) / 2)
+            new_solution = current_perm + [new_t]
+            score = evaluate_heuristic_v2(new_solution, n, adj_list)
+            path_solutions.append({'solution': new_solution, 'score': score})
+            
+    return path_solutions
+
+# --- Main Execution Block ---
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    torch.set_grad_enabled(False)
     random.seed(42)
     np.random.seed(42)
-    torch.manual_seed(42)
 
-    problem_id = input("🔍 Select problem (easy/medium/hard): ").lower()
+    # --- Parameters from your best-performing code ---
+    PARAMS = {
+        'max_iterations': 25000,
+        'num_restarts': 250,
+        'cooling_rate': 0.9992,
+        'initial_temp': 3000.0
+    }
+
+    problem_id = input("🔍 Select problem to run (easy/medium/hard): ").lower()
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
 
-    config = CONFIG['general'].copy()
-    config.update(CONFIG[problem_id])
-
-    n, adj = load_graph(problem_id)
-    node_features_T = init_node_features(n, adj, config['feature_dim']).T # Transposed for matmul
-
+    n, edges, adj_list = load_graph(problem_id)
+    
+    print(f"\n⚙️  Running Upgraded Solver for '{problem_id}'...")
     start_time = time.time()
-    final_solutions = neuroevolution_search(n, adj, node_features_T, config, problem_id)
-    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
+    
+    all_solutions = []
+    # Using your sequential restart loop which proved most effective
+    for _ in tqdm(range(PARAMS['num_restarts']), desc="🚀 Running Restarts"):
+        result = hill_climbing_run(
+            n=n,
+            adj_list=adj_list,
+            max_iterations=PARAMS['max_iterations'],
+            initial_temp=PARAMS['initial_temp'],
+            cooling_rate=PARAMS['cooling_rate']
+        )
+        all_solutions.append(result)
+    
+    # Filter for the non-dominated front based on the HEURISTIC scores
+    heuristic_pareto_front = []
+    for candidate in all_solutions:
+        if not any(dominates(other['score'], candidate['score']) for other in all_solutions):
+            heuristic_pareto_front.append(candidate)
+    unique_solutions = list({tuple(p['solution']): p for p in heuristic_pareto_front}.values())
+    
+    if len(unique_solutions) >= 2:
+        unique_solutions.sort(key=lambda p: -p['score'][0] * 100 + p['score'][1])
+        path_res = path_relinking(unique_solutions[0], unique_solutions[1], n, adj_list)
+        all_solutions.extend(path_res)
+        
+        # Re-filter the front with the new solutions from path relinking
+        heuristic_pareto_front = []
+        for candidate in all_solutions:
+            if not any(dominates(other['score'], candidate['score']) for other in all_solutions):
+                heuristic_pareto_front.append(candidate)
+        unique_solutions = list({tuple(p['solution']): p for p in heuristic_pareto_front}.values())
 
-    create_submission_file(final_solutions, n, adj, node_features_T, problem_id)
+    # *** FINAL ACCURATE RE-EVALUATION STEP ***
+    print(f"\n🔬 Performing final accurate evaluation of {len(unique_solutions)} elite solutions...")
+    solutions_to_re_eval = [v['solution'] for v in unique_solutions]
+    with multiprocessing.Pool() as pool:
+        final_results = pool.map(evaluate_correct_task, [(tuple(sol), n, edges) for sol in solutions_to_re_eval])
+
+    final_population = [{'solution': list(sol), 'score': list(score)} for sol, score in final_results]
+    
+    # --- Final Selection based on CORRECT scores ---
+    final_pareto_front = []
+    for candidate in final_population:
+        if not any(dominates(other['score'], candidate['score']) for other in final_population):
+            final_pareto_front.append(candidate)
+    unique_final_solutions = list({tuple(p['solution']): p for p in final_pareto_front}.values())
+    
+    end_time = time.time()
+
+    # --- Create Submission File ---
+    if unique_final_solutions:
+        filename = f"submission_{problem_id}.json"
+        problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
+        decision_vectors = [p['solution'] for p in unique_final_solutions]
+        final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
+        submission = {
+            "decisionVector": final_vectors[:20],
+            "problem": problem_name_map.get(problem_id, problem_id),
+            "challenge": "spoc-3-torso-decompositions",
+        }
+        with open(filename, "w") as f:
+            json.dump(submission, f, indent=4)
+        print(f"\n📄 Created submission file: {filename} with {len(submission['decisionVector'])} solutions.")
+        print(f"⏱️  Finished '{problem_id}' in {end_time - start_time:.2f} seconds.")
+    else:
+        print(f"--- No non-dominated solutions found for '{problem_id}' ---")
