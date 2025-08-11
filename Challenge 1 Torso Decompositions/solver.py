@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Memetic NSGA-II with elite intensification & adaptive mutation for SPOC-3 torso decompositions.
+Memetic NSGA-II + Elite Tabu intensification for SPOC-3 torso decompositions.
 
-Patch notes:
-- Elite intensification (parallel stronger LS on top E individuals every generation)
-- Adaptive mutation (increases when no improvement)
-- Larger per-process LRU cache for evaluations
-- Best-solution logging and persistence
-- Keeps fast bitset evaluator + pool initializer from previous version
+Key additions since previous version:
+- tabu_search_worker: in-worker tabu search applied to elites (swap/inversion/torso-change)
+- configurable tabu_iters and tabu_tenure
+- integrates tabu stage after elite local search
+- preserves fast bitset evaluator, LRU caching, pool initializer
 """
 
 import json
@@ -35,8 +34,12 @@ CONFIG = {
         "elite_count": 6,
         "elite_ls_multiplier": 4,
         # adaptive mutation
-        "stagnation_limit": 12,  # gens without improvement before raising mutation
+        "stagnation_limit": 12,
         "mutation_boost_factor": 1.8,
+        # tabu settings
+        "elite_tabu_iters": 220,      # iterations per elite tabu search
+        "elite_tabu_tenure": (7, 18), # tenure range (randomized)
+        "elite_tabu_count": 4,        # how many elites to run tabu on (<= elite_count)
     },
     "easy": {"pop_size": 120, "generations": 300, "local_search_intensity": 18},
     "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 22},
@@ -52,7 +55,7 @@ PROBLEMS = {
 # -------------------------
 # Worker globals (set by initializer)
 # -------------------------
-WORKER_ADJ_BITS = None  # list[int] bitset adjacency
+WORKER_ADJ_BITS = None
 WORKER_N = None
 
 # -------------------------
@@ -96,7 +99,7 @@ def _init_worker(adj_bits: List[int], n: int):
     WORKER_N = n
 
 # -------------------------
-# Fast bitset evaluator (with robust bitcount)
+# Fast bitset evaluator (robust)
 # -------------------------
 def bitcount(x: int) -> int:
     try:
@@ -104,13 +107,11 @@ def bitcount(x: int) -> int:
     except Exception:
         return bin(int(x)).count('1')
 
-# Larger per-process cache for better reuse
-@lru_cache(maxsize=500000)
+@lru_cache(maxsize=600000)
 def evaluate_solution_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
     global WORKER_ADJ_BITS, WORKER_N
     if WORKER_ADJ_BITS is None or WORKER_N is None:
-        raise RuntimeError("Worker globals not initialized")
-
+        raise RuntimeError("Worker not initialized with graph")
     n = WORKER_N
     adj_bits = WORKER_ADJ_BITS
 
@@ -126,7 +127,7 @@ def evaluate_solution_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[in
         suffix_mask[i] = curr_mask
         curr_mask |= (1 << perm[i])
 
-    temp = adj_bits[:]  # copy
+    temp = adj_bits[:]
     max_width = 0
     for i in range(n):
         u = perm[i]
@@ -211,6 +212,93 @@ def local_search_worker(args):
     return list(best)
 
 # -------------------------
+# Tabu search (in worker)
+# -------------------------
+def tabu_search_worker(args):
+    """args: (solution_list, iter_limit, tenure_range)
+    Move types: swap(i,j), inversion(i,j), torso change (random small)
+    Tabu stores move signatures; aspiration allows moves that beat best_local_score.
+    """
+    sol, iters, tenure_range = args
+    n = WORKER_N
+    current = tuple(int(x) for x in sol)
+    best = current
+    best_score = evaluate_solution_bitset_cached(best)
+    curr_score = best_score
+
+    tabu = {}  # move_signature -> remaining tenure
+
+    for it in range(iters):
+        # random neighborhood sampling: generate several candidate moves and pick best non-tabu (or aspiration)
+        candidates = []
+        # generate some candidates
+        for _ in range(10):
+            r = random.random()
+            if r < 0.45:
+                # swap two positions
+                i, j = random.sample(range(n), 2)
+                perm = list(current[:-1])
+                perm[i], perm[j] = perm[j], perm[i]
+                move_sig = ('swap', min(i,j), max(i,j))
+                neigh = tuple(perm + [current[-1]])
+            elif r < 0.85:
+                # inversion
+                a, b = sorted(random.sample(range(n), 2))
+                perm = list(current[:-1])
+                perm[a:b+1] = reversed(perm[a:b+1])
+                move_sig = ('inv', a, b)
+                neigh = tuple(perm + [current[-1]])
+            else:
+                # torso tweak
+                perm = list(current[:-1])
+                tnew = max(0, min(n-1, current[-1] + random.randint(-max(1, int(n*0.03)), max(1, int(n*0.03)))))
+                move_sig = ('t', tnew)
+                neigh = tuple(perm + [tnew])
+            candidates.append((move_sig, neigh))
+
+        # evaluate candidates (use cached eval)
+        cand_scores = []
+        for move_sig, neigh in candidates:
+            sc = evaluate_solution_bitset_cached(neigh)
+            cand_scores.append((move_sig, neigh, sc))
+
+        # choose best candidate respecting tabu & aspiration
+        cand_scores.sort(key=lambda x: (-x[2][0], x[2][1]))  # prefer larger size, smaller width
+        selected = None
+        for move_sig, neigh, sc in cand_scores:
+            in_tabu = move_sig in tabu and tabu[move_sig] > 0
+            if not in_tabu or (sc[0] > best_score[0]) or (sc[0] == best_score[0] and sc[1] < best_score[1]):
+                selected = (move_sig, neigh, sc)
+                break
+        if selected is None:
+            # all tabu and none aspiration -> pick best regardless
+            selected = cand_scores[0]
+
+        move_sig, neigh, sc = selected
+        # apply move
+        current = neigh
+        curr_score = sc
+        # update tabu: decrement all tenures and set new tenure for the inverse of move
+        # simplest: set tabu for this move signature
+        tenure = random.randint(tenure_range[0], tenure_range[1])
+        tabu[move_sig] = tenure
+
+        # decrement tenures
+        to_del = []
+        for k in list(tabu.keys()):
+            tabu[k] -= 1
+            if tabu[k] <= 0:
+                to_del.append(k)
+        for k in to_del:
+            del tabu[k]
+
+        # update best
+        if (curr_score[0] > best_score[0]) or (curr_score[0] == best_score[0] and curr_score[1] < best_score[1]):
+            best = current
+            best_score = curr_score
+    return list(best)
+
+# -------------------------
 # PMX crossover
 # -------------------------
 def pmx_crossover(p1: List[int], p2: List[int]) -> List[int]:
@@ -238,7 +326,7 @@ def pmx_crossover(p1: List[int], p2: List[int]) -> List[int]:
     return child
 
 # -------------------------
-# Dominance, selection helpers
+# Dominance & selection
 # -------------------------
 def dominates(p, q):
     return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
@@ -293,7 +381,7 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
     return new_population
 
 # -------------------------
-# Seeding heuristics (min-degree & min-fill)
+# Seeding heuristics
 # -------------------------
 def min_degree_order(adj_list: List[Set[int]]) -> List[int]:
     n = len(adj_list)
@@ -354,10 +442,9 @@ def min_fill_order(adj_list: List[Set[int]]) -> List[int]:
     return order
 
 # -------------------------
-# Utility: compare scores and persistence
+# Helpers: compare & persist
 # -------------------------
 def score_better(a, b):
-    # Return True if a better than b (a,b are (size,width))
     return (a[0] > b[0]) or (a[0] == b[0] and a[1] < b[1])
 
 def persist_best(best_solution, best_score, problem_id):
@@ -365,19 +452,18 @@ def persist_best(best_solution, best_score, problem_id):
     json_name = f"best_submission_{problem_id}.json"
     with open(pkl_name, "wb") as f:
         pickle.dump({'solution': best_solution, 'score': best_score}, f)
-    # also write submission-style JSON vector for convenience
     with open(json_name, "w") as f:
         json.dump({"decisionVector": [[int(x) for x in best_solution]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=2)
 
 # -------------------------
-# Main memetic algorithm with elite intensification & adaptive mutation
+# Main memetic algorithm with tabu intensification
 # -------------------------
 def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str) -> List[List[int]]:
     checkpoint_file = f"checkpoint_{problem_id}.pkl"
     adj_bits = build_adj_bitsets(n, adj_list)
     pop_size = config['pop_size']
 
-    # Initial population (seeded + random)
+    # initial population (seeded)
     population = []
     seed_orders = []
     try:
@@ -415,22 +501,18 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
         start_gen = saved['gen'] + 1
         print(f"🔄 Resuming from gen {start_gen}")
 
-    # tracking best
     best_solution = None
     best_score = (-1, 1000)
     stagnation_counter = 0
     base_mutation = CONFIG['general']['mutation_rate']
 
     with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_bits, n)) as pool:
-        # initial evaluate
         if 'score' not in population[0]:
             sols = [tuple(int(x) for x in p['solution']) for p in population]
             results = list(pool.map(eval_wrapper, sols))
             sol_to_score = {sol: score for sol, score in results}
             for p in population:
                 p['score'] = sol_to_score.get(tuple(p['solution']), (0, 501))
-
-        # initialize best from initial population
         for p in population:
             if best_solution is None or score_better(p['score'], best_score):
                 best_score = p['score']
@@ -438,13 +520,12 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
         persist_best(best_solution, best_score, problem_id)
 
         for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
-            # adaptive mutation update
+            # adapt mutation
             mutation_rate = base_mutation
             if stagnation_counter >= CONFIG['general']['stagnation_limit']:
                 mutation_rate = min(0.95, base_mutation * CONFIG['general']['mutation_boost_factor'])
 
             mating_pool = crowding_selection(population, pop_size)
-
             offspring_sols = []
             while len(offspring_sols) < pop_size:
                 p1 = random.choice(mating_pool)
@@ -468,39 +549,46 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                     c_t = max(0, min(n - 1, c_t + random.randint(-int(n*0.03), int(n*0.03))))
                 offspring_sols.append(child_perm + [c_t])
 
-            # run normal local search in parallel
+            # normal local search
             ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
             improved_offspring = pool.map(local_search_worker, ls_args)
-
-            # evaluate offspring
             eval_tuples = [tuple(int(x) for x in sol) for sol in improved_offspring]
             eval_results = list(pool.map(eval_wrapper, eval_tuples))
             offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in eval_results]
-
-            # combine and select
             population = crowding_selection(population + offspring_pop, pop_size)
 
-            # Elite intensification: take top E by score and intensify local search
+            # elite intensification (LS)
             E = CONFIG['general']['elite_count']
             elite_ls = CONFIG['general']['elite_ls_multiplier']
-            # sort current population by (size desc, width asc)
             pop_sorted = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
             elites = pop_sorted[:E]
             elite_args = []
             for e in elites:
-                # run a stronger LS on their solution
                 elite_args.append((e['solution'], max(1, config['local_search_intensity'] * elite_ls)))
             if elite_args:
                 improved_elites = pool.map(local_search_worker, elite_args)
-                # evaluate and possibly replace in population
                 eval_tuples = [tuple(int(x) for x in sol) for sol in improved_elites]
                 eval_results = list(pool.map(eval_wrapper, eval_tuples))
                 for sol, score in eval_results:
-                    # find worst dominated by this or simply insert and reselect next gen
                     population.append({'solution': list(sol), 'score': score})
                 population = crowding_selection(population, pop_size)
 
-            # track best & stagnation
+            # elite tabu intensification (select top subset)
+            tabu_count = min(CONFIG['general']['elite_tabu_count'], len(elites))
+            if tabu_count > 0:
+                tabu_args = []
+                for e in elites[:tabu_count]:
+                    tenure_range = CONFIG['general']['elite_tabu_tenure']
+                    iters = CONFIG['general']['elite_tabu_iters']
+                    tabu_args.append((e['solution'], iters, tenure_range))
+                tabu_results = pool.map(tabu_search_worker, tabu_args)
+                eval_tuples = [tuple(int(x) for x in sol) for sol in tabu_results]
+                eval_results = list(pool.map(eval_wrapper, eval_tuples))
+                for sol, score in eval_results:
+                    population.append({'solution': list(sol), 'score': score})
+                population = crowding_selection(population, pop_size)
+
+            # update best & stagnation
             current_best = None
             for p in population:
                 if current_best is None or score_better(p['score'], current_best['score']):
@@ -514,10 +602,8 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
             else:
                 stagnation_counter += 1
 
-            # print summary per generation
             tqdm.write(f"Gen {gen+1}: best(size,width)={best_score} stagn={stagnation_counter} mut={mutation_rate:.3f}")
 
-            # checkpoint
             if (gen + 1) % config['checkpoint_interval'] == 0:
                 tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
                 to_save = {'pop': population, 'gen': gen}
