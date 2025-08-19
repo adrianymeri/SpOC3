@@ -227,6 +227,7 @@ if __name__ == "__main__":
     problem_id = input("🔍 Select problem to run (easy/medium/hard): ").lower()
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
 
+    # The error was here, but the fix is at the top of the file
     n, edges, adj_list = load_graph(problem_id)
     
     print(f"\n⚙️  Running Upgraded Solver for '{problem_id}'...")
