@@ -20,22 +20,30 @@ PROBLEMS = {
 # --- Evaluation Functions ---
 
 def load_graph(problem_id: str) -> Tuple[int, List[List[int]], List[Set[int]]]:
-    """Loads graph data and returns n, edges, and adjacency list."""
-    url = PROBLEMS[problem_id]
-    print(f"📥 Loading graph data for '{problem_id}'...")
+    """Loads graph data from local 'data/' folder instead of downloading."""
+    local_path = os.path.join(
+        os.path.dirname(__file__), "data", f"{problem_id}.gr"
+    )
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"❌ Graph file not found: {local_path}")
+
+    print(f"📥 Loading graph data for '{problem_id}' from {local_path}...")
     edges = []
     max_node = 0
-    with urllib.request.urlopen(url) as f:
+    with open(local_path, "r") as f:
         for line in f:
-            if line.startswith(b'#'): continue
+            if line.startswith("#"): 
+                continue
             u, v = map(int, line.strip().split())
             edges.append([u, v])
             max_node = max(max_node, u, v)
+
     n = max_node + 1
     adj_list = [set() for _ in range(n)]
     for u, v in edges:
         adj_list[u].add(v)
         adj_list[v].add(u)
+
     print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
     return n, edges, adj_list
 
