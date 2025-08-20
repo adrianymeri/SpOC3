@@ -29,11 +29,15 @@ PROBLEMS = {
 
 # --- Worker Initialization & Wrappers ---
 def init_worker_py(n, adj_bits):
-    # Initialize the Cython module for this worker process
     solver_cython.init_worker_cython(n, adj_bits)
 
 def eval_wrapper(solution_np):
-    # This is the only function that calls into our C code
+    # Safety check to catch the bug if it ever happens again
+    t = solution_np[-1]
+    if t < 0:
+        print(f"FATAL: Negative torso t={t} detected!")
+        # Return a terrible score to penalize this solution
+        return (solution_np, (0, 9999))
     return (solution_np, solver_cython.evaluate_solution_cy(solution_np))
 
 # --- Local Search (Now in pure, safe Python using NumPy) ---
@@ -47,27 +51,28 @@ def local_search_worker(args):
         cand_sol = best_sol.copy()
         r = random.random()
         
+        perm = cand_sol[:-1]
+        torso = cand_sol[-1]
+
         # All array modifications are done with safe NumPy/Python operations
         if r < 0.4: # Block Move
-            perm = cand_sol[:-1]
             block_size = random.randint(2, max(3, n // 50))
             if n > block_size:
                 start = random.randint(0, n - block_size)
                 block = perm[start:start+block_size]
                 perm_deleted = np.delete(perm, np.s_[start:start+block_size])
                 insert_pos = random.randint(0, len(perm_deleted))
-                cand_sol = np.insert(perm_deleted, insert_pos, block)
-                cand_sol = np.append(cand_sol, best_sol[-1]) # re-append torso
+                new_perm = np.insert(perm_deleted, insert_pos, block)
+                cand_sol = np.append(new_perm, torso)
         elif r < 0.8: # Inversion
-            perm = cand_sol[:-1]
             a, b = sorted(random.sample(range(n), 2))
             perm[a:b+1] = perm[a:b+1][::-1]
             cand_sol[:-1] = perm
         else: # Torso Shift
-            t = cand_sol[-1]
             shift = max(1, n // 20)
-            t = max(0, min(n - 1, t + random.randint(-shift, shift)))
-            cand_sol[-1] = t
+            new_t = torso + random.randint(-shift, shift)
+            # Explicitly clamp to ensure t is never negative
+            cand_sol[-1] = max(0, min(n, int(new_t)))
 
         _, cand_score = eval_wrapper(cand_sol)
 
@@ -196,7 +201,11 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 if random.random() < mutation_rate:
                     i, j = np.random.choice(n, 2, replace=False) # Simple Swap
                     child_perm[i], child_perm[j] = child_perm[j], child_perm[i]
-                t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                
+                # Hardened torso calculation
+                t_p1 = max(0, int(p1['solution'][-1]))
+                t_p2 = max(0, int(p2['solution'][-1]))
+                t = int((t_p1 + t_p2) / 2)
                 offspring_sols.append(np.append(child_perm, t))
 
             ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
@@ -227,6 +236,8 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
     final_front = crowding_selection(population, 20)
     final_solutions = [p['solution'] for p in final_front]
     
+    # Initialize the worker in the main process for final evaluation
+    init_worker_py(n, adj_bits_np)
     final_evals = {tuple(sol): solver_cython.evaluate_solution_cy(sol) for sol in final_solutions}
     best_sol_tuple = max(final_evals.keys(), key=lambda k: (final_evals[k][0], -final_evals[k][1]))
     best_sol_score = final_evals[best_sol_tuple]
