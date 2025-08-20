@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os, sys, time, json, urllib.request, subprocess
-from typing import Tuple
+from typing import List, Tuple
 import numpy as np
 from tqdm import tqdm
 import pygmo as pg
@@ -8,18 +8,12 @@ from concurrent.futures import ProcessPoolExecutor
 
 # --- Auto-compile Cython module ---
 def compile_cython_module():
-    """Checks for and builds the Cython module if it's missing."""
     module_name = "solver_cython"
-    try: # Modern Python
-        import importlib.util
-        ext_suffix = importlib.util.EXTENSIONS[0]
-    except (ImportError, AttributeError): # Fallback for older Python
-         import sysconfig
-         ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
-
+    try: import importlib.util; ext_suffix = importlib.util.EXTENSIONS[0]
+    except (ImportError, AttributeError): import sysconfig; ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
     cython_so_file = f"{module_name}{ext_suffix}"
-    if not os.path.exists(cython_so_file):
-        print(f"🚀 Building Cython module '{cython_so_file}'...")
+    if not os.path.exists(cython_so_file) or os.path.getmtime("solver_cython.pyx") > os.path.getmtime(cython_so_file):
+        print(f"🚀 Building/updating Cython module '{cython_so_file}'...")
         try:
             subprocess.check_call([sys.executable, "setup.py", "build_ext", "--inplace"])
             print("✅ Cython module built successfully.")
@@ -33,10 +27,16 @@ import solver_cython
 # CONFIGURATION
 # ==============================================================================
 CONFIG = {
-    "general": { "num_islands": os.cpu_count() or 8, "pop_size_per_island": 100, "migration_size": 8 },
-    "easy": { "migration_interval_gens": 25, "total_generations": 1500 },
-    "medium": { "migration_interval_gens": 30, "total_generations": 2500 },
-    "hard": { "migration_interval_gens": 40, "total_generations": 4000 },
+    "general": {
+        "num_islands": os.cpu_count() or 8,
+        "pop_size_per_island": 100,
+        "migration_size": 10, # Number of individuals to migrate
+        "elite_fraction": 0.1, # Fraction of population considered elite for intensification
+        "elite_ls_multiplier": 3,
+    },
+    "easy": { "migration_interval_gens": 20, "total_generations": 1000, "local_search_intensity": 20 },
+    "medium": { "migration_interval_gens": 25, "total_generations": 2000, "local_search_intensity": 25 },
+    "hard": { "migration_interval_gens": 30, "total_generations": 3000, "local_search_intensity": 30 },
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -44,30 +44,24 @@ PROBLEMS = {
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# --- Worker Initialization ---
+# --- Worker Initialization & Global UDP ---
 UDP_INSTANCE = None
-
 def init_worker(problem_id):
-    """Initializes the problem object and Cython module for each worker process."""
     global UDP_INSTANCE
-    UDP_INSTANCE = TorsoProblem(problem_id, initialize_cython=True)
+    UDP_INSTANCE = TorsoProblem(problem_id)
 
 # PYGMO PROBLEM DEFINITION
 # ==============================================================================
 class TorsoProblem:
-    def __init__(self, problem_id: str, n_nodes=None, adj_bits_np=None, initialize_cython=False):
-        if n_nodes is None:
-            print(f"📥 Loading graph data for '{problem_id}'...")
-            self.n_nodes, self.adj_bits_np = self._load_and_prep_graph(problem_id)
-        else:
-            self.n_nodes, self.adj_bits_np = n_nodes, adj_bits_np
-        
-        if initialize_cython:
-            solver_cython.init_worker_cython(self.n_nodes, self.adj_bits_np)
+    def __init__(self, problem_id: str):
+        self.problem_id = problem_id
+        self.n_nodes, self.adj_bits_np = self._load_and_prep_graph(problem_id)
+        solver_cython.init_worker_cython(self.n_nodes, self.adj_bits_np)
 
     @staticmethod
     def _load_and_prep_graph(problem_id):
         url = PROBLEMS[problem_id]
+        print(f"📥 Loading graph data for '{problem_id}' (worker)...")
         edges, max_node = [], 0
         with urllib.request.urlopen(url) as f:
             for line in f:
@@ -77,15 +71,13 @@ class TorsoProblem:
         n = max_node + 1
         adj = [set() for _ in range(n)]
         for u, v in edges: adj[u].add(v); adj[v].add(u)
-        print(f"✅ Loaded graph with {n} nodes.")
         adj_bits = np.zeros(n, dtype=np.uint64)
         for u in range(n):
             for v in adj[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
         return n, adj_bits
 
     def fitness(self, x):
-        x_int = np.array(x, dtype=np.int64)
-        return list(solver_cython.evaluate_solution_cy(x_int))
+        return list(solver_cython.evaluate_solution_cy(np.array(x, dtype=np.int64)))
 
     def get_bounds(self):
         lb = [0] * (self.n_nodes + 1)
@@ -97,20 +89,62 @@ class TorsoProblem:
 
 # THE EVOLUTIONARY ENGINE FOR A SINGLE ISLAND
 # ==============================================================================
-def evolve_island(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
-    """Takes a population, evolves it using pygmo's NSGA2, and returns the result."""
-    initial_vectors, generations = args
+def evolve_island(args: Tuple[np.ndarray, int, int, float, int]) -> Tuple[np.ndarray, np.ndarray]:
+    """Evolves a single island's population."""
+    initial_vectors, generations, ls_intensity, elite_frac, ls_mult = args
     prob = pg.problem(UDP_INSTANCE)
-    
-    # THE FIX for TypeError: Create an empty population, then push back individuals.
     pop = pg.population(prob=prob, size=0)
     for vec in initial_vectors:
-        # pygmo requires float vectors, so we cast here.
         pop.push_back(x=vec.astype(np.float64))
-
+    
+    # Use pygmo's NSGA-II algorithm, which is implemented in C++
     algo = pg.algorithm(pg.nsga2(gen=generations))
-    final_pop = algo.evolve(pop)
-    return final_pop.get_x(), final_pop.get_f()
+    pop = algo.evolve(pop)
+
+    # Elite Intensification: apply stronger local search to the best individuals
+    elite_count = int(len(pop.get_x()) * elite_frac)
+    if elite_count > 0:
+        fronts = pg.sort_population_mo(points=pop.get_f())
+        elite_indices = fronts[0][:elite_count]
+        elite_vectors = pop.get_x()[elite_indices]
+
+        # Reuse our Python-based local search, which now calls the fast Cython evaluator
+        intensified_elites = [local_search_py(v, ls_intensity * ls_mult) for v in elite_vectors]
+        
+        # Push the improved elites back into the population
+        for elite_vec in intensified_elites:
+            pop.push_back(x=elite_vec.astype(np.float64))
+
+    return pop.get_x(), pop.get_f()
+
+def local_search_py(solution, intensity):
+    """A pure Python local search operator that calls the fast Cython evaluator."""
+    n = UDP_INSTANCE.n_nodes
+    best_sol = solution.astype(np.int64)
+    best_score = UDP_INSTANCE.fitness(best_sol)
+    
+    for _ in range(intensity):
+        cand_sol = best_sol.copy()
+        r = random.random()
+        perm = cand_sol[:-1]
+
+        if r < 0.5: # Inversion
+            a, b = sorted(random.sample(range(n), 2))
+            perm[a:b+1] = perm[a:b+1][::-1]
+        else: # Torso Shift
+            t = cand_sol[-1]
+            shift = max(1, n // 20)
+            new_t = t + random.randint(-shift, shift)
+            cand_sol[-1] = max(0, min(n, int(new_t)))
+
+        cand_score = UDP_INSTANCE.fitness(cand_sol)
+
+        if (cand_score[0] < best_score[0]) or \
+           (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
+            best_sol = cand_sol
+            best_score = cand_score
+            
+    return best_sol
 
 # --- MAIN ORCHESTRATOR ---
 if __name__ == "__main__":
@@ -124,7 +158,7 @@ if __name__ == "__main__":
     pop_size_per_island = config['pop_size_per_island']
     
     print(f"🧬 Initializing {num_islands} island populations of size {pop_size_per_island}...")
-    base_perm = np.arange(main_udp.n_nodes, dtype=np.int64)
+    base_perm = np.arange(main_udp.n_nodes, dtype=np.int664)
     island_populations_x = []
     for _ in range(num_islands):
         island_pop = []
@@ -136,12 +170,12 @@ if __name__ == "__main__":
 
     n_evolutions = config['total_generations'] // config['migration_interval_gens']
     
-    init_args = (problem_id,)
-    with ProcessPoolExecutor(max_workers=num_islands, initializer=init_worker, initargs=init_args) as executor:
+    with ProcessPoolExecutor(max_workers=num_islands, initializer=init_worker, initargs=(problem_id,)) as executor:
         for evo_step in range(n_evolutions):
             print(f"\n🏝️  Evolution Step {evo_step + 1} / {n_evolutions}...")
             
-            args_for_workers = [(pop, config['migration_interval_gens']) for pop in island_populations_x]
+            ls_args = (config['local_search_intensity'], config['general']['elite_fraction'], config['general']['elite_ls_multiplier'])
+            args_for_workers = [(pop, config['migration_interval_gens']) + ls_args for pop in island_populations_x]
             results = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
 
             all_solutions_x = np.concatenate([res[0] for res in results])
@@ -163,25 +197,19 @@ if __name__ == "__main__":
             current_best_score = (int(-current_best_f[1]), int(current_best_f[0]))
             print(f"✨ Best score after step {evo_step + 1}: (size={current_best_score[0]}, width={current_best_score[1]})")
 
-    print("\n✅ Evolution complete. Finding best overall solution...")
-    final_solutions_x = np.concatenate(island_populations_x)
-    final_solutions_f = np.array([main_udp.fitness(x) for x in final_solutions_x])
-    
+            # Create submission file at each checkpoint
+            with open(f"submission_{problem_id}_step{evo_step+1}.json", "w") as f:
+                best_for_submission = [v.astype(np.int64).tolist() for v in best_individuals_x]
+                json.dump({"decisionVector": best_for_submission, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
+            print(f"📄 Created checkpoint submission file for step {evo_step+1}")
+
+
+    print("\n✅ Evolution complete. Calculating final hypervolume...")
+    final_solutions_f = np.concatenate([res[1] for res in results])
     non_dominated_idx = pg.non_dominated_front_2d(final_solutions_f)
-    best_solutions = final_solutions_x[non_dominated_idx]
     best_fitnesses = final_solutions_f[non_dominated_idx]
-
-    readable_scores = [(int(-f[1]), int(f[0])) for f in best_fitnesses]
-    best_idx = max(range(len(readable_scores)), key=lambda i: (readable_scores[i][0], -readable_scores[i][1]))
-    best_solution = best_solutions[best_idx]
-    best_score = readable_scores[best_idx]
-
-    print(f"\n🏆 Final best solution score (size, width): {best_score}")
     
-    with open(f"submission_{problem_id}.json", "w") as f:
-        json.dump({"decisionVector": [[int(v) for v in best_solution]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-    print(f"📄 Created submission file: submission_{problem_id}.json")
-
     ref_point = [main_udp.n_nodes, 0] 
     hv = pg.hypervolume(best_fitnesses)
-    print(f"📈 Hypervolume: {-hv.compute(ref_point):,.2f}")
+    final_hv = -hv.compute(ref_point)
+    print(f"🏆 Final Hypervolume: {final_hv:,.2f}")
