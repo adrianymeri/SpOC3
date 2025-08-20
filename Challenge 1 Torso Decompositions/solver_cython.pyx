@@ -68,16 +68,17 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
 # --- C-level Local Search Operators ---
 cdef np.ndarray[INT64_t, ndim=1] inversion_cy(np.ndarray[INT64_t, ndim=1] perm_arr):
     # This function now returns a new array to avoid side effects
-    cdef INT64_t[:] perm = perm_arr.copy() # Work on a copy
+    cdef np.ndarray[INT64_t, ndim=1] new_perm_arr = perm_arr.copy()
+    cdef INT64_t[:] perm = new_perm_arr # Work on a copy
     cdef int n = perm.shape[0], a = rand() % n, b = rand() % n
     cdef int start, end
-    if a == b: return np.asarray(perm) # Return the copied array
+    if a == b: return new_perm_arr
     start, end = (a, b) if a < b else (b, a)
     while start < end:
         perm[start], perm[end] = perm[end], perm[start]
         start += 1
         end -= 1
-    return np.asarray(perm)
+    return new_perm_arr
 
 # ==============================================================================
 # MEMORY-SAFE BLOCK MOVE
