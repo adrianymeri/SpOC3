@@ -28,7 +28,6 @@ cdef int bitcount_cy(UINT64_t x):
 
 cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
     cdef int t = solution[-1]
-    # NOTE: We use a memoryview for speed, but all arrays are owned by Python
     cdef INT64_t[:] perm = solution[:-1]
     cdef int size = N - t
     if size <= 0: return (0, 999)
