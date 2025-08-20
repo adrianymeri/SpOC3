@@ -531,13 +531,12 @@ class Island:
         self.pop = pop
 
 def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], run_config: Dict, problem_id: str) -> List[List[int]]:
-    """
-    run_config must be a dict with:
-      - 'general' (dict)
-      - 'pop_size', 'generations', 'local_search_intensity', 'crossover_rate'
-    """
     checkpoint_file = f"checkpoint_islands_{problem_id}.pkl"
     adj_bits = build_adj_bitsets(n, adj_list)
+
+    # Ensure main process can call the cached evaluator (so SA and other main-thread code won't fail)
+    _init_worker(adj_bits, n)
+
     island_count = run_config['general'].get('island_count', 4)
     total_pop_per_island = max(8, int(run_config['pop_size'] // island_count))
 
