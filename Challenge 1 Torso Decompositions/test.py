@@ -1,6 +1,7 @@
-# test_numba.py
+# test.py
 import numpy as np
 import numba
+from typing import Tuple # <-- ADD THIS LINE
 
 # These globals are needed for the function signature
 WORKER_N = 100
