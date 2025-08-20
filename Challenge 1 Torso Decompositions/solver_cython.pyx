@@ -29,7 +29,7 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
 
     cdef INT64_t[:] perm = solution[:-1]
     cdef int size = N - t
-    if size <= 0: return (999, -0) # Return [max_width, -size]
+    if size <= 0: return (999, -0)
 
     cdef UINT64_t[:] suffix_mask = np.zeros(N, dtype=np.uint64)
     cdef UINT64_t curr_mask = 0
@@ -61,4 +61,4 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
                 v += 1
             temp[v] |= (succ ^ v_bit)
             
-    return (max_width, -size) # Note: returning -size for minimization
+    return (max_width, -size)
