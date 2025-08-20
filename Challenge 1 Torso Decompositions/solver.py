@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# This solver uses a compiled Cython module to run a high-performance memetic algorithm.
+# This solver uses a compiled Cython module for the evaluation function ONLY.
+# All other logic is in pure, safe Python with NumPy for stability and speed.
 
 import os, sys, time, random, pickle, json, urllib.request
 from typing import List, Set, Tuple, Dict
@@ -28,13 +29,54 @@ PROBLEMS = {
 
 # --- Worker Initialization & Wrappers ---
 def init_worker_py(n, adj_bits):
+    # Initialize the Cython module for this worker process
     solver_cython.init_worker_cython(n, adj_bits)
 
 def eval_wrapper(solution_np):
+    # This is the only function that calls into our C code
     return (solution_np, solver_cython.evaluate_solution_cy(solution_np))
 
-def local_search_wrapper(args):
-    return solver_cython.local_search_cy(*args)
+# --- Local Search (Now in pure, safe Python using NumPy) ---
+def local_search_worker(args):
+    solution, intensity = args
+    n = len(solution) - 1
+    best_sol = solution
+    _, best_score = eval_wrapper(best_sol)
+    
+    for _ in range(intensity):
+        cand_sol = best_sol.copy()
+        r = random.random()
+        
+        # All array modifications are done with safe NumPy/Python operations
+        if r < 0.4: # Block Move
+            perm = cand_sol[:-1]
+            block_size = random.randint(2, max(3, n // 50))
+            if n > block_size:
+                start = random.randint(0, n - block_size)
+                block = perm[start:start+block_size]
+                perm_deleted = np.delete(perm, np.s_[start:start+block_size])
+                insert_pos = random.randint(0, len(perm_deleted))
+                cand_sol = np.insert(perm_deleted, insert_pos, block)
+                cand_sol = np.append(cand_sol, best_sol[-1]) # re-append torso
+        elif r < 0.8: # Inversion
+            perm = cand_sol[:-1]
+            a, b = sorted(random.sample(range(n), 2))
+            perm[a:b+1] = perm[a:b+1][::-1]
+            cand_sol[:-1] = perm
+        else: # Torso Shift
+            t = cand_sol[-1]
+            shift = max(1, n // 20)
+            t = max(0, min(n - 1, t + random.randint(-shift, shift)))
+            cand_sol[-1] = t
+
+        _, cand_score = eval_wrapper(cand_sol)
+
+        if (cand_score[0] > best_score[0]) or \
+           (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
+            best_sol = cand_sol
+            best_score = cand_score
+            
+    return best_sol
 
 # --- Graph Loading & Bitset Building ---
 def load_graph(problem_id: str):
@@ -82,8 +124,9 @@ def dominates(p_score, q_score):
            (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
 
 def crowding_selection(population: List[Dict], pop_size: int):
-    # Standard NSGA-II crowding distance selection
-    # (Code is standard and omitted here for brevity, but it's the same as your version)
+    # This is the standard NSGA-II selection algorithm
+    if len(population) <= pop_size:
+        return population
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
     for p in population:
@@ -135,18 +178,16 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
 
     best_score, stagnation_counter = (-1, 999), 0
     with multiprocessing.Pool(initializer=init_worker_py, initargs=(n, adj_bits_np)) as pool:
-        # Initial evaluation
         results = pool.map(eval_wrapper, [p['solution'] for p in population])
         for sol, score in results:
             for p in population:
                 if np.array_equal(p['solution'], sol): p['score'] = score; break
 
-        pbar = tqdm(range(generations), desc="🚀 Evolving (Cython Memetic)")
+        pbar = tqdm(range(generations), desc="🚀 Evolving (Hybrid Cython/Python)")
         for gen in pbar:
             mutation_rate = base_mutation * (config['mutation_boost_factor'] if stagnation_counter >= config['stagnation_limit'] else 1.0)
             mating_pool = crowding_selection(population, pop_size)
             
-            # --- Offspring Generation ---
             offspring_sols = []
             while len(offspring_sols) < pop_size:
                 p1, p2 = random.sample(mating_pool, 2)
@@ -158,27 +199,22 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(np.append(child_perm, t))
 
-            # --- Local Search (Memetic Step) ---
             ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
-            improved_offspring = pool.map(local_search_wrapper, ls_args)
+            improved_offspring = pool.map(local_search_worker, ls_args)
 
-            # --- Evaluation & Selection ---
             results = pool.map(eval_wrapper, improved_offspring)
             offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
             population = crowding_selection(population + offspring_pop, pop_size)
             
-            # --- Elite Intensification ---
             pop_sorted = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
             elite_sols = [p['solution'] for p in pop_sorted[:config['elite_count']]]
             elite_args = [(sol, config['local_search_intensity'] * config['elite_ls_multiplier']) for sol in elite_sols]
             if elite_args:
-                intensified_elites = pool.map(local_search_wrapper, elite_args)
+                intensified_elites = pool.map(local_search_worker, elite_args)
                 results = pool.map(eval_wrapper, intensified_elites)
-                for sol, score in results:
-                    population.append({'solution': sol, 'score': score})
+                population.extend([{'solution': sol, 'score': score} for sol, score in results])
                 population = crowding_selection(population, pop_size)
             
-            # --- Tracking ---
             current_best_score = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]['score']
             if (current_best_score[0] > best_score[0]) or (current_best_score[0] == best_score[0] and current_best_score[1] < best_score[1]):
                 best_score = current_best_score
@@ -189,7 +225,16 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
             pbar.set_postfix({"best_score": best_score, "stagn": stagnation_counter})
             
     final_front = crowding_selection(population, 20)
-    return [p['solution'] for p in final_front]
+    final_solutions = [p['solution'] for p in final_front]
+    
+    final_evals = {tuple(sol): solver_cython.evaluate_solution_cy(sol) for sol in final_solutions}
+    best_sol_tuple = max(final_evals.keys(), key=lambda k: (final_evals[k][0], -final_evals[k][1]))
+    best_sol_score = final_evals[best_sol_tuple]
+    
+    print(f"\n🏆 Final best solution score: {best_sol_score}")
+    with open(f"submission_{problem_id}.json", "w") as f:
+        json.dump({"decisionVector": [[int(v) for v in best_sol_tuple]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
+    print(f"📄 Created submission file: submission_{problem_id}.json")
 
 # --- Entry Point ---
 if __name__ == "__main__":
@@ -201,15 +246,5 @@ if __name__ == "__main__":
     n, adj = load_graph(problem_id)
     
     start_time = time.time()
-    best_solutions = memetic_algorithm(n, adj, config, problem_id)
+    memetic_algorithm(n, adj, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
-    
-    if best_solutions:
-        # For submission, usually the single best solution is preferred
-        final_evals = {tuple(sol): solver_cython.evaluate_solution_cy(sol) for sol in best_solutions}
-        best_sol_tuple = max(final_evals.keys(), key=lambda k: (final_evals[k][0], -final_evals[k][1]))
-        
-        print(f"🏆 Final best solution score: {final_evals[best_sol_tuple]}")
-        with open(f"submission_{problem_id}.json", "w") as f:
-            json.dump({"decisionVector": [[int(v) for v in best_sol_tuple]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-        print(f"📄 Created submission file: submission_{problem_id}.json")
