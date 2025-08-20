@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# This solver uses a compiled Cython module for a high-performance memetic algorithm.
+# This solver uses a compiled Cython module to run a high-performance memetic algorithm.
 
-import os, sys, time, random, pickle, json, urllib.request
+import os, sys, time, random, pickle, json, urllib.request, heapq
 from typing import List, Set, Tuple, Dict
 import numpy as np
 from tqdm import tqdm
 import multiprocessing
 import solver_cython # Import our compiled C module
 
-# CONFIGURATION - Parameters are increased for a deeper, more effective search
+# CONFIGURATION - Now we can afford a much deeper search
 # ==============================================================================
 CONFIG = {
     "general": {
@@ -71,7 +71,7 @@ def local_search_worker(args):
             
     return best_sol
 
-# --- Graph Loading & Bitset Building ---
+# --- Graph Loading & Seeding Heuristics ---
 def load_graph(problem_id: str):
     url = PROBLEMS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
@@ -93,7 +93,25 @@ def build_adj_bitsets_np(n: int, adj_list: List[Set[int]]):
         for v in adj_list[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
     return adj_bits
 
-# --- Genetic Operators (Python-side) ---
+def min_degree_order(adj_list: List[Set[int]]):
+    n = len(adj_list)
+    degree = [len(adj[i]) for i in range(n)]
+    heap = [(degree[i], i) for i in range(n)]
+    heapq.heapify(heap)
+    removed = [False] * n
+    order = []
+    while heap:
+        d, v = heapq.heappop(heap)
+        if removed[v]: continue
+        removed[v] = True
+        order.append(v)
+        for u in adj_list[v]:
+            if not removed[u]:
+                degree[u] -= 1
+                heapq.heappush(heap, (degree[u], u))
+    return np.array(order, dtype=np.int64)
+
+# --- Genetic Operators & Selection ---
 def pmx_crossover_py(p1: np.ndarray, p2: np.ndarray):
     n = len(p1)
     a, b = sorted(random.sample(range(n), 2))
@@ -111,13 +129,11 @@ def pmx_crossover_py(p1: np.ndarray, p2: np.ndarray):
         if child[i] == -1: child[i] = p2[i]
     return child
 
-# --- NSGA-II Selection ---
 def dominates(p_score, q_score):
     return (p_score[0] >= q_score[0] and p_score[1] < q_score[1]) or \
            (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
 
 def crowding_selection(population: List[Dict], pop_size: int):
-    # Standard NSGA-II crowding distance selection
     if len(population) <= pop_size: return population
     for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
@@ -161,12 +177,15 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
     base_mutation = config['mutation_rate']
 
     print(f"🧬 Initializing population of size {pop_size}...")
-    population = []
-    base_perm = np.arange(n, dtype=np.int64)
+    population, seed_perms = [], [min_degree_order(adj_list)]
     for _ in range(pop_size):
-        np.random.shuffle(base_perm)
-        t = np.random.randint(int(n * 0.2), int(n * 0.8))
-        population.append({'solution': np.append(base_perm.copy(), t)})
+        perm = random.choice(seed_perms).copy()
+        # Small perturbation to the seed
+        for _ in range(5):
+            a, b = np.random.choice(n, 2, replace=False)
+            perm[a], perm[b] = perm[b], perm[a]
+        t = np.random.randint(int(n * 0.1), int(n * 0.5))
+        population.append({'solution': np.append(perm, t)})
 
     best_score, stagnation_counter = (-1, 999), 0
     with multiprocessing.Pool(initializer=init_worker_py, initargs=(n, adj_bits_np)) as pool:
@@ -175,7 +194,7 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
             for p in population:
                 if np.array_equal(p['solution'], sol): p['score'] = score; break
 
-        pbar = tqdm(range(generations), desc="🚀 Evolving (Hybrid Cython/Python)")
+        pbar = tqdm(range(generations), desc="🚀 Evolving (Cython Hybrid)")
         for gen in pbar:
             mutation_rate = base_mutation * (config['mutation_boost_factor'] if stagnation_counter >= config['stagnation_limit'] else 1.0)
             mating_pool = crowding_selection(population, pop_size)
@@ -186,8 +205,8 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
                 child_perm = pmx_crossover_py(perm1, perm2) if random.random() < config['crossover_rate'] else perm1.copy()
                 if random.random() < mutation_rate:
-                    i, j = np.random.choice(n, 2, replace=False)
-                    child_perm[i], child_perm[j] = child_perm[j], child_perm[i]
+                    a, b = np.random.choice(n, 2, replace=False)
+                    child_perm[a], child_perm[b] = child_perm[b], child_perm[a]
                 t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(np.append(child_perm, t))
 
@@ -222,9 +241,8 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
     init_worker_py(n, adj_bits_np)
     final_evals = {tuple(sol): solver_cython.evaluate_solution_cy(sol) for sol in final_solutions}
     best_sol_tuple = max(final_evals.keys(), key=lambda k: (final_evals[k][0], -final_evals[k][1]))
-    best_sol_score = final_evals[best_sol_tuple]
     
-    print(f"\n🏆 Final best solution score: {best_sol_score}")
+    print(f"\n🏆 Final best solution score: {final_evals[best_sol_tuple]}")
     with open(f"submission_{problem_id}.json", "w") as f:
         json.dump({"decisionVector": [[int(v) for v in best_sol_tuple]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
     print(f"📄 Created submission file: submission_{problem_id}.json")
