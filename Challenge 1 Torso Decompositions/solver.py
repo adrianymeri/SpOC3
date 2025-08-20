@@ -176,7 +176,6 @@ def local_search_numba(solution: np.ndarray, intensity: int, adj_bits: np.ndarra
 # ==============================================================================
 
 def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
-    # ... (unchanged)
     url = PROBLEMS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
     edges = []
@@ -196,7 +195,6 @@ def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
     return n, adj
 
 def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> np.ndarray:
-    # Returns a NumPy array for Numba
     adj_bits = np.zeros(n, dtype=np.uint64)
     for u in range(n):
         bits = 0
@@ -206,22 +204,18 @@ def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> np.ndarray:
     return adj_bits
 
 def _init_worker(adj_bits: np.ndarray, n: int):
-    # Initializer for the multiprocessing pool
     global WORKER_ADJ_BITS, WORKER_N
     WORKER_ADJ_BITS = adj_bits
     WORKER_N = n
 
 def eval_wrapper(solution_np: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
-    # A wrapper to call the Numba function from a multiprocessing pool
     score = evaluate_solution_numba(solution_np, WORKER_ADJ_BITS, WORKER_N)
     return solution_np, score
 
 def local_search_wrapper(args: Tuple[np.ndarray, int]) -> np.ndarray:
-    # A wrapper to call the Numba LS function
     sol, intensity = args
     return local_search_numba(sol, intensity, WORKER_ADJ_BITS, WORKER_N)
 
-# --- Python versions of operators for initial seeding and non-JIT parts ---
 def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
     n = len(p1)
     a, b = sorted(random.sample(range(n), 2))
@@ -234,9 +228,8 @@ def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
             pos = i
             while True:
                 mapped_val = p1[pos]
-                # Find position of mapped_val in p2
                 pos_list = np.where(p2 == mapped_val)[0]
-                if len(pos_list) == 0: break # Should not happen in a valid permutation
+                if len(pos_list) == 0: break
                 pos = pos_list[0]
                 
                 if child[pos] == -1:
@@ -247,13 +240,11 @@ def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
         if child[i] == -1:
             child[i] = p2[i]
     return child
-# --- Rest of the algorithm logic (dominance, selection, seeding) is largely unchanged ---
+
 def dominates(p, q):
     return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
 
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    # This standard NSGA-II function remains unchanged
-    # ... (code omitted for brevity, same as before)
     for p in population:
         p['dominates_set'] = []
         p['dominated_by_count'] = 0
@@ -299,10 +290,8 @@ def score_better(a, b):
     return (a[0] > b[0]) or (a[0] == b[0] and a[1] < b[1])
 
 def persist_best(best_solution, best_score, problem_id):
-    # ... (unchanged)
     pkl_name = f"best_solution_{problem_id}.pkl"
     json_name = f"best_submission_{problem_id}.json"
-    # Convert numpy array to list for pickling/json
     sol_list = [int(x) for x in best_solution]
     with open(pkl_name, "wb") as f:
         pickle.dump({'solution': sol_list, 'score': best_score}, f)
@@ -310,9 +299,6 @@ def persist_best(best_solution, best_score, problem_id):
         json.dump({"decisionVector": [sol_list], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=2)
 
 def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
-    # The main island model logic. It now passes NumPy arrays to workers.
-    # Most logic is the same, with changes noted below.
-    # ... (seeding and island init is similar, but we create numpy arrays)
     num_islands = config['num_islands']
     pop_size_per_island = config['pop_size_per_island']
     generations = config['generations']
@@ -320,15 +306,12 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
     
     adj_bits_np = build_adj_bitsets(n, adj_list)
 
-    # --- Initialize Islands ---
     islands = []
     if os.path.exists(checkpoint_file):
-        # ... (resuming logic)
         print(f"🔄 Resuming from checkpoint...")
         with open(checkpoint_file, 'rb') as f:
             saved_state = pickle.load(f)
         islands = saved_state['islands']
-        # Ensure solutions are numpy arrays after loading
         for island in islands:
             for p in island['population']:
                 p['solution'] = np.array(p['solution'], dtype=np.int64)
@@ -349,7 +332,6 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                 np.random.shuffle(base_perm)
                 perm = base_perm.copy()
                 t = np.random.randint(int(n * 0.1), int(n * 0.9))
-                # *** CHANGE: Store solutions as NumPy arrays ***
                 solution_np = np.append(perm, t).astype(np.int64)
                 population.append({'solution': solution_np})
             
@@ -359,13 +341,11 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
             })
 
     with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_bits_np, n)) as pool:
-        # Initial evaluation
         if start_gen == 0:
             for island in islands:
                 sols_np = [p['solution'] for p in island['population']]
                 results = pool.map(eval_wrapper, sols_np)
                 for sol, score in results:
-                    # Find the matching dict and update it (a bit inefficient but ok for init)
                     for p in island['population']:
                         if np.array_equal(p['solution'], sol):
                             p['score'] = score
@@ -376,22 +356,18 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
             if global_best_solution is not None:
                 persist_best(global_best_solution, global_best_score, problem_id)
 
-        # --- Main Evolution Loop ---
         pbar = tqdm(range(start_gen, generations), desc="🚀 JIT Evolving", initial=start_gen, total=generations)
         for gen in pbar:
             improvement_found_this_gen = False
             
             for island in islands:
-                # Evolve one generation
                 pop = island['population']
-                # ... adaptive mutation logic is the same
                 mutation_rate = island['base_mutation']
                 if island['stagnation_counter'] >= config['stagnation_limit']:
                     mutation_rate = min(0.95, island['base_mutation'] * config['mutation_boost_factor'])
 
                 mating_pool = crowding_selection(pop, len(pop))
                 
-                # Offspring generation
                 offspring_sols_np = []
                 while len(offspring_sols_np) < len(pop):
                     p1, p2 = random.sample(mating_pool, 2)
@@ -404,15 +380,12 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                         c_t = max(0, min(n - 1, c_t + random.randint(-int(n*0.04), int(n*0.04))))
                     offspring_sols_np.append(np.append(child_perm, c_t))
 
-                # *** CHANGE: Call Numba local search wrapper ***
                 ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols_np]
                 improved_offspring = pool.map(local_search_wrapper, ls_args)
 
-                # *** CHANGE: Call Numba evaluation wrapper ***
                 results = pool.map(eval_wrapper, improved_offspring)
                 offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
 
-                # ... selection and elite intensification logic is similar
                 pop = crowding_selection(pop + offspring_pop, len(pop))
                 pop.sort(key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
                 elites_sols = [p['solution'] for p in pop[:config['elite_count']]]
@@ -424,7 +397,6 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                         pop.append({'solution': sol, 'score': score})
                 island['population'] = crowding_selection(pop, len(pop))
                 
-                # ... tracking logic is the same
                 best_in_island = sorted(island['population'], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]
                 if score_better(best_in_island['score'], global_best_score):
                     global_best_score = best_in_island['score']
@@ -440,10 +412,6 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
             if not improvement_found_this_gen: global_stagnation += 1
             pbar.set_postfix({"best_score": global_best_score, "stagnation": global_stagnation})
 
-            # ... Migration and Checkpointing logic remains the same, but handles numpy arrays
-            # (omitted for brevity)
-    
-    # --- Final Result Aggregation ---
     final_population = []
     for island in islands:
         final_population.extend(island['population'])
@@ -452,7 +420,6 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
 
 def create_submission_file(decision_vectors: List[np.ndarray], problem_id: str):
     filename = f"submission_{problem_id}.json"
-    # Convert numpy arrays to lists for JSON
     final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
     submission = { "decisionVector": final_vectors, "problem": problem_id, "challenge": "spoc-3-torso-decompositions" }
     with open(filename, "w") as f: json.dump(submission, f, indent=4)
@@ -460,9 +427,6 @@ def create_submission_file(decision_vectors: List[np.ndarray], problem_id: str):
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    # It's better to seed once for reproducibility if needed, but for searching, time-based is ok.
-    # random.seed(42)
-    # np.random.seed(42)
 
     problem_id = input("🔍 Select problem (easy/medium/hard) [easy]: ").strip().lower() or "easy"
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
@@ -472,11 +436,10 @@ if __name__ == "__main__":
 
     n, adj = load_graph(problem_id)
     
-    # Trigger Numba compilation before starting the main timer
     print("🚀 Compiling JIT functions (one-time warm-up)...")
     dummy_adj = np.zeros(n, dtype=np.uint64)
     dummy_sol = np.arange(n+1, dtype=np.int64)
-    dummy_sol[-1] = n // 2 # Make 't' a reasonable value
+    dummy_sol[-1] = n // 2
     local_search_numba(dummy_sol, 1, dummy_adj, n)
     print("✅ Compilation complete.")
 
