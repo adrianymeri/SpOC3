@@ -12,9 +12,6 @@ Features:
 - Adaptive mutation (boosts when stagnation detected)
 - Checkpointing and best-solution persistence
 - Submission file creation
-
-Usage:
-    python3 solver.py
 """
 import os
 import re
@@ -181,7 +178,7 @@ def _init_worker(adj_bits: List[int], n: int):
     WORKER_N = n
 
 # --------------------
-# Evaluator (cached per process)
+# Evaluator (cached per process) - defensive casts to Python int
 # --------------------
 def bitcount(x: int) -> int:
     try:
@@ -189,17 +186,19 @@ def bitcount(x: int) -> int:
     except Exception:
         return bin(int(x)).count("1")
 
-# tune cache size to avoid memory blowup; per-process LRU
 @lru_cache(maxsize=300000)
 def evaluate_solution_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
+    # Defensive casts: ensure all elements are Python ints (avoid numpy scalars)
     global WORKER_ADJ_BITS, WORKER_N
     if WORKER_ADJ_BITS is None or WORKER_N is None:
         raise RuntimeError("Worker globals not initialized")
+    # make sure t and perm entries are plain ints
+    t = int(solution_tuple[-1])
+    perm = [int(x) for x in solution_tuple[:-1]]
+
     n = WORKER_N
     adj_bits = WORKER_ADJ_BITS
 
-    t = solution_tuple[-1]
-    perm = list(solution_tuple[:-1])
     size = n - t
     if size <= 0:
         return (0, 501)
@@ -210,7 +209,7 @@ def evaluate_solution_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[in
         suffix_mask[i] = curr_mask
         curr_mask |= (1 << perm[i])
 
-    temp = adj_bits[:]  # copy
+    temp = adj_bits[:]  # copy to allow propagation
     max_width = 0
     for i in range(n):
         u = perm[i]
@@ -276,7 +275,6 @@ def smart_torso_shift(solution: List[int], n: int) -> List[int]:
     return neighbor
 
 def vns_local_search(sol: List[int], intensity: int):
-    # local search executed inside a worker process (uses global WORKER_N and cache)
     n = WORKER_N
     best = tuple(int(x) for x in sol)
     best_score = evaluate_solution_bitset_cached(best)
@@ -512,7 +510,6 @@ def sa_intensify(solution: List[int], intensity: int, tabu: Dict[Tuple[int,...],
         if cand in tabu:
             continue
         cand_score = evaluate_solution_bitset_cached(cand)
-        # composite delta: prioritize size increase, penalize width slightly
         delta = (cand_score[0] - curr_score[0]) - (cand_score[1] - curr_score[1]) * 0.0002
         if delta > 0 or math.exp(delta / max(temp, 1e-12)) > random.random():
             curr = cand
@@ -531,40 +528,49 @@ class Island:
         self.pop = pop
 
 def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], run_config: Dict, problem_id: str) -> List[List[int]]:
+    """
+    run_config must be a dict with:
+      - 'general' (dict)
+      - 'pop_size', 'generations', 'local_search_intensity', 'crossover_rate'
+    """
     checkpoint_file = f"checkpoint_islands_{problem_id}.pkl"
     adj_bits = build_adj_bitsets(n, adj_list)
 
-    # Ensure main process can call the cached evaluator (so SA and other main-thread code won't fail)
+    # Ensure main process can call evaluator (so SA from main won't fail)
     _init_worker(adj_bits, n)
 
     island_count = run_config['general'].get('island_count', 4)
     total_pop_per_island = max(8, int(run_config['pop_size'] // island_count))
 
-    # build seed orders
+    # build seed orders (convert to Python ints)
     seed_orders = []
     try:
-        seed_orders.append(min_fill_order(adj_list))
+        s = min_fill_order(adj_list)
+        seed_orders.append([int(x) for x in s])
     except Exception:
         pass
     try:
-        seed_orders.append(min_degree_order(adj_list))
+        s = min_degree_order(adj_list)
+        seed_orders.append([int(x) for x in s])
     except Exception:
         pass
     try:
-        seed_orders.append(greedy_degree_order(adj_list))
+        s = greedy_degree_order(adj_list)
+        seed_orders.append([int(x) for x in s])
     except Exception:
         pass
     # perturb seeds
     for base in list(seed_orders):
         seed_orders.append(list(reversed(base)))
         for _ in range(4):
-            p = base[:]
+            p = [int(x) for x in base]
             for _ in range(max(1, len(p)//150)):
                 i, j = random.sample(range(len(p)), 2)
                 p[i], p[j] = p[j], p[i]
             seed_orders.append(p)
     while len(seed_orders) < 20:
-        seed_orders.append(list(np.random.permutation(n)))
+        # ensure these are python ints
+        seed_orders.append([int(x) for x in np.random.permutation(n)])
 
     # initialize islands
     islands = []
@@ -572,7 +578,7 @@ def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], run_config: Dict
         pop = []
         while len(pop) < total_pop_per_island:
             base = random.choice(seed_orders)
-            perm = base[:]
+            perm = [int(x) for x in base]
             for _ in range(random.randint(0, 6)):
                 perm = inversion_mutation(perm)
                 perm = swap_mutation(perm)
@@ -632,8 +638,8 @@ def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], run_config: Dict
                 while len(offspring) < pop_size:
                     p1 = random.choice(mating_pool)
                     p2 = random.choice(mating_pool)
-                    perm1 = list(p1['solution'][:-1])
-                    perm2 = list(p2['solution'][:-1])
+                    perm1 = [int(x) for x in p1['solution'][:-1]]
+                    perm2 = [int(x) for x in p2['solution'][:-1]]
                     if random.random() < crossover_rate:
                         child_perm = pmx_crossover(perm1, perm2)
                     else:
@@ -727,7 +733,7 @@ def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], run_config: Dict
                     k = int(len(isl.pop) * run_config['general'].get('restart_fraction', CONFIG['general']['restart_fraction']))
                     for i in range(k):
                         base = random.choice(seed_orders)
-                        perm = base[:]
+                        perm = [int(x) for x in base]
                         for _ in range(random.randint(1, 8)):
                             perm = inversion_mutation(perm)
                             perm = swap_mutation(perm)
