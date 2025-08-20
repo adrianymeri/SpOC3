@@ -118,12 +118,16 @@ if __name__ == "__main__":
     archi = pg.archipelago(n=config['islands'], algo=algo, prob=prob, pop_size=config['pop_size'],
                            seed=int(time.time()))
                            
-    # 4. Create and set the initial population
-    total_pop_size = config['islands'] * config['pop_size']
-    initial_pop = udp.create_random_population(total_pop_size)
-    
-    # THIS IS THE CORRECTED LINE
-    archi.set_x(initial_pop)
+    # 4. Create and set the initial population for each island
+    print("🧬 Seeding islands with custom population...")
+    islands = archi.get_islands()
+    pop_size_per_island = config['pop_size']
+
+    for i, isl in enumerate(islands):
+        # Create a valid population for this specific island
+        island_pop_vectors = udp.create_random_population(pop_size_per_island)
+        # Get the population object from the island and set its decision vectors ('x')
+        isl.get_population().set_x(island_pop_vectors)
 
     # 5. Evolve in parallel
     print("🚀 Evolving...")
