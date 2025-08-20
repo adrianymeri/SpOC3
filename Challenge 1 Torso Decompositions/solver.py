@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Memetic Island NSGA-II for SPOC-3, accelerated with Numba JIT for CPU.
+This version contains the definitive fix for the Numba TypingError.
 """
 
 import json
@@ -13,11 +14,9 @@ from tqdm import tqdm
 import multiprocessing
 import os
 import pickle
-import copy
 import numba
 
-# -------------------------
-# Config & Problem Uri map
+# CONFIG & PROBLEM URI MAP
 # -------------------------
 CONFIG = {
     "general": {
@@ -36,9 +35,8 @@ PROBLEMS = {
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# -------------------------
-# Worker globals (for multiprocessing)
-# -------------------------
+# WORKER GLOBALS (for multiprocessing)
+# ------------------------------------
 WORKER_ADJ_BITS = None
 WORKER_N = None
 
@@ -47,7 +45,8 @@ WORKER_N = None
 # ==============================================================================
 
 @numba.jit(nopython=True, fastmath=True)
-def bitcount_numba(x: int) -> int:
+def bitcount_numba(x: np.uint64) -> int:
+    """A Numba-compatible, fast bitcount implementation."""
     c = 0
     while x > 0:
         x &= x - 1
@@ -56,6 +55,7 @@ def bitcount_numba(x: int) -> int:
 
 @numba.jit(nopython=True, fastmath=True)
 def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) -> Tuple[int, int]:
+    """This is the JIT-compiled heart of the optimizer."""
     t = solution[-1]
     perm = solution[:-1]
     size = n - t
@@ -86,10 +86,10 @@ def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) 
             s ^= v_bit
             
             # =================================================================
-            # THIS IS THE CRITICAL FIX.
+            # THIS IS THE CRITICAL FIX
             # The original `np.log2(v_bit)` introduced floating-point math,
             # which contaminated Numba's type inference and caused the crash.
-            # This bit-shifting loop accomplishes the same task using only
+            # This bit-shifting loop calculates the bit index using only
             # integers, which is stable and safe for Numba.
             v = 0
             temp_v_bit = v_bit
@@ -99,15 +99,14 @@ def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) 
             # END OF CRITICAL FIX
             # =================================================================
             
-            temp[v] |= (succ ^ (np.uint64(1) << v))
+            temp[v] |= (succ ^ v_bit)
             
     return size, max_width
 
 @numba.jit(nopython=True, fastmath=True)
 def inversion_mutation_numba(perm: np.ndarray) -> np.ndarray:
     n = len(perm)
-    a = np.random.randint(0, n)
-    b = np.random.randint(0, n)
+    a, b = np.random.randint(0, n), np.random.randint(0, n)
     if a == b: return perm.copy()
     if a > b: a, b = b, a
     res = perm.copy()
@@ -117,8 +116,7 @@ def inversion_mutation_numba(perm: np.ndarray) -> np.ndarray:
 @numba.jit(nopython=True, fastmath=True)
 def swap_mutation_numba(perm: np.ndarray) -> np.ndarray:
     n = len(perm)
-    i = np.random.randint(0, n)
-    j = np.random.randint(0, n)
+    i, j = np.random.randint(0, n), np.random.randint(0, n)
     res = perm.copy()
     res[i], res[j] = res[j], res[i]
     return res
@@ -141,6 +139,8 @@ def local_search_numba(solution: np.ndarray, intensity: int, adj_bits: np.ndarra
                 perm_deleted = np.concatenate((perm[:start], perm[start+block_size:]))
                 insert_pos = np.random.randint(0, len(perm_deleted) + 1)
                 perm = np.concatenate((perm_deleted[:insert_pos], block, perm_deleted[insert_pos:]))
+            else:
+                perm = best_sol[:-1]
             neigh = np.append(perm, best_sol[-1])
         else:
             neigh = best_sol.copy()
@@ -180,9 +180,9 @@ def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
 def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> np.ndarray:
     adj_bits = np.zeros(n, dtype=np.uint64)
     for u in range(n):
-        bits = 0
+        bits = np.uint64(0)
         for v in adj_list[u]:
-            bits |= (1 << v)
+            bits |= (np.uint64(1) << np.uint64(v))
         adj_bits[u] = bits
     return adj_bits
 
@@ -239,7 +239,7 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
         if p['dominated_by_count'] == 0:
             fronts[0].append(p)
     i = 0
-    while i < len(fronts) and fronts[i]:
+    while fronts[i]:
         next_front = []
         for p in fronts[i]:
             for q in p['dominates_set']:
@@ -269,71 +269,44 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
 def score_better(a, b):
     return (a[0] > b[0]) or (a[0] == b[0] and a[1] < b[1])
 
-def persist_best(best_solution, best_score, problem_id):
-    pkl_name = f"best_solution_{problem_id}.pkl"
-    json_name = f"best_submission_{problem_id}.json"
-    sol_list = [int(x) for x in best_solution]
-    with open(pkl_name, "wb") as f:
-        pickle.dump({'solution': sol_list, 'score': best_score}, f)
-    with open(json_name, "w") as f:
-        json.dump({"decisionVector": [sol_list], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=2)
-
 def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
     num_islands = config['num_islands']
     pop_size_per_island = config['pop_size_per_island']
     generations = config['generations']
-    checkpoint_file = f"checkpoint_{problem_id}.pkl"
     adj_bits_np = build_adj_bitsets(n, adj_list)
     islands = []
-    if os.path.exists(checkpoint_file):
-        print(f"🔄 Resuming from checkpoint...")
-        with open(checkpoint_file, 'rb') as f:
-            saved_state = pickle.load(f)
-        islands = saved_state['islands']
-        for island in islands:
-            for p in island['population']:
-                p['solution'] = np.array(p['solution'], dtype=np.int64)
-        start_gen = saved_state['gen'] + 1
-        global_best_score = saved_state['global_best_score']
-        global_best_solution = np.array(saved_state['global_best_solution'], dtype=np.int64)
-        global_stagnation = saved_state['global_stagnation']
-    else:
-        print(f"🏝️ Initializing {num_islands} islands...")
-        start_gen = 0
-        global_best_score = (-1, 999)
-        global_best_solution = None
-        global_stagnation = 0
-        base_perm = np.arange(n, dtype=np.int64)
-        for i in range(num_islands):
-            population = []
-            while len(population) < pop_size_per_island:
-                np.random.shuffle(base_perm)
-                perm = base_perm.copy()
-                t = np.random.randint(int(n * 0.1), int(n * 0.9))
-                solution_np = np.append(perm, t).astype(np.int64)
-                population.append({'solution': solution_np})
-            islands.append({
-                'id': i, 'population': population, 'stagnation_counter': 0,
-                'base_mutation': config['mutation_rate']
-            })
+    print(f"🏝️ Initializing {num_islands} islands...")
+    global_best_score = (-1, 999)
+    global_best_solution = None
+    base_perm = np.arange(n, dtype=np.int64)
+    for i in range(num_islands):
+        population = []
+        while len(population) < pop_size_per_island:
+            np.random.shuffle(base_perm)
+            perm = base_perm.copy()
+            t = np.random.randint(int(n * 0.1), int(n * 0.9))
+            solution_np = np.append(perm, t).astype(np.int64)
+            population.append({'solution': solution_np})
+        islands.append({
+            'id': i, 'population': population, 'stagnation_counter': 0,
+            'base_mutation': config['mutation_rate']
+        })
+
     with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_bits_np, n)) as pool:
-        if start_gen == 0:
-            for island in islands:
-                sols_np = [p['solution'] for p in island['population']]
-                results = pool.map(eval_wrapper, sols_np)
-                for sol, score in results:
-                    for p in island['population']:
-                        if np.array_equal(p['solution'], sol):
-                            p['score'] = score
-                            break
-                    if score_better(score, global_best_score):
-                        global_best_score = score
-                        global_best_solution = sol
-            if global_best_solution is not None:
-                persist_best(global_best_solution, global_best_score, problem_id)
-        pbar = tqdm(range(start_gen, generations), desc="🚀 JIT Evolving", initial=start_gen, total=generations)
+        for island in islands:
+            sols_np = [p['solution'] for p in island['population']]
+            results = pool.map(eval_wrapper, sols_np)
+            for sol, score in results:
+                for p in island['population']:
+                    if np.array_equal(p['solution'], sol):
+                        p['score'] = score
+                        break
+                if score_better(score, global_best_score):
+                    global_best_score = score
+                    global_best_solution = sol
+        
+        pbar = tqdm(range(generations), desc="🚀 JIT Evolving")
         for gen in pbar:
-            improvement_found_this_gen = False
             for island in islands:
                 pop = island['population']
                 mutation_rate = island['base_mutation']
@@ -369,20 +342,18 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                 if score_better(best_in_island['score'], global_best_score):
                     global_best_score = best_in_island['score']
                     global_best_solution = best_in_island['solution']
-                    persist_best(global_best_solution, global_best_score, problem_id)
-                    island['stagnation_counter'] = 0
-                    global_stagnation = 0
-                    improvement_found_this_gen = True
                     tqdm.write(f"✨ Gen {gen+1}, Island {island['id']}: New global best {global_best_score}")
+                    island['stagnation_counter'] = 0
                 else:
                     island['stagnation_counter'] += 1
-            if not improvement_found_this_gen: global_stagnation += 1
-            pbar.set_postfix({"best_score": global_best_score, "stagnation": global_stagnation})
+            pbar.set_postfix({"best_score": global_best_score})
+
     final_population = []
     for island in islands:
         final_population.extend(island['population'])
     final_pareto_front = crowding_selection(final_population, min(20, len(final_population)))
     return [p['solution'] for p in final_pareto_front]
+
 
 def create_submission_file(decision_vectors: List[np.ndarray], problem_id: str):
     filename = f"submission_{problem_id}.json"
@@ -391,20 +362,27 @@ def create_submission_file(decision_vectors: List[np.ndarray], problem_id: str):
     with open(filename, "w") as f: json.dump(submission, f, indent=4)
     print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
 
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     problem_id = input("🔍 Select problem (easy/medium/hard) [easy]: ").strip().lower() or "easy"
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
+
     config = CONFIG['general'].copy()
     config.update(CONFIG[problem_id])
+
     n, adj = load_graph(problem_id)
+    
+    # Trigger Numba compilation before starting the main timer
     print("🚀 Compiling JIT functions (one-time warm-up)...")
     dummy_adj = np.zeros(n, dtype=np.uint64)
     dummy_sol = np.arange(n+1, dtype=np.int64)
     dummy_sol[-1] = n // 2
     local_search_numba(dummy_sol, 1, dummy_adj, n)
     print("✅ Compilation complete.")
+
     start_time = time.time()
     final_solutions = island_model_ga(n, adj, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
+
     create_submission_file(final_solutions, problem_id)
