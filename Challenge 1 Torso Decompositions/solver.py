@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
 Memetic Island NSGA-II for SPOC-3, accelerated with Numba JIT for CPU.
-
-Patch notes:
-- Numba JIT compilation of core functions (evaluation, local search, operators) for massive CPU speedup.
-- Removed @lru_cache in favor of raw JIT execution speed.
-- Functions refactored to be Numba-compatible (using NumPy arrays and np.random).
-- Retains the powerful Island Model structure for superior diversity management.
 """
 
 import json
@@ -50,12 +44,10 @@ WORKER_N = None
 
 # ==============================================================================
 # NUMBA JIT-COMPILED CORE FUNCTIONS
-# These functions are compiled to machine code for maximum performance.
 # ==============================================================================
 
 @numba.jit(nopython=True, fastmath=True)
 def bitcount_numba(x: int) -> int:
-    # A Numba-compatible, fast bitcount implementation.
     c = 0
     while x > 0:
         x &= x - 1
@@ -64,7 +56,6 @@ def bitcount_numba(x: int) -> int:
 
 @numba.jit(nopython=True, fastmath=True)
 def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) -> Tuple[int, int]:
-    # This is the JIT-compiled heart of the optimizer. No Python overhead.
     t = solution[-1]
     perm = solution[:-1]
     size = n - t
@@ -77,7 +68,7 @@ def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) 
         suffix_mask[i] = curr_mask
         curr_mask |= (np.uint64(1) << perm[i])
 
-    temp = adj_bits.copy() # Local copy for this evaluation
+    temp = adj_bits.copy()
     max_width = 0
     for i in range(n):
         u = perm[i]
@@ -89,24 +80,25 @@ def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) 
         if succ == 0:
             continue
         
-        # Propagate edges to successors
         s = succ
         while s > 0:
-            v_bit = s & -s # Isolate the least significant bit
-            s ^= v_bit # Remove it from the set
+            v_bit = s & -s
+            s ^= v_bit
             
-            # --- START OF FIX ---
-            # Original line: v = int(np.log2(v_bit))
-            # The np.log2 call introduced floats, causing a TypingError downstream.
-            # This integer-only version is Numba-friendly and achieves the same goal.
+            # =================================================================
+            # THIS IS THE CRITICAL FIX.
+            # The original `np.log2(v_bit)` introduced floating-point math,
+            # which contaminated Numba's type inference and caused the crash.
+            # This bit-shifting loop accomplishes the same task using only
+            # integers, which is stable and safe for Numba.
             v = 0
             temp_v_bit = v_bit
             while temp_v_bit > 1:
                 temp_v_bit >>= 1
                 v += 1
-            # --- END OF FIX ---
+            # END OF CRITICAL FIX
+            # =================================================================
             
-            # Add all other successors of u as neighbors to v
             temp[v] |= (succ ^ (np.uint64(1) << v))
             
     return size, max_width
@@ -118,7 +110,6 @@ def inversion_mutation_numba(perm: np.ndarray) -> np.ndarray:
     b = np.random.randint(0, n)
     if a == b: return perm.copy()
     if a > b: a, b = b, a
-    
     res = perm.copy()
     res[a:b+1] = res[a:b+1][::-1]
     return res
@@ -136,15 +127,12 @@ def swap_mutation_numba(perm: np.ndarray) -> np.ndarray:
 def local_search_numba(solution: np.ndarray, intensity: int, adj_bits: np.ndarray, n: int) -> np.ndarray:
     best_sol = solution.copy()
     best_size, best_width = evaluate_solution_numba(best_sol, adj_bits, n)
-
     for _ in range(intensity):
         r = np.random.rand()
-        
-        # Create neighbor
-        if r < 0.3: # Inversion
+        if r < 0.3:
             perm = inversion_mutation_numba(best_sol[:-1])
             neigh = np.append(perm, best_sol[-1])
-        elif r < 0.7: # Block Move
+        elif r < 0.7:
             perm = best_sol[:-1].copy()
             block_size = np.random.randint(2, max(3, int(n * 0.02)))
             if n > block_size:
@@ -154,21 +142,16 @@ def local_search_numba(solution: np.ndarray, intensity: int, adj_bits: np.ndarra
                 insert_pos = np.random.randint(0, len(perm_deleted) + 1)
                 perm = np.concatenate((perm_deleted[:insert_pos], block, perm_deleted[insert_pos:]))
             neigh = np.append(perm, best_sol[-1])
-        else: # Torso Shift
+        else:
             neigh = best_sol.copy()
             t = neigh[-1]
             shift = max(1, int(n * 0.05))
             t_new = t + np.random.randint(-shift, shift + 1)
             neigh[-1] = max(0, min(n - 1, t_new))
-
-        # Evaluate neighbor
         neigh_size, neigh_width = evaluate_solution_numba(neigh, adj_bits, n)
-
-        # Dominance check
         if (neigh_size > best_size) or (neigh_size == best_size and neigh_width < best_width):
             best_sol = neigh
             best_size, best_width = neigh_size, neigh_width
-            
     return best_sol
 
 # ==============================================================================
@@ -221,7 +204,6 @@ def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
     a, b = sorted(random.sample(range(n), 2))
     child = np.full(n, -1, dtype=np.int64)
     child[a:b+1] = p1[a:b+1]
-    
     for i in range(a, b + 1):
         val = p2[i]
         if val not in child:
@@ -231,11 +213,9 @@ def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
                 pos_list = np.where(p2 == mapped_val)[0]
                 if len(pos_list) == 0: break
                 pos = pos_list[0]
-                
                 if child[pos] == -1:
                     child[pos] = val
                     break
-    
     for i in range(n):
         if child[i] == -1:
             child[i] = p2[i]
@@ -303,9 +283,7 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
     pop_size_per_island = config['pop_size_per_island']
     generations = config['generations']
     checkpoint_file = f"checkpoint_{problem_id}.pkl"
-    
     adj_bits_np = build_adj_bitsets(n, adj_list)
-
     islands = []
     if os.path.exists(checkpoint_file):
         print(f"🔄 Resuming from checkpoint...")
@@ -334,12 +312,10 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                 t = np.random.randint(int(n * 0.1), int(n * 0.9))
                 solution_np = np.append(perm, t).astype(np.int64)
                 population.append({'solution': solution_np})
-            
             islands.append({
                 'id': i, 'population': population, 'stagnation_counter': 0,
                 'base_mutation': config['mutation_rate']
             })
-
     with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_bits_np, n)) as pool:
         if start_gen == 0:
             for island in islands:
@@ -355,19 +331,15 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                         global_best_solution = sol
             if global_best_solution is not None:
                 persist_best(global_best_solution, global_best_score, problem_id)
-
         pbar = tqdm(range(start_gen, generations), desc="🚀 JIT Evolving", initial=start_gen, total=generations)
         for gen in pbar:
             improvement_found_this_gen = False
-            
             for island in islands:
                 pop = island['population']
                 mutation_rate = island['base_mutation']
                 if island['stagnation_counter'] >= config['stagnation_limit']:
                     mutation_rate = min(0.95, island['base_mutation'] * config['mutation_boost_factor'])
-
                 mating_pool = crowding_selection(pop, len(pop))
-                
                 offspring_sols_np = []
                 while len(offspring_sols_np) < len(pop):
                     p1, p2 = random.sample(mating_pool, 2)
@@ -379,13 +351,10 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                     if random.random() < 0.4:
                         c_t = max(0, min(n - 1, c_t + random.randint(-int(n*0.04), int(n*0.04))))
                     offspring_sols_np.append(np.append(child_perm, c_t))
-
                 ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols_np]
                 improved_offspring = pool.map(local_search_wrapper, ls_args)
-
                 results = pool.map(eval_wrapper, improved_offspring)
                 offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
-
                 pop = crowding_selection(pop + offspring_pop, len(pop))
                 pop.sort(key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
                 elites_sols = [p['solution'] for p in pop[:config['elite_count']]]
@@ -396,7 +365,6 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                     for sol, score in results:
                         pop.append({'solution': sol, 'score': score})
                 island['population'] = crowding_selection(pop, len(pop))
-                
                 best_in_island = sorted(island['population'], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]
                 if score_better(best_in_island['score'], global_best_score):
                     global_best_score = best_in_island['score']
@@ -408,10 +376,8 @@ def island_model_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: 
                     tqdm.write(f"✨ Gen {gen+1}, Island {island['id']}: New global best {global_best_score}")
                 else:
                     island['stagnation_counter'] += 1
-
             if not improvement_found_this_gen: global_stagnation += 1
             pbar.set_postfix({"best_score": global_best_score, "stagnation": global_stagnation})
-
     final_population = []
     for island in islands:
         final_population.extend(island['population'])
@@ -427,24 +393,18 @@ def create_submission_file(decision_vectors: List[np.ndarray], problem_id: str):
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-
     problem_id = input("🔍 Select problem (easy/medium/hard) [easy]: ").strip().lower() or "easy"
     if problem_id not in PROBLEMS: exit("❌ Invalid problem ID. Exiting.")
-
     config = CONFIG['general'].copy()
     config.update(CONFIG[problem_id])
-
     n, adj = load_graph(problem_id)
-    
     print("🚀 Compiling JIT functions (one-time warm-up)...")
     dummy_adj = np.zeros(n, dtype=np.uint64)
     dummy_sol = np.arange(n+1, dtype=np.int64)
     dummy_sol[-1] = n // 2
     local_search_numba(dummy_sol, 1, dummy_adj, n)
     print("✅ Compilation complete.")
-
     start_time = time.time()
     final_solutions = island_model_ga(n, adj, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
-
     create_submission_file(final_solutions, problem_id)
