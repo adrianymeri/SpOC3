@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# This solver uses a compiled Cython module to run a high-performance memetic algorithm.
+# This solver uses a compiled Cython module for a high-performance memetic algorithm.
 
 import os, sys, time, random, pickle, json, urllib.request
 from typing import List, Set, Tuple, Dict
@@ -8,17 +8,17 @@ from tqdm import tqdm
 import multiprocessing
 import solver_cython # Import our compiled C module
 
-# CONFIGURATION - Now we can afford much larger values
+# CONFIGURATION - Parameters are increased for a deeper, more effective search
 # ==============================================================================
 CONFIG = {
     "general": {
         "mutation_rate": 0.5, "crossover_rate": 0.9, "checkpoint_interval": 10,
         "elite_count": 10, "elite_ls_multiplier": 5,
-        "stagnation_limit": 25, "mutation_boost_factor": 1.5,
+        "stagnation_limit": 50, "mutation_boost_factor": 1.5,
     },
-    "easy": {"pop_size": 150, "generations": 1500, "local_search_intensity": 25},
-    "medium": {"pop_size": 200, "generations": 2500, "local_search_intensity": 30},
-    "hard": {"pop_size": 250, "generations": 4000, "local_search_intensity": 40},
+    "easy": {"pop_size": 150, "generations": 2000, "local_search_intensity": 25},
+    "medium": {"pop_size": 200, "generations": 3000, "local_search_intensity": 30},
+    "hard": {"pop_size": 250, "generations": 5000, "local_search_intensity": 40},
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -28,16 +28,12 @@ PROBLEMS = {
 
 # --- Worker Initialization & Wrappers ---
 def init_worker_py(n, adj_bits):
-    # Initialize the Cython module with graph data for each worker process
     solver_cython.init_worker_cython(n, adj_bits)
 
 def eval_wrapper(solution_np):
-    # This wrapper calls our ultra-fast C code
     return (solution_np, solver_cython.evaluate_solution_cy(solution_np))
 
 def local_search_worker(args):
-    # This local search logic remains in safe Python but uses NumPy arrays
-    # and calls the fast C evaluator, giving us a huge speedup.
     solution, intensity = args
     n = len(solution) - 1
     best_sol = solution
@@ -181,11 +177,9 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
 
         pbar = tqdm(range(generations), desc="🚀 Evolving (Hybrid Cython/Python)")
         for gen in pbar:
-            # Your adaptive mutation logic is preserved
             mutation_rate = base_mutation * (config['mutation_boost_factor'] if stagnation_counter >= config['stagnation_limit'] else 1.0)
             mating_pool = crowding_selection(population, pop_size)
             
-            # Offspring generation with your crossover
             offspring_sols = []
             while len(offspring_sols) < pop_size:
                 p1, p2 = random.sample(mating_pool, 2)
@@ -197,16 +191,13 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
                 offspring_sols.append(np.append(child_perm, t))
 
-            # Your memetic step (local search)
             ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
             improved_offspring = pool.map(local_search_worker, ls_args)
 
-            # Evaluate and select
             results = pool.map(eval_wrapper, improved_offspring)
             offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
             population = crowding_selection(population + offspring_pop, pop_size)
             
-            # Your elite intensification logic is preserved
             pop_sorted = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
             elite_sols = [p['solution'] for p in pop_sorted[:config['elite_count']]]
             elite_args = [(sol, config['local_search_intensity'] * config['elite_ls_multiplier']) for sol in elite_sols]
@@ -216,7 +207,6 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 population.extend([{'solution': sol, 'score': score} for sol, score in results])
                 population = crowding_selection(population, pop_size)
             
-            # Tracking
             current_best_score = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]['score']
             if (current_best_score[0] > best_score[0]) or (current_best_score[0] == best_score[0] and current_best_score[1] < best_score[1]):
                 best_score = current_best_score
@@ -229,7 +219,6 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
     final_front = crowding_selection(population, 20)
     final_solutions = [p['solution'] for p in final_front]
     
-    # Final evaluation to find the single best solution for submission
     init_worker_py(n, adj_bits_np)
     final_evals = {tuple(sol): solver_cython.evaluate_solution_cy(sol) for sol in final_solutions}
     best_sol_tuple = max(final_evals.keys(), key=lambda k: (final_evals[k][0], -final_evals[k][1]))
