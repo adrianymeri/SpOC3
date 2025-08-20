@@ -158,7 +158,7 @@ if __name__ == "__main__":
     pop_size_per_island = config['pop_size_per_island']
     
     print(f"🧬 Initializing {num_islands} island populations of size {pop_size_per_island}...")
-    base_perm = np.arange(main_udp.n_nodes, dtype=np.int664)
+    base_perm = np.arange(main_udp.n_nodes, dtype=np.int64)
     island_populations_x = []
     for _ in range(num_islands):
         island_pop = []
