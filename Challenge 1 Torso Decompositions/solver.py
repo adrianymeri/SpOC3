@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# This solver uses a compiled Cython module for high-performance evaluation.
+# This solver uses a compiled Cython module for a high-performance memetic algorithm.
 
 import os
 import sys
@@ -17,11 +17,14 @@ import urllib.request
 import solver_cython
 
 # CONFIGURATION
+# ==============================================================================
 CONFIG = {
-    "general": { "num_islands": os.cpu_count() or 4, "pop_size_per_island": 50, },
-    "easy": { "generations": 500 },
-    "medium": { "generations": 1000 },
-    "hard": { "generations": 1500 },
+    "general": {
+        "mutation_rate": 0.5, "crossover_rate": 0.9, "num_islands": os.cpu_count() or 4,
+    },
+    "easy": {"pop_size_per_island": 40, "generations": 100, "local_search_intensity": 20},
+    "medium": {"pop_size_per_island": 50, "generations": 200, "local_search_intensity": 25},
+    "hard": {"pop_size_per_island": 60, "generations": 300, "local_search_intensity": 30},
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -30,21 +33,17 @@ PROBLEMS = {
 }
 
 # --- Worker initialization for multiprocessing ---
-WORKER_ADJ_BITS = None
-WORKER_N = None
-
 def init_worker_py(n, adj_bits):
-    global WORKER_N, WORKER_ADJ_BITS
-    WORKER_N = n
-    WORKER_ADJ_BITS = adj_bits
-    # IMPORTANT: Initialize the Cython module for this worker process
     solver_cython.init_worker_cython(n, adj_bits)
 
-# --- Wrapper to call the fast Cython function ---
+# --- Wrappers to call the fast Cython functions ---
 def eval_wrapper(solution_np):
     return (solution_np, solver_cython.evaluate_solution_cy(solution_np))
 
-# --- Graph loading and other utilities (simplified) ---
+def local_search_wrapper(args):
+    return solver_cython.local_search_cy(*args)
+
+# --- Graph loading and other utilities ---
 def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
     url = PROBLEMS.get(problem_id, problem_id)
     print(f"📥 Loading graph data for '{problem_id}' from {url} ...")
@@ -74,21 +73,83 @@ def build_adj_bitsets_np(n: int, adj_list: List[Set[int]]) -> np.ndarray:
         adj_bits[u] = val
     return adj_bits
 
+# --- Crossover and NSGA-II Selection ---
+def pmx_crossover_py(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    n = len(p1)
+    a, b = sorted(random.sample(range(n), 2))
+    child = np.full(n, -1, dtype=np.int64)
+    child[a:b+1] = p1[a:b+1]
+    for i in range(a, b + 1):
+        val = p2[i]
+        if val not in child:
+            pos = i
+            while True:
+                mapped = p1[pos]
+                pos = np.where(p2 == mapped)[0][0]
+                if child[pos] == -1:
+                    child[pos] = val
+                    break
+    for i in range(n):
+        if child[i] == -1:
+            child[i] = p2[i]
+    return child
+
+def dominates(p_score, q_score):
+    return (p_score[0] >= q_score[0] and p_score[1] < q_score[1]) or \
+           (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
+
+def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
+    fronts = [[]]
+    for p in population:
+        for q in population:
+            if p is q: continue
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q)
+            elif dominates(q['score'], p['score']): p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    i = 0
+    while fronts[i]:
+        next_front = []
+        for p in fronts[i]:
+            for q in p['dominates_set']:
+                q['dominated_by_count'] -= 1
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        fronts.append(next_front)
+        i += 1
+    new_population = []
+    for front in fronts:
+        if not front: continue
+        if len(new_population) + len(front) > pop_size:
+            for p in front: p['distance'] = 0.0
+            for i_obj in range(2):
+                front.sort(key=lambda p: p['score'][i_obj])
+                front[0]['distance'] = front[-1]['distance'] = float('inf')
+                f_min, f_max = front[0]['score'][i_obj], front[-1]['score'][i_obj]
+                if f_max > f_min:
+                    for j in range(1, len(front) - 1):
+                        front[j]['distance'] += (front[j+1]['score'][i_obj] - front[j-1]['score'][i_obj]) / (f_max - f_min)
+            front.sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(front[:pop_size - len(new_population)])
+            break
+        new_population.extend(front)
+    return new_population
+
 def score_better(a, b):
     return (a[0] > b[0]) or (a[0] == b[0] and a[1] < b[1])
 
-def create_submission_file(solution, problem_id):
+def create_submission_file(solutions, problem_id):
     filename = f"submission_{problem_id}.json"
-    vector = [int(v) for v in solution]
+    vectors = [[int(v) for v in sol] for sol in solutions]
     with open(filename, "w") as f:
-        json.dump({"decisionVector": [vector], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-    print(f"📄 Created submission file: {filename}")
+        json.dump({"decisionVector": vectors, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
+    print(f"📄 Created submission file: {filename} with {len(vectors)} solutions.")
 
-# --- Main algorithm (simplified for clarity) ---
-def simple_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
+# --- Main Memetic Algorithm ---
+def memetic_algorithm_islands(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
     adj_bits_np = build_adj_bitsets_np(n, adj_list)
     pop_size = config['pop_size_per_island']
     generations = config['generations']
+    ls_intensity = config['local_search_intensity']
 
     print(f"🧬 Initializing population of size {pop_size}...")
     population = []
@@ -99,55 +160,54 @@ def simple_ga(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
         population.append({'solution': np.append(base_perm.copy(), t)})
 
     with multiprocessing.Pool(initializer=init_worker_py, initargs=(n, adj_bits_np)) as pool:
-        # Initial evaluation
         results = pool.map(eval_wrapper, [p['solution'] for p in population])
         for sol, score in results:
             for p in population:
-                if np.array_equal(p['solution'], sol):
-                    p['score'] = score
-                    break
+                if np.array_equal(p['solution'], sol): p['score'] = score; break
         
         global_best_score = (-1, 999)
-        global_best_solution = None
 
-        pbar = tqdm(range(generations), desc="🚀 Evolving with Cython")
+        pbar = tqdm(range(generations), desc="🚀 Evolving with Cython (Memetic)")
         for gen in pbar:
-            # Simple tournament selection and evolution
-            offspring = []
-            for _ in range(pop_size):
-                p1 = random.choice(population)
-                p2 = random.choice(population)
-                parent = p1 if score_better(p1['score'], p2['score']) else p2
+            mating_pool = crowding_selection(population, len(population))
+            offspring_sols = []
+            while len(offspring_sols) < len(population):
+                p1, p2 = random.sample(mating_pool, 2)
+                perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
+                if random.random() < config['general']['crossover_rate']:
+                    child_perm = pmx_crossover_py(perm1, perm2)
+                else:
+                    child_perm = perm1.copy()
                 
-                # Mutate
-                new_sol = parent['solution'].copy()
-                perm = new_sol[:-1]
-                i, j = np.random.choice(n, 2, replace=False)
-                perm[i], perm[j] = perm[j], perm[i]
-                new_sol[:-1] = perm
-                offspring.append(new_sol)
+                if random.random() < config['general']['mutation_rate']:
+                    i, j = np.random.choice(n, 2, replace=False)
+                    child_perm[i], child_perm[j] = child_perm[j], child_perm[i]
+                
+                t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                offspring_sols.append(np.append(child_perm, t))
 
-            # Evaluate offspring
-            results = pool.map(eval_wrapper, offspring)
+            ls_args = [(sol, ls_intensity) for sol in offspring_sols]
+            improved_offspring = pool.map(local_search_wrapper, ls_args)
+            
+            results = pool.map(eval_wrapper, improved_offspring)
             offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
 
-            # Combine and select the best
-            combined_pop = sorted(population + offspring_pop, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
-            population = combined_pop[:pop_size]
+            population = crowding_selection(population + offspring_pop, len(population))
 
-            if score_better(population[0]['score'], global_best_score):
-                global_best_score = population[0]['score']
-                global_best_solution = population[0]['solution']
-                pbar.write(f"✨ Gen {gen+1}: New global best {global_best_score}")
+            current_best_score = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]['score']
+            if score_better(current_best_score, global_best_score):
+                global_best_score = current_best_score
+                pbar.write(f"✨ Gen {gen+1}: New best score in population {global_best_score}")
 
             pbar.set_postfix({"best_score": global_best_score})
     
-    return global_best_solution
+    final_front = crowding_selection(population, 20)
+    return [p['solution'] for p in final_front]
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    random.seed(42)
-    np.random.seed(42)
+    random.seed(int(time.time()))
+    np.random.seed(int(time.time()) % (2**32 - 1))
     
     problem_id = input("🔍 Select problem (easy/medium/hard): ").strip().lower() or "easy"
     if problem_id not in PROBLEMS:
@@ -159,8 +219,8 @@ if __name__ == "__main__":
     n, adj = load_graph(problem_id)
     
     start_time = time.time()
-    best_solution = simple_ga(n, adj, run_config, problem_id)
+    best_solutions = memetic_algorithm_islands(n, adj, run_config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
     
-    if best_solution is not None:
-        create_submission_file(best_solution, problem_id)
+    if best_solutions:
+        create_submission_file(best_solutions, problem_id)
