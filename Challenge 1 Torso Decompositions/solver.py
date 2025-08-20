@@ -129,7 +129,7 @@ if __name__ == "__main__":
                            seed=int(time.time()))
     # We must explicitly set the initial population using our custom creator
     initial_pop = udp.create_random_population(config['islands'] * config['pop_size'])
-    archi.set_champions(x=initial_pop)
+    archi.set_x(initial_pop)
 
 
     # 4. Evolve in parallel
