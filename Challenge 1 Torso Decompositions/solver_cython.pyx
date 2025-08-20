@@ -5,11 +5,9 @@
 import numpy as np
 cimport numpy as np
 
-# --- C-level Type Definitions ---
 ctypedef np.int64_t INT64_t
 ctypedef np.uint64_t UINT64_t
 
-# --- Worker Globals (set by Python) ---
 cdef int N
 cdef UINT64_t[:] ADJ_BITS
 
@@ -18,7 +16,6 @@ def init_worker_cython(int n_val, np.ndarray[UINT64_t, ndim=1] adj_bits_val):
     N = n_val
     ADJ_BITS = adj_bits_val
 
-# --- Core C-level Functions ---
 cdef int bitcount_cy(UINT64_t x):
     cdef int c = 0
     while x > 0:
@@ -28,14 +25,11 @@ cdef int bitcount_cy(UINT64_t x):
 
 cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
     cdef int t = solution[-1]
-    
-    # The "Cython Guard" - ensures t is never negative
-    if t < 0:
-        t = 0
+    if t < 0: t = 0
 
     cdef INT64_t[:] perm = solution[:-1]
     cdef int size = N - t
-    if size <= 0: return (0, 999)
+    if size <= 0: return (999, -0) # Return [max_width, -size]
 
     cdef UINT64_t[:] suffix_mask = np.zeros(N, dtype=np.uint64)
     cdef UINT64_t curr_mask = 0
@@ -67,4 +61,4 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
                 v += 1
             temp[v] |= (succ ^ v_bit)
             
-    return (size, max_width)
+    return (max_width, -size) # Note: returning -size for minimization
