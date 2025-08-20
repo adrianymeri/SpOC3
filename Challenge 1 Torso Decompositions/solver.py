@@ -94,7 +94,18 @@ def evaluate_solution_numba(solution: np.ndarray, adj_bits: np.ndarray, n: int) 
         while s > 0:
             v_bit = s & -s # Isolate the least significant bit
             s ^= v_bit # Remove it from the set
-            v = int(np.log2(v_bit)) # Get the index
+            
+            # --- START OF FIX ---
+            # Original line: v = int(np.log2(v_bit))
+            # The np.log2 call introduced floats, causing a TypingError downstream.
+            # This integer-only version is Numba-friendly and achieves the same goal.
+            v = 0
+            temp_v_bit = v_bit
+            while temp_v_bit > 1:
+                temp_v_bit >>= 1
+                v += 1
+            # --- END OF FIX ---
+            
             # Add all other successors of u as neighbors to v
             temp[v] |= (succ ^ (np.uint64(1) << v))
             
@@ -465,6 +476,7 @@ if __name__ == "__main__":
     print("🚀 Compiling JIT functions (one-time warm-up)...")
     dummy_adj = np.zeros(n, dtype=np.uint64)
     dummy_sol = np.arange(n+1, dtype=np.int64)
+    dummy_sol[-1] = n // 2 # Make 't' a reasonable value
     local_search_numba(dummy_sol, 1, dummy_adj, n)
     print("✅ Compilation complete.")
 
