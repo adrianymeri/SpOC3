@@ -66,56 +66,63 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
     return (size, max_width)
 
 # --- C-level Local Search Operators ---
-cdef void inversion_cy(INT64_t[:] perm):
+cdef np.ndarray[INT64_t, ndim=1] inversion_cy(np.ndarray[INT64_t, ndim=1] perm_arr):
+    # This function now returns a new array to avoid side effects
+    cdef INT64_t[:] perm = perm_arr.copy() # Work on a copy
     cdef int n = perm.shape[0], a = rand() % n, b = rand() % n
     cdef int start, end
-    if a == b: return
+    if a == b: return np.asarray(perm) # Return the copied array
     start, end = (a, b) if a < b else (b, a)
     while start < end:
         perm[start], perm[end] = perm[end], perm[start]
         start += 1
         end -= 1
+    return np.asarray(perm)
 
-cdef void block_move_cy(INT64_t[:] perm):
+# ==============================================================================
+# MEMORY-SAFE BLOCK MOVE
+# This new version is not "in-place". It creates and returns a new, correct array,
+# which avoids memory corruption bugs. It uses NumPy's C-API for safety and speed.
+# ==============================================================================
+cdef np.ndarray[INT64_t, ndim=1] block_move_cy(np.ndarray[INT64_t, ndim=1] perm):
     cdef int n = perm.shape[0]
     cdef int block_size = 2 + (rand() % max(1, n // 50))
-    if n <= block_size: return
+    if n <= block_size: return perm.copy()
     
     cdef int start_idx = rand() % (n - block_size)
     cdef int insert_pos = rand() % (n - block_size)
+
+    # Safely extract the parts using slicing
+    cdef np.ndarray[INT64_t, ndim=1] block = perm[start_idx : start_idx + block_size]
+    cdef np.ndarray[INT64_t, ndim=1] perm_without_block = np.delete(perm, np.s_[start_idx : start_idx + block_size])
     
-    # Use a temporary buffer for the block
-    cdef INT64_t[:] block_buffer = np.empty(block_size, dtype=np.int64)
-    block_buffer[:] = perm[start_idx : start_idx + block_size]
-
-    # Shift elements to close the gap
-    if start_idx < insert_pos:
-        perm[start_idx : insert_pos] = perm[start_idx + block_size : insert_pos + block_size]
-    else:
-        perm[insert_pos + block_size : start_idx + block_size] = perm[insert_pos : start_idx]
-
-    # Insert the block
-    perm[insert_pos : insert_pos + block_size] = block_buffer
+    # Safely insert the block into the new position and return the new array
+    return np.insert(perm_without_block, insert_pos, block)
 
 # --- Main Local Search Function (Memetic Step) ---
 cpdef np.ndarray[INT64_t, ndim=1] local_search_cy(np.ndarray[INT64_t, ndim=1] solution, int intensity):
     cdef np.ndarray[INT64_t, ndim=1] best_sol = solution.copy()
     cdef tuple best_score = evaluate_solution_cy(best_sol)
-    cdef np.ndarray[INT64_t, ndim=1] cand_sol
+    cdef np.ndarray[INT64_t, ndim=1] cand_sol, cand_perm
     cdef tuple cand_score
     cdef int shift, t
     cdef double r
 
     cdef int i
     for i in range(intensity):
-        cand_sol = best_sol.copy()
         r = <double>rand() / RAND_MAX
         
-        if r < 0.33:
-            block_move_cy(cand_sol[:-1])
-        elif r < 0.66:
-            inversion_cy(cand_sol[:-1])
+        if r < 0.4:
+            # Apply block move and get a new permutation array
+            cand_perm = block_move_cy(best_sol[:-1])
+            cand_sol = np.append(cand_perm, best_sol[-1])
+        elif r < 0.8:
+            # Apply inversion and get a new permutation array
+            cand_perm = inversion_cy(best_sol[:-1])
+            cand_sol = np.append(cand_perm, best_sol[-1])
         else:
+            # Apply torso shift (this is already safe)
+            cand_sol = best_sol.copy()
             t = cand_sol[-1]
             shift = max(1, N // 20)
             t = max(0, min(N - 1, t + (rand() % (2 * shift + 1)) - shift))
