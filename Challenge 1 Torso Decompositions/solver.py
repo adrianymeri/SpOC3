@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-import os, sys, time, json, urllib.request, subprocess, heapq
+import os, sys, time, json, urllib.request, subprocess, heapq, random
 from typing import List, Set, Tuple, Dict
 import numpy as np
 from tqdm import tqdm
 import multiprocessing
 import pygmo as pg
+from concurrent.futures import ProcessPoolExecutor # <-- THE MISSING IMPORT
 
 # --- Auto-compile Cython module ---
 def compile_cython_module():
@@ -149,7 +150,6 @@ def persist_pareto_front(problem_id: str, solutions_x: np.ndarray, fitnesses_f: 
     if current_hv > best_hv:
         print(f"\n✨ New best hypervolume: {current_hv:,.2f} (previously {best_hv:,.2f}). Saving checkpoint.")
         
-        # Save the full non-dominated front as a submission file
         filename = f"submission_{problem_id}_checkpoint.json"
         with open(filename, "w") as f:
             vectors = [v.astype(np.int64).tolist() for v in solutions_x]
@@ -199,10 +199,8 @@ if __name__ == "__main__":
             non_dominated_indices = pg.non_dominated_front_2d(all_solutions_f)
             best_individuals_x = all_solutions_x[non_dominated_indices]
             
-            # Persist checkpoint if hypervolume has improved
             best_hypervolume = persist_pareto_front(problem_id, best_individuals_x, all_solutions_f[non_dominated_indices], main_udp.n_nodes, best_hypervolume)
 
-            # Prepare for next generation
             for i in range(num_islands):
                 current_island_x = results[i][0]
                 num_to_replace = min(config['migration_size'], len(best_individuals_x))
