@@ -62,4 +62,5 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
                 v += 1
             temp[v] |= (succ ^ v_bit)
             
+    # Return (width, -size) for pygmo-style minimization
     return (max_width, -size)
