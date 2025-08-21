@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, time, json, urllib.request, subprocess, random
+import os, sys, time, json, urllib.request, subprocess, heapq, random
 from typing import List, Set, Tuple, Dict
 import numpy as np
 from tqdm import tqdm
@@ -8,7 +8,8 @@ import pygmo as pg
 
 # --- Auto-compile Cython module ---
 def compile_cython_module():
-    module_name, pyx_file = "solver_cython", "solver_cython.pyx"
+    module_name = "solver_cython"
+    pyx_file = "solver_cython.pyx"
     try: import importlib.util; ext_suffix = importlib.util.EXTENSIONS[0]
     except (ImportError, AttributeError): import sysconfig; ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
     
@@ -17,7 +18,7 @@ def compile_cython_module():
         print(f"🚀 Building/updating Cython module...")
         try:
             subprocess.check_call([sys.executable, "setup.py", "build_ext", "--inplace"])
-            print("✅ Cython module built.")
+            print("✅ Cython module built successfully.")
         except Exception as e:
             print(f"❌ Failed to build Cython module: {e}"); sys.exit(1)
 
@@ -29,13 +30,12 @@ import solver_cython
 CONFIG = {
     "general": {
         "mutation_rate": 0.6, "crossover_rate": 0.9, "num_islands": os.cpu_count() or 8,
-        "elite_count": 8, "elite_ls_multiplier": 4,
-        "stagnation_limit": 50, "mutation_boost_factor": 1.5,
-        "migration_interval": 25, "migration_size": 5,
+        "elite_count": 8, "elite_ls_multiplier": 4, "stagnation_limit": 50, 
+        "mutation_boost_factor": 1.5, "migration_interval": 25, "migration_size": 5,
     },
-    "easy": {"pop_size_per_island": 100, "generations": 2000, "local_search_intensity": 25},
-    "medium": {"pop_size_per_island": 120, "generations": 3000, "local_search_intensity": 30},
-    "hard": {"pop_size_per_island": 150, "generations": 5000, "local_search_intensity": 35},
+    "easy": {"pop_size_per_island": 80, "generations": 2000, "local_search_intensity": 25},
+    "medium": {"pop_size_per_island": 100, "generations": 3000, "local_search_intensity": 30},
+    "hard": {"pop_size_per_island": 120, "generations": 5000, "local_search_intensity": 35},
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -53,8 +53,8 @@ def init_worker(n_val, adj_bits_val):
 
 def eval_wrapper(solution_np: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
     """Wrapper to call the fast Cython evaluator and return a standard (size, width) score."""
-    width, neg_size = solver_cython.evaluate_solution_cy(solution_np)
-    return solution_np, (int(-neg_size), int(width))
+    size, width = solver_cython.evaluate_solution_cy(solution_np)
+    return solution_np, (int(size), int(width))
 
 def local_search_worker(args: Tuple[np.ndarray, int]) -> np.ndarray:
     """A Python-based local search that is executed in parallel and calls the fast C evaluator."""
@@ -68,7 +68,7 @@ def local_search_worker(args: Tuple[np.ndarray, int]) -> np.ndarray:
         r = random.random()
         perm = cand_sol[:-1]
 
-        if r < 0.4: # Inversion Mutation
+        if r < 0.4: # Inversion
             a, b = sorted(random.sample(range(n), 2))
             perm[a:b+1] = perm[a:b+1][::-1]
         elif r < 0.8: # Block Move
@@ -133,17 +133,15 @@ def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
         if child[i] == -1: child[i] = p2[i]
     return child
 
-def dominates(p_score: Tuple[int, int], q_score: Tuple[int, int]) -> bool:
+def dominates(p_score, q_score) -> bool:
     return (p_score[0] >= q_score[0] and p_score[1] < q_score[1]) or \
            (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
 
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
     if len(population) <= pop_size: return population
-    # Standard NSGA-II crowding distance selection logic...
-    # (Omitted for brevity, but it is the full correct implementation)
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
     for p in population:
-        p['dominates_set'], p['dominated_by_count'] = [], 0
         for q in population:
             if p is q: continue
             if dominates(p['score'], q['score']): p['dominates_set'].append(q)
@@ -174,7 +172,7 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
         i += 1
     return new_population
 
-# --- Main Memetic Algorithm Orchestrator ---
+# --- Main Memetic Algorithm ---
 def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
     adj_bits_np = build_adj_bitsets_np(n, adj_list)
     num_islands, pop_size_per_island = config['num_islands'], config['pop_size_per_island']
@@ -210,7 +208,8 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 offspring_sols = []
                 while len(offspring_sols) < len(pop):
                     p1, p2 = random.sample(mating_pool, 2)
-                    child_perm = pmx_crossover(p1['solution'][:-1], p2['solution'][:-1]) if random.random() < config['crossover_rate'] else p1['solution'][:-1].copy()
+                    perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
+                    child_perm = pmx_crossover(perm1, perm2) if random.random() < config['crossover_rate'] else perm1.copy()
                     if random.random() < mutation_rate:
                         a, b = np.random.choice(n, 2, replace=False); child_perm[a], child_perm[b] = child_perm[b], child_perm[a]
                     t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
@@ -231,11 +230,12 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
 
             if gen > 0 and gen % config['migration_interval'] == 0:
                 all_individuals = sorted([ind for island in islands for ind in island], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
-                migrants = [p['solution'] for p in all_individuals[:config['migration_size']]]
+                migrants = [p['solution'] for p in all_individuals[:config['migration_size'] * num_islands]]
                 if migrants:
                     for island in islands:
-                        for j in range(min(len(migrants), config['migration_size'])):
-                            island[-(j+1)]['solution'] = random.choice(migrants)
+                        for j in range(config['migration_size']):
+                            if j < len(island):
+                                island[-(j+1)]['solution'] = random.choice(migrants)
 
             found_better = False
             for island in islands:
@@ -251,16 +251,15 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 stagnation_counter += 1
             pbar.set_postfix({"best_score": best_score, "stagn": stagnation_counter})
     
-    # Final result collection
     final_population = [p for island in islands for p in island]
     final_front = crowding_selection(final_population, 20)
     
     final_solutions = [p['solution'] for p in final_front]
-    final_fitnesses_pygmo = [(-p['score'][0], p['score'][1]) for p in final_front] # Convert to (width, -size)
+    final_fitnesses_pygmo = [(-p['score'][0], p['score'][1]) for p in final_front]
     
     print(f"\n🏆 Final best individual solution (size, width): {best_score}")
-    ref_point = [n, 0] 
-    hv = pg.hypervolume(final_fitnesses_pygmo)
+    ref_point = [n, 501] # Use 501 as worst-case width
+    hv = pg.hypervolume([(f[1], -f[0]) for f in final_fitnesses_pygmo]) # Convert to (width, -size) for pygmo
     final_hv = -hv.compute(ref_point)
     print(f"📈 Final Hypervolume: {final_hv:,.2f}")
 
