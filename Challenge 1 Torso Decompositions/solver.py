@@ -30,8 +30,8 @@ CONFIG = {
     "general": {
         "num_islands": os.cpu_count() or 8,
         "pop_size_per_island": 100,
-        "migration_size": 10, # Number of individuals to migrate
-        "elite_fraction": 0.1, # Fraction of population considered elite for intensification
+        "migration_size": 10,
+        "elite_fraction": 0.1,
         "elite_ls_multiplier": 3,
     },
     "easy": { "migration_interval_gens": 20, "total_generations": 1000, "local_search_intensity": 20 },
@@ -90,35 +90,27 @@ class TorsoProblem:
 # THE EVOLUTIONARY ENGINE FOR A SINGLE ISLAND
 # ==============================================================================
 def evolve_island(args: Tuple[np.ndarray, int, int, float, int]) -> Tuple[np.ndarray, np.ndarray]:
-    """Evolves a single island's population."""
     initial_vectors, generations, ls_intensity, elite_frac, ls_mult = args
     prob = pg.problem(UDP_INSTANCE)
     pop = pg.population(prob=prob, size=0)
     for vec in initial_vectors:
         pop.push_back(x=vec.astype(np.float64))
     
-    # Use pygmo's NSGA-II algorithm, which is implemented in C++
     algo = pg.algorithm(pg.nsga2(gen=generations))
     pop = algo.evolve(pop)
 
-    # Elite Intensification: apply stronger local search to the best individuals
     elite_count = int(len(pop.get_x()) * elite_frac)
     if elite_count > 0:
         fronts = pg.sort_population_mo(points=pop.get_f())
         elite_indices = fronts[0][:elite_count]
         elite_vectors = pop.get_x()[elite_indices]
-
-        # Reuse our Python-based local search, which now calls the fast Cython evaluator
         intensified_elites = [local_search_py(v, ls_intensity * ls_mult) for v in elite_vectors]
-        
-        # Push the improved elites back into the population
         for elite_vec in intensified_elites:
             pop.push_back(x=elite_vec.astype(np.float64))
 
     return pop.get_x(), pop.get_f()
 
 def local_search_py(solution, intensity):
-    """A pure Python local search operator that calls the fast Cython evaluator."""
     n = UDP_INSTANCE.n_nodes
     best_sol = solution.astype(np.int64)
     best_score = UDP_INSTANCE.fitness(best_sol)
@@ -174,7 +166,9 @@ if __name__ == "__main__":
         for evo_step in range(n_evolutions):
             print(f"\n🏝️  Evolution Step {evo_step + 1} / {n_evolutions}...")
             
-            ls_args = (config['local_search_intensity'], config['general']['elite_fraction'], config['general']['elite_ls_multiplier'])
+            # THIS IS THE CORRECTED LINE
+            ls_args = (config['local_search_intensity'], config['elite_fraction'], config['elite_ls_multiplier'])
+            
             args_for_workers = [(pop, config['migration_interval_gens']) + ls_args for pop in island_populations_x]
             results = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
 
@@ -197,12 +191,10 @@ if __name__ == "__main__":
             current_best_score = (int(-current_best_f[1]), int(current_best_f[0]))
             print(f"✨ Best score after step {evo_step + 1}: (size={current_best_score[0]}, width={current_best_score[1]})")
 
-            # Create submission file at each checkpoint
             with open(f"submission_{problem_id}_step{evo_step+1}.json", "w") as f:
                 best_for_submission = [v.astype(np.int64).tolist() for v in best_individuals_x]
                 json.dump({"decisionVector": best_for_submission, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
             print(f"📄 Created checkpoint submission file for step {evo_step+1}")
-
 
     print("\n✅ Evolution complete. Calculating final hypervolume...")
     final_solutions_f = np.concatenate([res[1] for res in results])
