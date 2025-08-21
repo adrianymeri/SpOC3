@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, time, json, urllib.request, subprocess, random
+import os, sys, time, json, urllib.request, subprocess, heapq, random
 from typing import List, Set, Tuple, Dict
 import numpy as np
 from tqdm import tqdm
@@ -29,12 +29,13 @@ import solver_cython
 # ==============================================================================
 CONFIG = {
     "general": {
-        "num_islands": os.cpu_count() or 8, "pop_size_per_island": 100, "migration_size": 10,
-        "elite_fraction": 0.1, "elite_ls_multiplier": 3,
+        "mutation_rate": 0.6, "crossover_rate": 0.9, "num_islands": os.cpu_count() or 8,
+        "elite_count": 8, "elite_ls_multiplier": 4, "stagnation_limit": 50, 
+        "mutation_boost_factor": 1.5, "migration_interval": 25, "migration_size": 5,
     },
-    "easy": { "migration_interval_gens": 20, "total_generations": 1000, "local_search_intensity": 20 },
-    "medium": { "migration_interval_gens": 25, "total_generations": 2000, "local_search_intensity": 25 },
-    "hard": { "migration_interval_gens": 30, "total_generations": 3000, "local_search_intensity": 30 },
+    "easy": {"pop_size_per_island": 80, "generations": 2000, "local_search_intensity": 25},
+    "medium": {"pop_size_per_island": 100, "generations": 3000, "local_search_intensity": 30},
+    "hard": {"pop_size_per_island": 120, "generations": 5000, "local_search_intensity": 35},
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -42,188 +43,239 @@ PROBLEMS = {
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# --- Worker Initialization & Global UDP ---
-UDP_INSTANCE = None
-def init_worker(problem_id):
-    global UDP_INSTANCE
-    UDP_INSTANCE = TorsoProblem(problem_id)
+# --- Worker Functions (for the multiprocessing Pool) ---
+def init_worker(n_val, adj_bits_val):
+    """Initializes the compiled Cython module for each worker process."""
+    solver_cython.init_worker_cython(n_val, adj_bits_val)
+    # Seed each worker differently to ensure diverse random operations
+    random.seed()
+    np.random.seed()
 
-# PYGMO PROBLEM DEFINITION
-# ==============================================================================
-class TorsoProblem:
-    def __init__(self, problem_id: str):
-        self.problem_id = problem_id
-        # This is now only called once in the main process
-        self.n_nodes, self.adj_bits_np = self._load_and_prep_graph(problem_id)
-        # Initialize the Cython module for the main process as well
-        solver_cython.init_worker_cython(self.n_nodes, self.adj_bits_np)
+def eval_wrapper(solution_np: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
+    """Wrapper to call the fast Cython evaluator and return a standard (size, width) score."""
+    size, width = solver_cython.evaluate_solution_cy(solution_np)
+    return solution_np, (int(size), int(width))
 
-    @staticmethod
-    def _load_and_prep_graph(problem_id):
-        url = PROBLEMS[problem_id]
-        print(f"📥 Loading graph data for '{problem_id}'...")
-        edges, max_node = [], 0
-        with urllib.request.urlopen(url) as f:
-            for line in f:
-                if line.startswith(b'#'): continue
-                u, v = map(int, line.strip().split())
-                edges.append((u, v)); max_node = max(max_node, u, v)
-        n = max_node + 1
-        adj = [set() for _ in range(n)]
-        for u, v in edges: adj[u].add(v); adj[v].add(u)
-        print(f"✅ Loaded graph with {n} nodes.")
-        adj_bits = np.zeros(n, dtype=np.uint64)
-        for u in range(n):
-            for v in adj[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
-        return n, adj_bits
-
-    def fitness(self, x):
-        return list(solver_cython.evaluate_solution_cy(np.array(x, dtype=np.int64)))
-
-    def get_bounds(self):
-        lb = [0] * (self.n_nodes + 1)
-        ub = [self.n_nodes - 1] * self.n_nodes + [self.n_nodes]
-        return (lb, ub)
-
-    def get_nobj(self): return 2
-    def get_nix(self): return self.n_nodes + 1
-
-# THE EVOLUTIONARY ENGINE FOR A SINGLE ISLAND
-# ==============================================================================
-def evolve_island(args: Tuple[np.ndarray, int, int, float, int]) -> Tuple[np.ndarray, np.ndarray]:
-    initial_vectors, generations, ls_intensity, elite_frac, ls_mult = args
-    prob = pg.problem(UDP_INSTANCE)
-    pop = pg.population(prob=prob, size=0)
-    for vec in initial_vectors:
-        pop.push_back(x=vec.astype(np.float64))
-    
-    algo = pg.algorithm(pg.nsga2(gen=generations))
-    pop = algo.evolve(pop)
-
-    elite_count = int(len(pop.get_x()) * elite_frac)
-    if elite_count > 0:
-        try:
-            fronts = pg.sort_population_mo(points=pop.get_f())
-            if fronts and len(fronts[0]) > 0:
-                elite_indices = fronts[0][:elite_count]
-                elite_vectors = pop.get_x()[elite_indices]
-                intensified_elites = [local_search_py(v, ls_intensity * ls_mult) for v in elite_vectors]
-                for elite_vec in intensified_elites:
-                    pop.push_back(x=elite_vec.astype(np.float64))
-        except (IndexError, ValueError):
-            pass
-
-    return pop.get_x(), pop.get_f()
-
-def local_search_py(solution, intensity):
-    n = UDP_INSTANCE.n_nodes
-    best_sol = solution.astype(np.int64)
-    best_score = UDP_INSTANCE.fitness(best_sol)
+def local_search_worker(args: Tuple[np.ndarray, int]) -> np.ndarray:
+    """A Python-based local search that is executed in parallel and calls the fast C evaluator."""
+    solution, intensity = args
+    n = len(solution) - 1
+    best_sol = solution
+    _, best_score = eval_wrapper(best_sol)
     
     for _ in range(intensity):
         cand_sol = best_sol.copy()
         r = random.random()
         perm = cand_sol[:-1]
 
-        if r < 0.5:
+        if r < 0.4: # Inversion
             a, b = sorted(random.sample(range(n), 2))
             perm[a:b+1] = perm[a:b+1][::-1]
-        else:
+        elif r < 0.8: # Block Move
+            block_size = random.randint(2, max(3, n // 50))
+            if n > block_size:
+                start = random.randint(0, n - block_size)
+                block = perm[start:start+block_size]
+                perm_deleted = np.delete(perm, np.s_[start:start+block_size])
+                insert_pos = random.randint(0, len(perm_deleted))
+                cand_sol[:-1] = np.insert(perm_deleted, insert_pos, block)
+        else: # Torso Shift
             t = cand_sol[-1]
             shift = max(1, n // 20)
             new_t = t + random.randint(-shift, shift)
-            cand_sol[-1] = max(0, min(n, int(new_t)))
+            cand_sol[-1] = max(0, min(n - 1, int(new_t)))
 
-        cand_score = UDP_INSTANCE.fitness(cand_sol)
+        _, cand_score = eval_wrapper(cand_sol)
 
-        if (cand_score[0] < best_score[0]) or \
-           (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
+        if (cand_score[0] > best_score[0]) or (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
             best_sol = cand_sol
             best_score = cand_score
             
     return best_sol
 
-# --- MAIN ORCHESTRATOR ---
+# --- Core Algorithm Components ---
+def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
+    url = PROBLEMS[problem_id]
+    print(f"📥 Loading graph data for '{problem_id}'...")
+    edges, max_node = [], 0
+    with urllib.request.urlopen(url) as f:
+        for line in f:
+            if line.startswith(b'#'): continue
+            u, v = map(int, line.strip().split())
+            edges.append((u, v)); max_node = max(max_node, u, v)
+    n = max_node + 1
+    adj = [set() for _ in range(n)]
+    for u, v in edges: adj[u].add(v); adj[v].add(u)
+    print(f"✅ Loaded graph with {n} nodes.")
+    return n, adj
+
+def build_adj_bitsets_np(n: int, adj_list: List[Set[int]]) -> np.ndarray:
+    adj_bits = np.zeros(n, dtype=np.uint64)
+    for u in range(n):
+        for v in adj_list[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
+    return adj_bits
+
+def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    n = len(p1)
+    a, b = sorted(random.sample(range(n), 2))
+    child = np.full(n, -1, dtype=np.int64)
+    child[a:b+1] = p1[a:b+1]
+    for i in range(a, b + 1):
+        val = p2[i]
+        if val not in child:
+            pos = i
+            while True:
+                mapped = p1[pos]
+                try: pos = np.where(p2 == mapped)[0][0]
+                except IndexError: break
+                if child[pos] == -1: child[pos] = val; break
+    for i in range(n):
+        if child[i] == -1: child[i] = p2[i]
+    return child
+
+def dominates(p_score, q_score) -> bool:
+    return (p_score[0] >= q_score[0] and p_score[1] < q_score[1]) or \
+           (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
+
+def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
+    if len(population) <= pop_size: return population
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
+    fronts = [[]]
+    for p in population:
+        for q in population:
+            if p is q: continue
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q)
+            elif dominates(q['score'], p['score']): p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    new_population = []
+    i = 0
+    while i < len(fronts) and fronts[i]:
+        next_front = []
+        for p in fronts[i]:
+            for q in p['dominates_set']:
+                q['dominated_by_count'] -= 1
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        if len(new_population) + len(fronts[i]) > pop_size:
+            for p in fronts[i]: p['distance'] = 0.0
+            for i_obj in range(2):
+                fronts[i].sort(key=lambda p: p['score'][i_obj])
+                f_min, f_max = fronts[i][0]['score'][i_obj], fronts[i][-1]['score'][i_obj]
+                fronts[i][0]['distance'] = fronts[i][-1]['distance'] = float('inf')
+                if f_max > f_min:
+                    for j in range(1, len(fronts[i]) - 1):
+                        fronts[i][j]['distance'] += (fronts[i][j+1]['score'][i_obj] - fronts[i][j-1]['score'][i_obj]) / (f_max - f_min)
+            fronts[i].sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(fronts[i][:pop_size - len(new_population)])
+            break
+        new_population.extend(fronts[i])
+        fronts.append(next_front)
+        i += 1
+    return new_population
+
+# --- Main Memetic Algorithm ---
+def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
+    adj_bits_np = build_adj_bitsets_np(n, adj_list)
+    num_islands, pop_size_per_island = config['num_islands'], config['pop_size_per_island']
+    
+    print(f"🧬 Initializing {num_islands} island populations...")
+    islands = []
+    base_perm = np.arange(n, dtype=np.int64)
+    for _ in range(num_islands):
+        island_pop = []
+        for _ in range(pop_size_per_island):
+            np.random.shuffle(base_perm)
+            t = np.random.randint(int(n * 0.1), int(n * 0.5))
+            island_pop.append({'solution': np.append(base_perm.copy(), t)})
+        islands.append(island_pop)
+
+    best_score, stagnation_counter = (-1, 999), 0
+    base_mutation = config['mutation_rate']
+
+    with multiprocessing.Pool(initializer=init_worker, initargs=(n, adj_bits_np)) as pool:
+        for i in range(num_islands):
+            results = pool.map(eval_wrapper, [p['solution'] for p in islands[i]])
+            for sol, score in results:
+                for p in islands[i]:
+                    if np.array_equal(p['solution'], sol): p['score'] = score; break
+        
+        pbar = tqdm(range(config['generations']), desc="🚀 Evolving")
+        for gen in pbar:
+            mutation_rate = base_mutation * (config['mutation_boost_factor'] if stagnation_counter >= config['stagnation_limit'] else 1.0)
+            
+            for i in range(num_islands):
+                pop = islands[i]
+                mating_pool = crowding_selection(pop, len(pop))
+                offspring_sols = []
+                while len(offspring_sols) < len(pop):
+                    p1, p2 = random.sample(mating_pool, 2)
+                    perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
+                    child_perm = pmx_crossover(perm1, perm2) if random.random() < config['crossover_rate'] else perm1.copy()
+                    if random.random() < mutation_rate:
+                        a, b = np.random.choice(n, 2, replace=False); child_perm[a], child_perm[b] = child_perm[b], child_perm[a]
+                    t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                    offspring_sols.append(np.append(child_perm, t))
+
+                improved_offspring = pool.map(local_search_worker, [(sol, config['local_search_intensity']) for sol in offspring_sols])
+                results = pool.map(eval_wrapper, improved_offspring)
+                offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
+                islands[i] = crowding_selection(pop + offspring_pop, len(pop))
+                
+                pop_sorted = sorted(islands[i], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
+                elite_args = [(p['solution'], config['local_search_intensity'] * config['elite_ls_multiplier']) for p in pop_sorted[:config['elite_count']]]
+                if elite_args:
+                    intensified_elites = pool.map(local_search_worker, elite_args)
+                    results = pool.map(eval_wrapper, intensified_elites)
+                    islands[i].extend([{'solution': sol, 'score': score} for sol, score in results])
+                    islands[i] = crowding_selection(islands[i], len(pop))
+
+            if gen > 0 and gen % config['migration_interval'] == 0:
+                all_individuals = sorted([ind for island in islands for ind in island], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
+                migrants = [p['solution'] for p in all_individuals[:config['migration_size'] * num_islands]]
+                if migrants:
+                    for island in islands:
+                        for j in range(config['migration_size']):
+                            if j < len(island):
+                                island[-(j+1)]['solution'] = random.choice(migrants)
+
+            found_better = False
+            for island in islands:
+                current_best_score = sorted(island, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)[0]['score']
+                if (current_best_score[0] > best_score[0]) or (current_best_score[0] == best_score[0] and current_best_score[1] < best_score[1]):
+                    best_score = current_best_score
+                    found_better = True
+            
+            if found_better:
+                stagnation_counter = 0
+                pbar.write(f"✨ Gen {gen+1}: New best score {best_score}")
+            else:
+                stagnation_counter += 1
+            pbar.set_postfix({"best_score": best_score, "stagn": stagnation_counter})
+    
+    final_population = [p for island in islands for p in island]
+    final_front = crowding_selection(final_population, 20)
+    
+    final_solutions = [p['solution'] for p in final_front]
+    final_fitnesses_pygmo = [(-p['score'][0], p['score'][1]) for p in final_front]
+    
+    print(f"\n🏆 Final best individual solution (size, width): {best_score}")
+    ref_point = [n, 501] # Use 501 as worst-case width
+    hv = pg.hypervolume([(f[1], -f[0]) for f in final_fitnesses_pygmo]) # Convert to (width, -size) for pygmo
+    final_hv = -hv.compute(ref_point)
+    print(f"📈 Final Hypervolume: {final_hv:,.2f}")
+
+    with open(f"submission_{problem_id}.json", "w") as f:
+        json.dump({"decisionVector": [s.tolist() for s in final_solutions], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
+    print(f"📄 Created final submission file.")
+
+# --- Entry Point ---
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     problem_id = input("🔍 Select problem (easy/medium/hard): ").strip().lower() or "easy"
     if problem_id not in PROBLEMS: sys.exit("❌ Invalid problem ID.")
     
     config = CONFIG['general'].copy(); config.update(CONFIG[problem_id])
     
-    main_udp = TorsoProblem(problem_id)
-    num_islands, pop_size_per_island = config['num_islands'], config['pop_size_per_island']
-    
-    print(f"🧬 Initializing {num_islands} island populations...")
-    base_perm = np.arange(main_udp.n_nodes, dtype=np.int64)
-    island_populations_x = []
-    for _ in range(num_islands):
-        island_pop = []
-        for _ in range(pop_size_per_island):
-            np.random.shuffle(base_perm)
-            t = np.random.randint(0, main_udp.n_nodes // 2)
-            island_pop.append(np.append(base_perm.copy(), t))
-        island_populations_x.append(np.array(island_pop))
-
-    n_evolutions = config['total_generations'] // config['migration_interval_gens']
-    
-    # Pass the pre-loaded graph data to the workers during initialization
-    init_args = (problem_id,) # This was the line with the bug, but it is not used in this version.
-                              # The UDP is re-initialized in each worker. This is slow but robust.
-
-    with ProcessPoolExecutor(max_workers=num_islands, initializer=init_worker, initargs=init_args) as executor:
-        for evo_step in range(n_evolutions):
-            print(f"\n🏝️  Evolution Step {evo_step + 1} / {n_evolutions}...")
-            
-            ls_args = (config['local_search_intensity'], config['elite_fraction'], config['elite_ls_multiplier'])
-            args_for_workers = [(pop, config['migration_interval_gens']) + ls_args for pop in island_populations_x]
-            results = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
-
-            all_solutions_x = np.concatenate([res[0] for res in results])
-            all_solutions_f = np.concatenate([res[1] for res in results])
-
-            print("🔄 Performing migration...")
-            non_dominated_indices = pg.non_dominated_front_2d(all_solutions_f)
-            best_individuals_x = all_solutions_x[non_dominated_indices]
-            
-            # --- UNCONDITIONAL CHECKPOINT SAVE ---
-            # This block will now run every single time, guaranteeing a file is created.
-            filename = f"submission_{problem_id}_checkpoint.json"
-            with open(filename, "w") as f:
-                vectors = [v.astype(np.int64).tolist() for v in best_individuals_x]
-                json.dump({"decisionVector": vectors, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-            print(f"📄 Created checkpoint submission file: {filename}")
-            # ------------------------------------
-
-            for i in range(num_islands):
-                current_island_x = results[i][0]
-                num_to_replace = min(config['migration_size'], len(best_individuals_x))
-                if num_to_replace > 0:
-                    migrants_indices = np.random.choice(len(best_individuals_x), num_to_replace, replace=False)
-                    current_island_x[:num_to_replace] = best_individuals_x[migrants_indices]
-                np.random.shuffle(current_island_x)
-                island_populations_x[i] = current_island_x
-            
-            best_fitnesses = all_solutions_f[non_dominated_indices]
-            ref_point = [main_udp.n_nodes, 0] 
-            hv = pg.hypervolume(best_fitnesses)
-            current_hv = -hv.compute(ref_point)
-            
-            readable_scores = [(int(-f[1]), int(f[0])) for f in best_fitnesses]
-            best_point = max(readable_scores, key=lambda s: (s[0], -s[1]))
-            
-            print(f"✨ Step complete. Best point: (size={best_point[0]}, width={best_point[1]}). HV: {current_hv:,.2f}")
-
-    print("\n✅ Evolution complete. Finalizing results...")
-    final_solutions_x = np.concatenate(island_populations_x)
-    final_solutions_f = np.array([main_udp.fitness(x) for x in final_solutions_x])
-    
-    non_dominated_idx = pg.non_dominated_front_2d(final_solutions_f)
-    best_fitnesses = final_solutions_f[non_dominated_idx]
-    best_solutions = final_solutions_x[non_dominated_idx]
-    
-    final_hv = -pg.hypervolume(best_fitnesses).compute([main_udp.n_nodes, 0])
-    print(f"🏆 Final Hypervolume: {final_hv:,.2f}")
-
-    with open(f"submission_{problem_id}.json", "w") as f:
-        json.dump({"decisionVector": [s.astype(np.int64).tolist() for s in best_solutions], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-    print(f"📄 Created final submission file: submission_{problem_id}.json")
+    start_time = time.time()
+    n, adj = load_graph(problem_id)
+    memetic_algorithm(n, adj, config, problem_id)
+    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
