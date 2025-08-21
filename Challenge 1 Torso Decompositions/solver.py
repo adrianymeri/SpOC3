@@ -28,14 +28,21 @@ import solver_cython
 # ==============================================================================
 CONFIG = {
     "general": {
-        "num_islands": os.cpu_count() or 8, "pop_size_per_island": 100, "migration_size": 10,
-        "elite_fraction": 0.1, "elite_ls_multiplier": 3,
+        "num_islands": os.cpu_count() or 8,
+        "pop_size_per_island": 100,
+        "migration_size": 10,
+        "elite_fraction": 0.1,
+        "elite_ls_multiplier": 3,
     },
-    "easy": { "migration_interval_gens": 25, "total_generations": 1500, "local_search_intensity": 20 },
-    "medium": { "migration_interval_gens": 30, "total_generations": 2500, "local_search_intensity": 25 },
-    "hard": { "migration_interval_gens": 40, "total_generations": 4000, "local_search_intensity": 30 },
+    "easy": { "migration_interval_gens": 20, "total_generations": 1000, "local_search_intensity": 20 },
+    "medium": { "migration_interval_gens": 25, "total_generations": 2000, "local_search_intensity": 25 },
+    "hard": { "migration_interval_gens": 30, "total_generations": 3000, "local_search_intensity": 30 },
 }
-PROBLEMS = { "easy": "...", "medium": "...", "hard": "..." } # URLs omitted for brevity
+PROBLEMS = {
+    "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
+    "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
+    "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
+}
 
 # --- Worker Initialization & Global UDP ---
 UDP_INSTANCE = None
@@ -104,7 +111,6 @@ def evolve_island(args: Tuple[np.ndarray, int, int, float, int]) -> Tuple[np.nda
                 for elite_vec in intensified_elites:
                     pop.push_back(x=elite_vec.astype(np.float64))
         except (IndexError, ValueError):
-            # This can happen with a poor quality population, safe to skip
             pass
 
     return pop.get_x(), pop.get_f()
@@ -143,8 +149,10 @@ if __name__ == "__main__":
     if problem_id not in PROBLEMS: sys.exit("❌ Invalid problem ID.")
     
     config = CONFIG['general'].copy(); config.update(CONFIG[problem_id])
+    
     main_udp = TorsoProblem(problem_id)
-    num_islands, pop_size_per_island = config['num_islands'], config['pop_size_per_island']
+    num_islands = config['num_islands']
+    pop_size_per_island = config['pop_size_per_island']
     
     print(f"🧬 Initializing {num_islands} island populations...")
     base_perm = np.arange(main_udp.n_nodes, dtype=np.int64)
@@ -167,19 +175,19 @@ if __name__ == "__main__":
             ls_args = (config['local_search_intensity'], config['elite_fraction'], config['elite_ls_multiplier'])
             args_for_workers = [(pop, config['migration_interval_gens']) + ls_args for pop in island_populations_x]
             
-            # THE FIX is here: the results from workers are the NEW populations
-            new_island_populations = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
+            results = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
             
-            island_populations_x = [res[0] for res in new_island_populations]
-            all_solutions_f = np.concatenate([res[1] for res in new_island_populations])
+            # The results contain the new populations for the next step
+            island_populations_x = [res[0] for res in results]
+            all_solutions_f = np.concatenate([res[1] for res in results])
             
             print("🔄 Performing migration...")
             non_dominated_indices = pg.non_dominated_front_2d(all_solutions_f)
-            best_overall_x = np.concatenate([res[0] for res in new_island_populations])[non_dominated_indices]
+            best_overall_x = np.concatenate([res[0] for res in results])[non_dominated_indices]
 
             for i in range(num_islands):
                 current_island_x = island_populations_x[i]
-                num_to_replace = min(config['migration_size'], len(best_overall_x))
+                num_to_replace = min(config['migration_size'], len(best_overall_x), len(current_island_x))
                 if num_to_replace > 0:
                     migrants_indices = np.random.choice(len(best_overall_x), num_to_replace, replace=False)
                     current_island_x[:num_to_replace] = best_overall_x[migrants_indices]
@@ -199,7 +207,6 @@ if __name__ == "__main__":
                 json.dump({"decisionVector": [v.astype(np.int64).tolist() for v in best_overall_x], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
             print(f"📄 Created checkpoint submission file for step {evo_step+1}")
 
-
     print("\n✅ Evolution complete. Finalizing results...")
     final_solutions_x = np.concatenate(island_populations_x)
     final_solutions_f = np.array([main_udp.fitness(x) for x in final_solutions_x])
@@ -208,8 +215,6 @@ if __name__ == "__main__":
     best_fitnesses = final_solutions_f[non_dominated_idx]
     best_solutions = final_solutions_x[non_dominated_idx]
     
-    # Final submission and hypervolume calculation
-    # ... (code omitted for brevity, it's correct from the previous version) ...
     readable_scores = [(int(-f[1]), int(f[0])) for f in best_fitnesses]
     best_idx = max(range(len(readable_scores)), key=lambda i: (readable_scores[i][0], -readable_scores[i][1]))
     best_solution = best_solutions[best_idx]
