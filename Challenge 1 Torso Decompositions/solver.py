@@ -27,16 +27,10 @@ import solver_cython
 # CONFIGURATION
 # ==============================================================================
 CONFIG = {
-    "general": {
-        "num_islands": os.cpu_count() or 8,
-        "pop_size_per_island": 100,
-        "migration_size": 10,
-        "elite_fraction": 0.1,
-        "elite_ls_multiplier": 3,
-    },
-    "easy": { "migration_interval_gens": 20, "total_generations": 1000, "local_search_intensity": 20 },
-    "medium": { "migration_interval_gens": 25, "total_generations": 2000, "local_search_intensity": 25 },
-    "hard": { "migration_interval_gens": 30, "total_generations": 3000, "local_search_intensity": 30 },
+    "general": { "num_islands": os.cpu_count() or 8, "pop_size_per_island": 100, "migration_size": 10 },
+    "easy": { "migration_interval_gens": 25, "total_generations": 1500 },
+    "medium": { "migration_interval_gens": 30, "total_generations": 2500 },
+    "hard": { "migration_interval_gens": 40, "total_generations": 4000 },
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -46,22 +40,26 @@ PROBLEMS = {
 
 # --- Worker Initialization & Global UDP ---
 UDP_INSTANCE = None
-def init_worker(problem_id):
+def init_worker(n_nodes, adj_bits_np, problem_id):
+    """Initializes the problem object with pre-loaded data for each worker."""
     global UDP_INSTANCE
-    UDP_INSTANCE = TorsoProblem(problem_id)
+    UDP_INSTANCE = TorsoProblem(problem_id, n_nodes, adj_bits_np)
 
 # PYGMO PROBLEM DEFINITION
 # ==============================================================================
 class TorsoProblem:
-    def __init__(self, problem_id: str):
-        self.problem_id = problem_id
-        self.n_nodes, self.adj_bits_np = self._load_and_prep_graph(problem_id)
+    def __init__(self, problem_id: str, n_nodes=None, adj_bits_np=None):
+        if n_nodes is None: # Only called once in main process
+            print(f"📥 Loading graph data for '{problem_id}'...")
+            self.n_nodes, self.adj_bits_np = self._load_and_prep_graph(problem_id)
+        else: # Workers receive pre-loaded data
+            self.n_nodes, self.adj_bits_np = n_nodes, adj_bits_np
+        
         solver_cython.init_worker_cython(self.n_nodes, self.adj_bits_np)
 
     @staticmethod
     def _load_and_prep_graph(problem_id):
         url = PROBLEMS[problem_id]
-        print(f"📥 Loading graph data for '{problem_id}' (worker)...")
         edges, max_node = [], 0
         with urllib.request.urlopen(url) as f:
             for line in f:
@@ -71,6 +69,7 @@ class TorsoProblem:
         n = max_node + 1
         adj = [set() for _ in range(n)]
         for u, v in edges: adj[u].add(v); adj[v].add(u)
+        print(f"✅ Loaded graph with {n} nodes.")
         adj_bits = np.zeros(n, dtype=np.uint64)
         for u in range(n):
             for v in adj[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
@@ -89,54 +88,17 @@ class TorsoProblem:
 
 # THE EVOLUTIONARY ENGINE FOR A SINGLE ISLAND
 # ==============================================================================
-def evolve_island(args: Tuple[np.ndarray, int, int, float, int]) -> Tuple[np.ndarray, np.ndarray]:
-    initial_vectors, generations, ls_intensity, elite_frac, ls_mult = args
+def evolve_island(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
+    """Evolves a single island's population using pygmo's C++ NSGA2."""
+    initial_vectors, generations = args
     prob = pg.problem(UDP_INSTANCE)
     pop = pg.population(prob=prob, size=0)
     for vec in initial_vectors:
         pop.push_back(x=vec.astype(np.float64))
     
     algo = pg.algorithm(pg.nsga2(gen=generations))
-    pop = algo.evolve(pop)
-
-    elite_count = int(len(pop.get_x()) * elite_frac)
-    if elite_count > 0:
-        fronts = pg.sort_population_mo(points=pop.get_f())
-        elite_indices = fronts[0][:elite_count]
-        elite_vectors = pop.get_x()[elite_indices]
-        intensified_elites = [local_search_py(v, ls_intensity * ls_mult) for v in elite_vectors]
-        for elite_vec in intensified_elites:
-            pop.push_back(x=elite_vec.astype(np.float64))
-
-    return pop.get_x(), pop.get_f()
-
-def local_search_py(solution, intensity):
-    n = UDP_INSTANCE.n_nodes
-    best_sol = solution.astype(np.int64)
-    best_score = UDP_INSTANCE.fitness(best_sol)
-    
-    for _ in range(intensity):
-        cand_sol = best_sol.copy()
-        r = random.random()
-        perm = cand_sol[:-1]
-
-        if r < 0.5: # Inversion
-            a, b = sorted(random.sample(range(n), 2))
-            perm[a:b+1] = perm[a:b+1][::-1]
-        else: # Torso Shift
-            t = cand_sol[-1]
-            shift = max(1, n // 20)
-            new_t = t + random.randint(-shift, shift)
-            cand_sol[-1] = max(0, min(n, int(new_t)))
-
-        cand_score = UDP_INSTANCE.fitness(cand_sol)
-
-        if (cand_score[0] < best_score[0]) or \
-           (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
-            best_sol = cand_sol
-            best_score = cand_score
-            
-    return best_sol
+    final_pop = algo.evolve(pop)
+    return final_pop.get_x(), final_pop.get_f()
 
 # --- MAIN ORCHESTRATOR ---
 if __name__ == "__main__":
@@ -162,14 +124,13 @@ if __name__ == "__main__":
 
     n_evolutions = config['total_generations'] // config['migration_interval_gens']
     
-    with ProcessPoolExecutor(max_workers=num_islands, initializer=init_worker, initargs=(problem_id,)) as executor:
+    # Pass the pre-loaded graph data to the workers when they are created
+    init_args = (main_udp.n_nodes, main_udp.adj_bits_np, problem_id)
+    with ProcessPoolExecutor(max_workers=num_islands, initializer=init_worker, initargs=init_args) as executor:
         for evo_step in range(n_evolutions):
             print(f"\n🏝️  Evolution Step {evo_step + 1} / {n_evolutions}...")
             
-            # THIS IS THE CORRECTED LINE
-            ls_args = (config['local_search_intensity'], config['elite_fraction'], config['elite_ls_multiplier'])
-            
-            args_for_workers = [(pop, config['migration_interval_gens']) + ls_args for pop in island_populations_x]
+            args_for_workers = [(pop, config['migration_interval_gens']) for pop in island_populations_x]
             results = list(tqdm(executor.map(evolve_island, args_for_workers), total=num_islands, desc="Evolving islands"))
 
             all_solutions_x = np.concatenate([res[0] for res in results])
@@ -180,28 +141,54 @@ if __name__ == "__main__":
             best_individuals_x = all_solutions_x[non_dominated_indices]
 
             for i in range(num_islands):
-                current_island_x = results[i][0]
+                current_island_x = island_populations_x[i] # Use the state before evolution
                 num_to_replace = min(config['migration_size'], len(best_individuals_x), len(current_island_x))
                 if num_to_replace > 0:
                     migrants_indices = np.random.choice(len(best_individuals_x), num_to_replace, replace=False)
+                    # Replace the first 'n' individuals with migrants
                     current_island_x[:num_to_replace] = best_individuals_x[migrants_indices]
+                # Shuffle the island to mix migrants with the existing population
+                np.random.shuffle(current_island_x)
                 island_populations_x[i] = current_island_x
 
-            current_best_f = min(all_solutions_f.tolist(), key=lambda f: (f[0], f[1]))
-            current_best_score = (int(-current_best_f[1]), int(current_best_f[0]))
-            print(f"✨ Best score after step {evo_step + 1}: (size={current_best_score[0]}, width={current_best_score[1]})")
-
+            # --- Occasional Reporting & Submission File Creation ---
+            best_fitnesses = all_solutions_f[non_dominated_indices]
+            ref_point = [main_udp.n_nodes, 0]
+            hv = pg.hypervolume(best_fitnesses)
+            current_hv = -hv.compute(ref_point)
+            
+            # Find the single best point for display
+            readable_scores = [(int(-f[1]), int(f[0])) for f in best_fitnesses]
+            best_point = max(readable_scores, key=lambda s: (s[0], -s[1]))
+            
+            print(f"✨ Step {evo_step + 1} complete. Best point: (size={best_point[0]}, width={best_point[1]}). Hypervolume: {current_hv:,.2f}")
+            
+            # Save a checkpoint submission file
             with open(f"submission_{problem_id}_step{evo_step+1}.json", "w") as f:
                 best_for_submission = [v.astype(np.int64).tolist() for v in best_individuals_x]
                 json.dump({"decisionVector": best_for_submission, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
             print(f"📄 Created checkpoint submission file for step {evo_step+1}")
 
-    print("\n✅ Evolution complete. Calculating final hypervolume...")
+
+    print("\n✅ Evolution complete. Finalizing results...")
     final_solutions_f = np.concatenate([res[1] for res in results])
+    final_solutions_x = np.concatenate([res[0] for res in results])
     non_dominated_idx = pg.non_dominated_front_2d(final_solutions_f)
     best_fitnesses = final_solutions_f[non_dominated_idx]
+    best_solutions = final_solutions_x[non_dominated_idx]
+    
+    readable_scores = [(int(-f[1]), int(f[0])) for f in best_fitnesses]
+    best_idx = max(range(len(readable_scores)), key=lambda i: (readable_scores[i][0], -readable_scores[i][1]))
+    best_solution = best_solutions[best_idx]
+    best_score = readable_scores[best_idx]
+    
+    print(f"\n🏆 Final best individual solution (size, width): {best_score}")
     
     ref_point = [main_udp.n_nodes, 0] 
     hv = pg.hypervolume(best_fitnesses)
     final_hv = -hv.compute(ref_point)
-    print(f"🏆 Final Hypervolume: {final_hv:,.2f}")
+    print(f"📈 Final Hypervolume: {final_hv:,.2f}")
+
+    with open(f"submission_{problem_id}.json", "w") as f:
+        json.dump({"decisionVector": [s.astype(np.int64).tolist() for s in best_solutions], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
+    print(f"📄 Created final submission file: submission_{problem_id}.json")
