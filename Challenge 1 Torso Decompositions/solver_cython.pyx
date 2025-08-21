@@ -29,7 +29,6 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
 
     cdef INT64_t[:] perm = solution[:-1]
     cdef int size = N - t
-    # Return a fitness vector pygmo can MINIMIZE: [width, -size]
     if size <= 0: return (501, -0)
 
     cdef UINT64_t[:] suffix_mask = np.zeros(N, dtype=np.uint64)
@@ -49,7 +48,7 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
         succ = temp[u] & suffix_mask[i]
         out_deg = bitcount_cy(succ)
         if out_deg > max_width: max_width = out_deg
-        if max_width > 500: return (501, -size) # Enforce width constraint
+        if max_width > 500: return (501, -size)
         if succ == 0: continue
         
         s = succ
