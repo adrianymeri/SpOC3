@@ -29,7 +29,7 @@ cpdef tuple evaluate_solution_cy(np.ndarray[INT64_t, ndim=1] solution):
 
     cdef INT64_t[:] perm = solution[:-1]
     cdef int size = N - t
-    if size <= 0: return (501, 0) # Return normal (size, width)
+    if size <= 0: return (0, 501)
 
     cdef UINT64_t[:] suffix_mask = np.zeros(N, dtype=np.uint64)
     cdef UINT64_t curr_mask = 0
