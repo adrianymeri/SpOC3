@@ -30,7 +30,7 @@ import solver_cython
 CONFIG = {
     "general": {
         "mutation_rate": 0.6, "crossover_rate": 0.9, "num_islands": os.cpu_count() or 8,
-        "elite_count": 8, "elite_ls_multiplier": 4, "stagnation_limit": 50,
+        "elite_count": 8, "elite_ls_multiplier": 4, "stagnation_limit": 50, 
         "mutation_boost_factor": 1.5, "migration_interval": 25, "migration_size": 5,
     },
     "easy": {"pop_size_per_island": 80, "generations": 2000, "local_search_intensity": 25},
@@ -81,7 +81,6 @@ def local_search_worker(args: Tuple[np.ndarray, int]) -> np.ndarray:
             cand_sol[-1] = max(0, min(n - 1, int(new_t)))
 
         _, cand_score = eval_wrapper(cand_sol)
-
         if (cand_score[0] > best_score[0]) or (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
             best_sol = cand_sol
             best_score = cand_score
@@ -167,24 +166,6 @@ def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
         i += 1
     return new_population
 
-# --- NEW CHECKPOINTING FUNCTION ---
-def persist_checkpoint(problem_id: str, islands: List[List[Dict]]):
-    """Saves the entire non-dominated front from all islands to a submission file."""
-    filename = f"submission_{problem_id}_checkpoint.json"
-    
-    # Gather all individuals from all islands
-    all_individuals = [ind for island in islands for ind in island]
-    
-    # Find the non-dominated front
-    final_front = crowding_selection(all_individuals, 20) # Get up to 20 best solutions
-    final_solutions = [p['solution'] for p in final_front]
-
-    # Write to the submission file
-    with open(filename, "w") as f:
-        json.dump({"decisionVector": [s.tolist() for s in final_solutions], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=4)
-    tqdm.write(f"📄 Checkpoint file updated: {filename} with {len(final_solutions)} solutions.")
-
-
 # --- Main Memetic Algorithm ---
 def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
     adj_bits_np = build_adj_bitsets_np(n, adj_list)
@@ -221,8 +202,7 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
                 offspring_sols = []
                 while len(offspring_sols) < len(pop):
                     p1, p2 = random.sample(mating_pool, 2)
-                    perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
-                    child_perm = pmx_crossover(perm1, perm2) if random.random() < config['crossover_rate'] else perm1.copy()
+                    child_perm = pmx_crossover(p1['solution'][:-1], p2['solution'][:-1]) if random.random() < config['crossover_rate'] else p1['solution'][:-1].copy()
                     if random.random() < mutation_rate:
                         a, b = np.random.choice(n, 2, replace=False); child_perm[a], child_perm[b] = child_perm[b], child_perm[a]
                     t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
@@ -260,21 +240,20 @@ def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id
             if found_better:
                 stagnation_counter = 0
                 pbar.write(f"✨ Gen {gen+1}: New best score {best_score}")
-                # Save checkpoint file whenever a new best score is found
-                persist_checkpoint(problem_id, islands)
             else:
                 stagnation_counter += 1
             pbar.set_postfix({"best_score": best_score, "stagn": stagnation_counter})
     
-    # --- Final result collection and submission ---
+    # Final result collection
     final_population = [p for island in islands for p in island]
     final_front = crowding_selection(final_population, 20)
     
     final_solutions = [p['solution'] for p in final_front]
-    final_fitnesses_pygmo = [(p['score'][1], -p['score'][0]) for p in final_front] # Convert to (width, -size)
+    # Convert to pygmo's minimization format [width, -size] for hypervolume
+    final_fitnesses_pygmo = [(p['score'][1], -p['score'][0]) for p in final_front]
     
     print(f"\n🏆 Final best individual solution (size, width): {best_score}")
-    ref_point = [n, 501]
+    ref_point = [n, 0] 
     hv = pg.hypervolume(final_fitnesses_pygmo)
     final_hv = -hv.compute(ref_point)
     print(f"📈 Final Hypervolume: {final_hv:,.2f}")
