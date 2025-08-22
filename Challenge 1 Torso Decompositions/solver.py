@@ -1,414 +1,392 @@
 #!/usr/bin/env python3
 """
-Definitive Memetic NSGA-II Solver for SPOC-3 Torso Decompositions.
+solver_mosa.py
 
-This version combines the best of all previous scripts:
-- It uses the user's proven (but technically incorrect) evaluation function as a
-  powerful heuristic to guide the multi-objective search internally.
-- It uses a second, officially-correct evaluation function to report the true
-  score and calculate the hypervolume for target-checking.
-- It is robust against OverflowErrors and TypeError bugs.
-- It uses the user's successful hyperparameter configuration.
+Multi-Objective Simulated Annealing (MOSA) solver for SPOC-3 torso decompositions.
+Designed to run on a powerful multi-core server.
+
+Features:
+- Fast exact evaluator using integer bitsets (per-process LRU cache).
+- MOSA main loop with archive (Pareto) maintenance.
+- Seeding from data folder and optional seed JSON file.
+- Path relinking and intensification.
+- Parallel final exact re-evaluation and output submission file.
+- CLI options to fully utilize the machine.
 """
 
+import argparse
 import json
-import random
-import time
 import math
-import numpy as np
-from typing import List, Set, Tuple, Dict
 import os
 import pickle
+import random
+import sys
+import time
 from functools import lru_cache
-import pygmo as pg
+from typing import Dict, List, Set, Tuple
+
+import numpy as np
 from tqdm import tqdm
 import multiprocessing
 
+# Try to import pygmo for hypervolume; if not available, we'll skip HV printing.
+try:
+    import pygmo as pg
+    HAVE_PYGMO = True
+except ImportError:
+    HAVE_PYGMO = False
+
 # -------------------------
-# Config & Problem Data (with correct final targets)
+# CLI and default params
 # -------------------------
-CONFIG = {
-    "general": {
-        "mutation_rate": 0.5,
-        "crossover_rate": 0.9,
-        "checkpoint_interval": 10, # Checkpoint less often on long runs
-        "elite_count": 10,           # Increased from 6
-        "elite_ls_multiplier": 5,    # Increased from 4
-        "stagnation_limit": 15,      # Allow more time before boosting mutation
-        "mutation_boost_factor": 1.8,
-        "improvement_factor": 0.1,
-    },
-    "easy": {
-        "pop_size": 250,              # Increased from 120
-        "generations": 500,           # Increased from 300
-        "local_search_intensity": 20, # Slightly increased from 18
-        "target_hv": -1829919
-    },
-    "medium": {
-        "pop_size": 300,              # Increased from 150
-        "generations": 600,           # Increased from 400
-        "local_search_intensity": 25, # Slightly increased from 22
-        "target_hv": -1745122
-    },
-    "hard": {
-        "pop_size": 400,              # Increased from 200
-        "generations": 1200,          # Increased from 800
-        "local_search_intensity": 35, # Slightly increased from 30
-        "target_hv": -5493062
-    },
+DEFAULTS = {
+    "initial_temp": 1.0,
+    "final_temp": 1e-5,
+    "cooling_rate": 0.9995,
+    "steps_per_temp": 200,
+    "max_steps": 200000,
+    "workers": max(1, multiprocessing.cpu_count()),
+    "relink_interval": 5000,
+    "intensify_interval": 4000,
+    "intensify_iters": 120,
+    "archive_cap": 5000,
+    "seed_file": None,
+    "data_dir": "data",
+    "log_every": 1000,
+    "restart_patience": 20000,
 }
 
-# -------------------------
-# Worker Globals
-# -------------------------
-WORKER_ADJ_SETS = None
-WORKER_N = None
 
 # -------------------------
-# Graph Loading & Initialization
+# Graph loading & bitset builder
 # -------------------------
-def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
-    filepath = f"./{problem_id}.gr"
-    print(f"📥 Loading graph data for '{problem_id}' from '{filepath}'...")
+def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List[Set[int]]]:
+    """Load the .gr file from local data_dir/<problem>.gr."""
+    path = os.path.join(data_dir, f"{problem_id}.gr")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Graph file not found: {path}. Please create a 'data' directory and place it there.")
+    
     edges = []
     max_node = -1
-    with open(filepath, 'r') as f:
+    with open(path, "r") as f:
         for line in f:
-            if line.startswith('#'): continue
-            u, v = map(int, line.strip().split())
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            u, v = int(parts[0]), int(parts[1])
             edges.append((u, v))
             max_node = max(max_node, u, v)
+    
     n = max_node + 1
     adj = [set() for _ in range(n)]
     for u, v in edges:
         adj[u].add(v)
         adj[v].add(u)
-    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
+        
+    print(f"✅ Graph loaded: n={n}, edges={len(edges)} from {path}")
     return n, adj
 
-def _init_worker(adj_sets: List[Set[int]], n: int):
-    global WORKER_ADJ_SETS, WORKER_N
-    WORKER_ADJ_SETS, WORKER_N = adj_sets, n
+
+def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> List[int]:
+    bits = [0] * n
+    for u in range(n):
+        b = 0
+        for v in adj_list[u]:
+            b |= (1 << v)
+        bits[u] = b
+    return bits
+
 
 # -------------------------
-# Dual Evaluation Functions
+# Per-process worker globals & initializer
 # -------------------------
-@lru_cache(maxsize=500000)
-def internal_heuristic_evaluation(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
-    n, adj_sets = WORKER_N, WORKER_ADJ_SETS
-    t, perm = solution_tuple[-1], list(solution_tuple[:-1])
+WORKER_ADJ_BITS = None
+WORKER_N = None
+
+
+def _init_worker(adj_bits: List[int], n: int):
+    global WORKER_ADJ_BITS, WORKER_N
+    WORKER_ADJ_BITS = adj_bits
+    WORKER_N = n
+
+
+# -------------------------
+# Fast exact evaluator (bitset)
+# -------------------------
+def bitcount(x: int) -> int:
+    try:
+        return x.bit_count()
+    except AttributeError: # Fallback for older Python versions
+        return bin(x).count("1")
+
+
+@lru_cache(maxsize=200000)
+def evaluate_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
+    """Returns (size, width)."""
+    global WORKER_ADJ_BITS, WORKER_N
+    if WORKER_ADJ_BITS is None or WORKER_N is None:
+        raise RuntimeError("Worker globals not initialized")
+
+    n = WORKER_N
+    adj_bits = WORKER_ADJ_BITS
+    t = int(solution_tuple[-1])
+    perm = list(solution_tuple[:-1])
+    
     size = n - t
-    if size <= 0: return (0, 501)
+    if size <= 0:
+        return (0, 501)
 
-    temp_adj = [s.copy() for s in adj_sets]
+    suffix_mask = [0] * n
+    curr = 0
+    for i in range(n - 1, -1, -1):
+        suffix_mask[i] = curr
+        curr |= (1 << perm[i])
+
+    temp = adj_bits[:]
     max_width = 0
-    nodes_after = [set(perm[i+1:]) for i in range(n)]
-
     for i in range(n):
         u = perm[i]
-        successors = temp_adj[u].intersection(nodes_after[i])
-        degree = len(successors)
-
-        if degree > max_width:
-            max_width = degree
-        if max_width > 500: return (size, 501)
-        if not successors: continue
+        succ = temp[u] & suffix_mask[i]
         
-        for v in successors:
-            temp_adj[v].update(successors)
-            temp_adj[v].remove(v)
+        if i >= t:
+            out_deg = bitcount(succ)
+            if out_deg > max_width:
+                max_width = out_deg
+                if max_width >= 500:
+                    return (size, 501)
+        
+        if succ == 0:
+            continue
+            
+        s = succ
+        while s:
+            vbit = s & -s
+            s ^= vbit
+            v = vbit.bit_length() - 1
+            temp[v] |= (succ ^ vbit)
             
     return (size, max_width)
 
-@lru_cache(maxsize=500000)
-def official_score_evaluation(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
-    n, adj_sets = WORKER_N, WORKER_ADJ_SETS
-    t, perm = solution_tuple[-1], list(solution_tuple[:-1])
-    if (n - t) <= 0: return (501, t)
 
-    temp_adj = [s.copy() for s in adj_sets]
-    max_width = 0
-    nodes_after = [set(perm[i+1:]) for i in range(n)]
+def eval_wrapper_for_pool(sol_tuple):
+    return sol_tuple, evaluate_bitset_cached(sol_tuple)
 
-    for i in range(n):
-        u = perm[i]
-        successors = temp_adj[u].intersection(nodes_after[i])
+
+# -------------------------
+# Pareto helpers
+# -------------------------
+def dominates(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
+    """Return True if a dominates b (size larger is better, width smaller is better)."""
+    return (a[0] >= b[0] and a[1] < b[1]) or (a[0] > b[0] and a[1] <= b[1])
+
+
+def update_archive(archive: List[Dict], candidate: Dict, archive_cap: int) -> Tuple[List[Dict], bool]:
+    cand_score = candidate['score']
+    if any(dominates(s['score'], cand_score) for s in archive):
+        return archive, False
         
-        if i >= t:
-            degree = len(successors)
-            if degree > max_width:
-                max_width = degree
-
-        if max_width > 500: return (501, t)
-        if not successors: continue
-        
-        for v in successors:
-            temp_adj[v].update(successors)
-            temp_adj[v].remove(v)
-
-    return (max_width, t)
-
-def eval_wrapper(solution_tuple):
-    internal_score = internal_heuristic_evaluation(solution_tuple)
-    official_score = official_score_evaluation(solution_tuple)
-    return (solution_tuple, internal_score, official_score)
-
-# -------------------------
-# Dominance (operates on INTERNAL score for guidance)
-# -------------------------
-def dominates(p_internal_score, q_internal_score):
-    return (p_internal_score[0] >= q_internal_score[0] and p_internal_score[1] < q_internal_score[1]) or \
-           (p_internal_score[0] > q_internal_score[0] and p_internal_score[1] <= q_internal_score[1])
-
-def score_better(a_internal_score, b_internal_score):
-    return (a_internal_score[0] > b_internal_score[0]) or \
-           (a_internal_score[0] == b_internal_score[0] and a_internal_score[1] < b_internal_score[1])
-
-# -------------------------
-# Operators
-# -------------------------
-def local_search_worker(args):
-    sol, intensity = args
-    best_sol = tuple(sol)
-    best_internal_score = internal_heuristic_evaluation(best_sol)
+    new_archive = [s for s in archive if not dominates(cand_score, s['score'])]
+    new_archive.append(candidate)
     
-    for _ in range(intensity):
-        current_sol = list(best_sol)
-        r = random.random()
-        if r < 0.3:
-            perm = block_move(current_sol[:-1], WORKER_N)
-            neighbor = perm + [current_sol[-1]]
-        elif r < 0.7:
-            perm = inversion_mutation(current_sol[:-1])
-            neighbor = perm + [current_sol[-1]]
-        else:
-            t = smart_torso_shift(current_sol[-1], WORKER_N)
-            neighbor = current_sol[:-1] + [t]
+    if len(new_archive) > archive_cap:
+        new_archive.sort(key=lambda x: (-x['score'][0], x['score'][1]))
+        new_archive = new_archive[:archive_cap]
+        
+    return new_archive, True
 
-        neighbor_internal_score = internal_heuristic_evaluation(tuple(neighbor))
-        if score_better(neighbor_internal_score, best_internal_score):
-            best_sol, best_internal_score = tuple(neighbor), neighbor_internal_score
+
+def compute_hypervolume(archive: List[Dict], n: int) -> float:
+    if not archive or not HAVE_PYGMO:
+        return 0.0
+        
+    # Convert (size, width) to (width, -size) for pygmo's minimization framework
+    points = np.array([[p['score'][1], -p['score'][0]] for p in archive], dtype=float)
+    
+    try:
+        hv = pg.hypervolume(points)
+        # Ref point for (width, -size) -> (high width, low -size)
+        ref = [502, 0] 
+        return -hv.compute(ref) # Return the final negative score
+    except Exception:
+        return 0.0
+
+
+# -------------------------
+# Neighborhood operators (MOSA)
+# -------------------------
+def get_neighbor(solution: List[int], n: int) -> List[int]:
+    perm, t = solution[:-1], solution[-1]
+    r = random.random()
+    if r < 0.35: # Adjacent swap
+        if n > 1: i = random.randint(0, n - 2); perm[i], perm[i+1] = perm[i+1], perm[i]
+    elif r < 0.70: # Inversion
+        if n > 2: a, b = sorted(random.sample(range(n), 2)); perm[a:b+1] = reversed(perm[a:b+1])
+    elif r < 0.95: # Threshold tweak
+        shift = int(max(1, n * 0.05)); t = max(0, min(n-1, t + random.randint(-shift, shift)))
+    else: # Block move
+        if n > 3:
+            block_size = random.randint(2, max(3, int(n * 0.05)))
+            start = random.randint(0, n - block_size); block = perm[start:start+block_size]
+            del perm[start:start+block_size]; insert_pos = random.randint(0, len(perm))
+            perm = perm[:insert_pos] + block + perm[insert_pos:]
             
-    return list(best_sol)
-
-def inversion_mutation(perm: List[int]) -> List[int]:
-    if len(perm) < 2: return perm
-    a, b = sorted(random.sample(range(len(perm)), 2)); p = perm[:]
-    p[a:b + 1] = reversed(p[a:b + 1]); return p
-
-def swap_mutation(perm: List[int]) -> List[int]:
-    if len(perm) < 2: return perm
-    p = perm[:]; i, j = random.sample(range(len(perm)), 2)
-    p[i], p[j] = p[j], p[i]; return p
-
-def block_move(perm: List[int], n: int) -> List[int]:
-    p = perm[:]; block_size = random.randint(2, max(3, int(n * 0.05)))
-    if n > block_size:
-        start = random.randint(0, n - block_size); block = p[start:start + block_size]
-        del p[start:start + block_size]; insert_pos = random.randint(0, len(p))
-        p[insert_pos:insert_pos] = block
-    return p
-
-def smart_torso_shift(t: int, n: int) -> int:
-    shift = int(max(1, n * 0.05))
-    return max(0, min(n - 1, t + random.randint(-shift, shift)))
-    
-def pmx_crossover(p1: List[int], p2: List[int]) -> List[int]:
-    n = len(p1); a, b = sorted(random.sample(range(n), 2)); child = [-1] * n
-    child[a:b+1] = p1[a:b+1]
-    for i in range(a, b+1):
-        val = p2[i]
-        if val in child: continue
-        pos = i
-        while True:
-            mapped = p1[pos]
-            try: pos = p2.index(mapped)
-            except ValueError: break
-            if child[pos] == -1: child[pos] = val; break
-    for i in range(n):
-        if child[i] == -1: child[i] = p2[i]
-    return child
+    return perm + [t]
 
 # -------------------------
-# Population Management (operates on INTERNAL score for guidance)
+# Main MOSA Solver
 # -------------------------
-def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    if len(population) <= pop_size: return population
-    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
-    fronts = [[]]
-    for p in population:
-        for q in population:
-            if p is q: continue
-            if dominates(p['internal_score'], q['internal_score']): p['dominates_set'].append(q)
-            elif dominates(q['internal_score'], p['internal_score']): p['dominated_by_count'] += 1
-        if p['dominated_by_count'] == 0: fronts[0].append(p)
-    i = 0
-    while fronts[i]:
-        next_front = []
-        for p in fronts[i]:
-            for q in p['dominates_set']:
-                q['dominated_by_count'] -= 1
-                if q['dominated_by_count'] == 0: next_front.append(q)
-        fronts.append(next_front); i += 1
-    new_population = []
-    for front in fronts:
-        if not front: continue
-        if len(new_population) + len(front) > pop_size:
-            for p in front: p['distance'] = 0.0
-            for i_obj, reverse_sort in [(0, True), (1, False)]: # size (max), width (min)
-                front.sort(key=lambda p: p['internal_score'][i_obj], reverse=reverse_sort)
-                front[0]['distance'] = front[-1]['distance'] = float('inf')
-                f_min, f_max = front[-1]['internal_score'][i_obj], front[0]['internal_score'][i_obj]
-                if abs(f_max - f_min) > 1e-9:
-                    for j in range(1, len(front) - 1):
-                        front[j]['distance'] += abs(front[j+1]['internal_score'][i_obj] - front[j-1]['internal_score'][i_obj]) / (f_max - f_min)
-            front.sort(key=lambda p: p['distance'], reverse=True)
-            new_population.extend(front[:pop_size - len(new_population)]); break
-        new_population.extend(front)
-    return new_population
+def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: Dict, seed_solutions: List[List[int]]):
+    _init_worker(adj_bits, n) # Init globals for the main process
 
-def enhanced_initialization(n: int, pop_size: int) -> List[Dict]:
-    population = []
-    while len(population) < pop_size:
+    if seed_solutions:
+        current = random.choice(seed_solutions)[:]
+    else:
         perm = list(np.random.permutation(n))
         t = random.randint(int(n * 0.2), int(n * 0.8))
-        population.append({'solution': perm + [t]})
-    return population
+        current = perm + [t]
 
-def update_adaptive_mutation(stagnation_counter: int, base_mutation: float, config: Dict) -> float:
-    if stagnation_counter >= config['stagnation_limit']:
-        return min(0.95, base_mutation * config['mutation_boost_factor'])
-    elif stagnation_counter == 0:
-        return max(0.1, base_mutation * (1 - config['improvement_factor']))
-    return base_mutation
+    current_score = evaluate_bitset_cached(tuple(current))
+    archive = [{'solution': current[:], 'score': current_score}]
+    best_hv = compute_hypervolume(archive, n)
 
-# -------------------------
-# Hypervolume (operates on OFFICIAL score) & Persistence
-# -------------------------
-def calculate_hypervolume(population: List[Dict], n: int) -> float:
-    if not population: return 0.0
-    points_array = np.array([p['official_score'] for p in population])
-    try:
-        ndf_mask = pg.non_dominated_front_2d(points_array)
-        non_dominated_points = points_array[ndf_mask]
-        if non_dominated_points.shape[0] == 0: return 0.0
-        hv = pg.hypervolume(non_dominated_points)
-        ref_point = [502, n]
-        return -hv.compute(ref_point)
-    except Exception as e:
-        print(f"Error computing hypervolume: {e}"); return 0.0
+    temp = config['initial_temp']
+    step = 0
+    last_added_step = 0
 
-def persist_best(best_solution, problem_id):
-    json.dump({'decisionVector': [[int(x) for x in best_solution]]},
-              open(f"best_submission_{problem_id}.json", "w"), indent=2)
+    pbar = tqdm(total=config['max_steps'], desc="🔥 MOSA", unit="iter")
+    while step < config['max_steps'] and temp > config['final_temp']:
+        for _ in range(config['steps_per_temp']):
+            if step >= config['max_steps']: break
+            step += 1
+            pbar.update(1)
 
-# -------------------------
-# Main Algorithm
-# -------------------------
-def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
-    checkpoint_file = f"checkpoint_{problem_id}.pkl"
-    pop_size, target_hv = config['pop_size'], config['target_hv']
-    
-    population = enhanced_initialization(n, pop_size)
-    start_gen = 0
-    if os.path.exists(checkpoint_file):
-        with open(checkpoint_file, 'rb') as f: saved = pickle.load(f)
-        population, start_gen = saved['pop'], saved['gen'] + 1
-        print(f"🔄 Resuming from gen {start_gen}")
+            neighbor = get_neighbor(current, n)
+            neighbor_score = evaluate_bitset_cached(tuple(neighbor))
 
-    best_internal_score = (0, 501)
-    best_hypervolume = 1.0 
-
-    with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_list, n)) as pool:
-        sols = [tuple(p['solution']) for p in population]
-        results = pool.map(eval_wrapper, sols)
-        for p, res in zip(population, results):
-            p['internal_score'] = res[1]
-            p['official_score'] = res[2]
-        
-        best_solution_obj = max(population, key=lambda p: (p['internal_score'][0], -p['internal_score'][1]))
-        best_internal_score = best_solution_obj['internal_score']
-        persist_best(best_solution_obj['solution'], problem_id)
-
-        best_hypervolume = calculate_hypervolume(population, n)
-        print(f"📊 Initial HV score: {best_hypervolume:.2f}, Target: {target_hv}")
-
-        stagnation_counter = 0
-        for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
-            if best_hypervolume <= target_hv:
-                print(f"🎯 Target score reached at gen {gen}!"); break
-
-            mutation_rate = update_adaptive_mutation(stagnation_counter, config['mutation_rate'], config)
-            mating_pool = crowding_selection(population, pop_size)
-            offspring_sols = []
-            while len(offspring_sols) < pop_size:
-                p1, p2 = random.sample(mating_pool, 2)
-                perm1, perm2 = p1['solution'][:-1], p2['solution'][:-1]
-                child_perm = pmx_crossover(perm1, perm2) if random.random() < config['crossover_rate'] else perm1[:]
-                if random.random() < mutation_rate:
-                    child_perm = inversion_mutation(child_perm) if random.random() < 0.6 else swap_mutation(child_perm)
-                c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
-                offspring_sols.append(child_perm + [c_t])
-
-            improved_offspring = pool.map(local_search_worker, [(sol, config['local_search_intensity']) for sol in offspring_sols])
-            
-            results = pool.map(eval_wrapper, [tuple(sol) for sol in improved_offspring])
-            offspring_pop = [{'solution': list(res[0]), 'internal_score': res[1], 'official_score': res[2]} for res in results]
-            population = crowding_selection(population + offspring_pop, pop_size)
-
-            pop_sorted = sorted(population, key=lambda p: (p['internal_score'][0], -p['internal_score'][1]), reverse=True)
-            elites = pop_sorted[:config['elite_count']]
-            elite_sols = [e['solution'] for e in elites]
-            
-            intensified_elites = pool.map(local_search_worker, [(sol, config['local_search_intensity'] * config['elite_ls_multiplier']) for sol in elite_sols])
-            results = pool.map(eval_wrapper, [tuple(sol) for sol in intensified_elites])
-            elite_pop = [{'solution': list(res[0]), 'internal_score': res[1], 'official_score': res[2]} for res in results]
-            population = crowding_selection(population + elite_pop, pop_size)
-
-            current_hypervolume = calculate_hypervolume(population, n)
-            current_best_obj = max(population, key=lambda p: (p['internal_score'][0], -p['internal_score'][1]))
-
-            # Use hypervolume for stagnation tracking
-            if current_hypervolume < best_hypervolume:
-                best_hypervolume = current_hypervolume; stagnation_counter = 0
-                tqdm.write(f"📊 Gen {gen + 1}: New best HV score {best_hypervolume:.2f}")
+            accept = False
+            if dominates(neighbor_score, current_score):
+                accept = True
             else:
-                stagnation_counter += 1
+                ds = neighbor_score[0] - current_score[0]
+                dw = current_score[1] - neighbor_score[1]
+                delta = 2.0 * ds + dw 
+                if delta >= 0:
+                    accept = True
+                else:
+                    try:
+                        prob = math.exp(delta / temp)
+                        if random.random() < prob:
+                            accept = True
+                    except OverflowError:
+                        pass
+
+            if accept:
+                current, current_score = neighbor, neighbor_score
+
+            archive, added = update_archive(archive, {'solution': neighbor, 'score': neighbor_score}, config['archive_cap'])
+            if added:
+                last_added_step = step
+                new_hv = compute_hypervolume(archive, n)
+                if new_hv < best_hv:
+                    best_hv = new_hv
+                    pbar.set_postfix({'best_hv': f"{best_hv:.2f}", 'arch': len(archive)})
             
-            # Persist the best individual solution based on the guiding heuristic
-            if score_better(current_best_obj['internal_score'], best_internal_score):
-                best_internal_score = current_best_obj['internal_score']
-                persist_best(current_best_obj['solution'], problem_id)
-                tqdm.write(f"✨ Gen {gen + 1}: New best internal (size, width)={best_internal_score}")
-            
-            tqdm.write(f"Gen {gen + 1}: best_internal(s,w)={best_internal_score} HV_score={best_hypervolume:.2f} stagn={stagnation_counter} mut={mutation_rate:.3f}")
+            if step - last_added_step > config['restart_patience']:
+                current = random.choice(archive)['solution']
+                current_score = evaluate_bitset_cached(tuple(current))
+                last_added_step = step
+                tqdm.write("🔄 Restarting search from a random archive member.")
 
-            if (gen + 1) % config['checkpoint_interval'] == 0:
-                tqdm.write(f"\n💾 Saving checkpoint at gen {gen + 1}...")
-                with open(checkpoint_file, 'wb') as f: pickle.dump({'pop': population, 'gen': gen}, f)
+        temp *= config['cooling_rate']
 
-    final_pop = crowding_selection(population, 20)
-    create_submission_file([p['solution'] for p in final_pop], problem_id)
+    pbar.close()
+    return archive
 
-def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
-    filename = f"submission_{problem_id}.json"
-    problem_name_map = {"easy": "torso-easy", "medium": "torso-medium", "hard": "torso-hard"}
-    submission = {"decisionVector": [[int(val) for val in vec] for vec in decision_vectors],
-                  "problem": problem_name_map.get(problem_id, "torso-hard"),
-                  "challenge": "spoc-3-torso-decompositions"}
-    with open(filename, "w") as f: json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
+# -------------------------
+# Final Re-evaluation
+# -------------------------
+def final_re_evaluate_and_filter(archive: List[Dict], n: int, adj_bits: List[int], workers: int) -> List[Dict]:
+    print("🔁 Running final exact re-evaluation (parallel)...")
+    
+    with multiprocessing.Pool(processes=workers, initializer=_init_worker, initargs=(adj_bits, n)) as pool:
+        unique_solutions = {tuple(entry['solution']) for entry in archive}
+        results = pool.map(eval_wrapper_for_pool, unique_solutions)
+
+    final_pop = [{'solution': list(sol_tuple), 'score': score} for sol_tuple, score in results]
+    
+    final_archive, _ = update_archive([], {'solution': [], 'score': (0, 501)}, len(final_pop) + 1)
+    for sol in final_pop:
+        final_archive, _ = update_archive(final_archive, sol, len(final_pop) + 1)
+        
+    final_archive.sort(key=lambda x: (-x['score'][0], x['score'][1]))
+    return final_archive
+
+# -------------------------
+# CLI & Main Execution
+# -------------------------
+def parse_args():
+    parser = argparse.ArgumentParser(description="MOSA solver for SPOC-3 torso decompositions")
+    parser.add_argument("--problem", type=str, required=True, choices=["easy", "medium", "hard"])
+    parser.add_argument("--data-dir", type=str, default=DEFAULTS['data_dir'])
+    parser.add_argument("--max_steps", type=int, default=DEFAULTS['max_steps'])
+    parser.add_argument("--steps_per_temp", type=int, default=DEFAULTS['steps_per_temp'])
+    parser.add_argument("--initial_temp", type=float, default=DEFAULTS['initial_temp'])
+    parser.add_argument("--final_temp", type=float, help="Overrides cooling rate if set.")
+    parser.add_argument("--cooling_rate", type=float, default=DEFAULTS['cooling_rate'])
+    parser.add_argument("--workers", type=int, default=DEFAULTS['workers'])
+    parser.add_argument("--archive_cap", type=int, default=DEFAULTS['archive_cap'])
+    parser.add_argument("--seed_file", type=str, default=DEFAULTS['seed_file'])
+    parser.add_argument("--restart_patience", type=int, default=DEFAULTS['restart_patience'])
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    random.seed(42); np.random.seed(42)
+
+    try:
+        n, adj_list = load_graph_local(args.problem, data_dir=args.data_dir)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+
+    adj_bits = build_adj_bitsets(n, adj_list)
+    
+    seeds = []
+    if args.seed_file:
+        try:
+            with open(args.seed_file, "r") as f:
+                data = json.load(f)
+            seeds = data.get("decisionVector", [])
+            print(f"🌱 Loaded {len(seeds)} seed vectors from {args.seed_file}")
+        except Exception as e:
+            print(f"⚠️ Could not load seed file: {e}")
+
+    config = {k: getattr(args, k, v) for k, v in DEFAULTS.items()}
+
+    start = time.time()
+    archive = mosa_search(n, adj_list, adj_bits, config, seed_solutions=seeds)
+    print(f"\n🔬 MOSA exploration finished in {time.time() - start:.1f}s. Archive size={len(archive)}")
+    
+    final_solutions = final_re_evaluate_and_filter(archive, n, adj_bits, workers=args.workers)
+    print(f"✅ Final non-dominated solutions: {len(final_solutions)}")
+
+    final_hv = compute_hypervolume(final_solutions, n)
+    print(f"🏆 Final Hypervolume Score: {final_hv:.2f}")
+
+    # Write submission file
+    outname = f"submission_{args.problem}.json"
+    decs = [sol['solution'] for sol in final_solutions][:20]
+    mapping = {"easy": "torso-easy", "medium": "torso-medium", "hard": "torso-hard"}
+    submission = {
+        "decisionVector": [[int(x) for x in vec] for vec in decs],
+        "problem": mapping.get(args.problem, args.problem),
+        "challenge": "spoc-3-torso-decompositions",
+    }
+    with open(outname, "w") as f: json.dump(submission, f, indent=2)
+    print(f"📄 Wrote {len(decs)} solutions to {outname}")
+    print("Done.")
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    random.seed(int(time.time())); np.random.seed(int(time.time()))
-    
-    problem_id = input("🔍 Select problem (easy/medium/hard) [easy]: ").strip().lower() or "easy"
-    if problem_id not in CONFIG: print("❌ Invalid problem ID. Exiting."); exit(1)
-    
-    config = {**CONFIG['general'], **CONFIG[problem_id]}
-    n, adj = load_graph(problem_id)
-    
-    start_time = time.time()
-    memetic_algorithm(n, adj, config, problem_id)
-    print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
+    main()
