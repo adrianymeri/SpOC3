@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-solver_mosa.py
+Definitive Hybrid MOSA Solver for SPOC-3 Torso Decompositions.
 
-Multi-Objective Simulated Annealing (MOSA) solver for SPOC-3 torso decompositions.
-Designed to run on a powerful multi-core server.
+This version merges the advanced features of the professional script (CLI,
+path relinking, restarts) with our robust, set-based evaluation engine
+to create a solver that is both powerful and stable.
 
-Features:
-- Fast exact evaluator using integer bitsets (per-process LRU cache).
-- MOSA main loop with archive (Pareto) maintenance.
-- Seeding from data folder and optional seed JSON file.
-- Path relinking and intensification.
-- Parallel final exact re-evaluation and output submission file.
-- CLI options to fully utilize the machine.
+- It is immune to OverflowErrors by using Python sets instead of bitmasks.
+- Features a full Command-Line Interface (CLI) for easy tuning.
+- Employs advanced search techniques like Path Relinking and Adaptive Restarts.
 """
 
 import argparse
@@ -56,7 +53,7 @@ DEFAULTS = {
 }
 
 # -------------------------
-# Graph loading & bitset builder
+# Graph loading
 # -------------------------
 def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List[Set[int]]]:
     path = os.path.join(data_dir, f"{problem_id}.gr")
@@ -68,11 +65,9 @@ def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List
     with open(path, "r") as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
+            if not line or line.startswith("#"): continue
             parts = line.split()
-            if len(parts) < 2:
-                continue
+            if len(parts) < 2: continue
             u, v = int(parts[0]), int(parts[1])
             edges.append((u, v))
             max_node = max(max_node, u, v)
@@ -86,43 +81,29 @@ def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List
     print(f"✅ Graph loaded: n={n}, edges={len(edges)} from {path}")
     return n, adj
 
-def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> List[int]:
-    bits = [0] * n
-    for u in range(n):
-        b = 0
-        for v in adj_list[u]:
-            b |= (1 << v)
-        bits[u] = b
-    return bits
-
 # -------------------------
 # Worker globals & initializer
 # -------------------------
-WORKER_ADJ_BITS = None
+WORKER_ADJ_SETS = None
 WORKER_N = None
 
-def _init_worker(adj_bits: List[int], n: int):
-    global WORKER_ADJ_BITS, WORKER_N
-    WORKER_ADJ_BITS = adj_bits
+def _init_worker(adj_sets: List[Set[int]], n: int):
+    global WORKER_ADJ_SETS, WORKER_N
+    WORKER_ADJ_SETS = adj_sets
     WORKER_N = n
 
 # -------------------------
-# Fast exact evaluator (bitset)
+# ROBUST EVALUATION FUNCTION (SET-BASED)
 # -------------------------
-def bitcount(x: int) -> int:
-    try:
-        return x.bit_count()
-    except AttributeError:
-        return bin(x).count("1")
-
 @lru_cache(maxsize=200000)
-def evaluate_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
-    global WORKER_ADJ_BITS, WORKER_N
-    if WORKER_ADJ_BITS is None or WORKER_N is None:
+def evaluate_solution_set_based(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
+    """Returns (size, width). This version uses sets and is immune to OverflowError."""
+    global WORKER_ADJ_SETS, WORKER_N
+    if WORKER_ADJ_SETS is None or WORKER_N is None:
         raise RuntimeError("Worker globals not initialized")
 
     n = WORKER_N
-    adj_bits = WORKER_ADJ_BITS
+    adj_sets = WORKER_ADJ_SETS
     t = int(solution_tuple[-1])
     perm = list(solution_tuple[:-1])
     
@@ -130,39 +111,31 @@ def evaluate_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
     if size <= 0:
         return (0, 501)
 
-    suffix_mask = [0] * n
-    curr = 0
-    for i in range(n - 1, -1, -1):
-        suffix_mask[i] = curr
-        curr |= (1 << perm[i])
-
-    temp = adj_bits[:]
+    temp_adj = [s.copy() for s in adj_sets]
     max_width = 0
+    nodes_after = [set(perm[i+1:]) for i in range(n)]
+
     for i in range(n):
         u = perm[i]
-        succ = temp[u] & suffix_mask[i]
+        successors = temp_adj[u].intersection(nodes_after[i])
         
         if i >= t:
-            out_deg = bitcount(succ)
+            out_deg = len(successors)
             if out_deg > max_width:
                 max_width = out_deg
                 if max_width >= 500:
                     return (size, 501)
         
-        if succ == 0:
+        if not successors:
             continue
             
-        s = succ
-        while s:
-            vbit = s & -s
-            s ^= vbit
-            v = vbit.bit_length() - 1
-            temp[v] |= (succ ^ vbit)
+        for v in successors:
+            temp_adj[v].update(successors - {v})
             
     return (size, max_width)
 
 def eval_wrapper_for_pool(sol_tuple):
-    return sol_tuple, evaluate_bitset_cached(sol_tuple)
+    return sol_tuple, evaluate_solution_set_based(sol_tuple)
 
 # -------------------------
 # Pareto helpers
@@ -221,8 +194,8 @@ def get_neighbor(solution: List[int], n: int) -> List[int]:
 # -------------------------
 # Main MOSA Solver
 # -------------------------
-def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: Dict, seed_solutions: List[List[int]]):
-    _init_worker(adj_bits, n)
+def mosa_search(n: int, adj_list: List[Set[int]], config: Dict, seed_solutions: List[List[int]]):
+    _init_worker(adj_list, n)
 
     if seed_solutions:
         current = random.choice(seed_solutions)[:]
@@ -231,7 +204,7 @@ def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: D
         t = random.randint(int(n * 0.2), int(n * 0.8))
         current = perm + [t]
 
-    current_score = evaluate_bitset_cached(tuple(current))
+    current_score = evaluate_solution_set_based(tuple(current))
     archive = [{'solution': current[:], 'score': current_score}]
     best_hv = compute_hypervolume(archive, n)
 
@@ -247,7 +220,7 @@ def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: D
             pbar.update(1)
 
             neighbor = get_neighbor(current, n)
-            neighbor_score = evaluate_bitset_cached(tuple(neighbor))
+            neighbor_score = evaluate_solution_set_based(tuple(neighbor))
 
             accept = False
             if dominates(neighbor_score, current_score):
@@ -278,8 +251,9 @@ def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: D
                     pbar.set_postfix({'best_hv': f"{best_hv:.2f}", 'arch': len(archive)})
             
             if step - last_added_step > config['restart_patience']:
-                current = random.choice(archive)['solution']
-                current_score = evaluate_bitset_cached(tuple(current))
+                if archive:
+                    current = random.choice(archive)['solution']
+                    current_score = evaluate_solution_set_based(tuple(current))
                 last_added_step = step
                 tqdm.write("🔄 Restarting search from a random archive member.")
 
@@ -291,10 +265,10 @@ def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: D
 # -------------------------
 # Final Re-evaluation
 # -------------------------
-def final_re_evaluate_and_filter(archive: List[Dict], n: int, adj_bits: List[int], workers: int) -> List[Dict]:
+def final_re_evaluate_and_filter(archive: List[Dict], n: int, adj_list: List[Set[int]], workers: int) -> List[Dict]:
     print("🔁 Running final exact re-evaluation (parallel)...")
     
-    with multiprocessing.Pool(processes=workers, initializer=_init_worker, initargs=(adj_bits, n)) as pool:
+    with multiprocessing.Pool(processes=workers, initializer=_init_worker, initargs=(adj_list, n)) as pool:
         unique_solutions = {tuple(entry['solution']) for entry in archive}
         results = pool.map(eval_wrapper_for_pool, unique_solutions)
 
@@ -337,8 +311,6 @@ def main():
         n, adj_list = load_graph_local(args.problem, data_dir=args.data_dir)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr); sys.exit(1)
-
-    adj_bits = build_adj_bitsets(n, adj_list)
     
     seeds = []
     if args.seed_file:
@@ -350,23 +322,18 @@ def main():
         except Exception as e:
             print(f"⚠️ Could not load seed file: {e}")
 
-    # Use a dictionary for config to pass to mosa_search
-    config = {k: getattr(args, k) for k in DEFAULTS}
-    # Override final_temp if it was passed
-    if args.final_temp is not None:
-        config['final_temp'] = args.final_temp
+    config = {k: getattr(args, k, v) for k, v in DEFAULTS.items()}
 
     start = time.time()
-    archive = mosa_search(n, adj_list, adj_bits, config, seed_solutions=seeds)
+    archive = mosa_search(n, adj_list, config, seed_solutions=seeds)
     print(f"\n🔬 MOSA exploration finished in {time.time() - start:.1f}s. Archive size={len(archive)}")
     
-    final_solutions = final_re_evaluate_and_filter(archive, n, adj_bits, workers=args.workers)
+    final_solutions = final_re_evaluate_and_filter(archive, n, adj_list, workers=args.workers)
     print(f"✅ Final non-dominated solutions: {len(final_solutions)}")
 
     final_hv = compute_hypervolume(final_solutions, n)
     print(f"🏆 Final Hypervolume Score: {final_hv:.2f}")
 
-    # Write submission file
     outname = f"submission_{args.problem}.json"
     decs = [sol['solution'] for sol in final_solutions][:20]
     mapping = {"easy": "torso-easy", "medium": "torso-medium", "hard": "torso-hard"}
