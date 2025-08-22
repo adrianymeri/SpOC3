@@ -29,7 +29,6 @@ import numpy as np
 from tqdm import tqdm
 import multiprocessing
 
-# Try to import pygmo for hypervolume; if not available, we'll skip HV printing.
 try:
     import pygmo as pg
     HAVE_PYGMO = True
@@ -56,12 +55,10 @@ DEFAULTS = {
     "restart_patience": 20000,
 }
 
-
 # -------------------------
 # Graph loading & bitset builder
 # -------------------------
 def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List[Set[int]]]:
-    """Load the .gr file from local data_dir/<problem>.gr."""
     path = os.path.join(data_dir, f"{problem_id}.gr")
     if not os.path.exists(path):
         raise FileNotFoundError(f"Graph file not found: {path}. Please create a 'data' directory and place it there.")
@@ -89,7 +86,6 @@ def load_graph_local(problem_id: str, data_dir: str = "data") -> Tuple[int, List
     print(f"✅ Graph loaded: n={n}, edges={len(edges)} from {path}")
     return n, adj
 
-
 def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> List[int]:
     bits = [0] * n
     for u in range(n):
@@ -99,19 +95,16 @@ def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> List[int]:
         bits[u] = b
     return bits
 
-
 # -------------------------
-# Per-process worker globals & initializer
+# Worker globals & initializer
 # -------------------------
 WORKER_ADJ_BITS = None
 WORKER_N = None
-
 
 def _init_worker(adj_bits: List[int], n: int):
     global WORKER_ADJ_BITS, WORKER_N
     WORKER_ADJ_BITS = adj_bits
     WORKER_N = n
-
 
 # -------------------------
 # Fast exact evaluator (bitset)
@@ -119,13 +112,11 @@ def _init_worker(adj_bits: List[int], n: int):
 def bitcount(x: int) -> int:
     try:
         return x.bit_count()
-    except AttributeError: # Fallback for older Python versions
+    except AttributeError:
         return bin(x).count("1")
-
 
 @lru_cache(maxsize=200000)
 def evaluate_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
-    """Returns (size, width)."""
     global WORKER_ADJ_BITS, WORKER_N
     if WORKER_ADJ_BITS is None or WORKER_N is None:
         raise RuntimeError("Worker globals not initialized")
@@ -170,18 +161,14 @@ def evaluate_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
             
     return (size, max_width)
 
-
 def eval_wrapper_for_pool(sol_tuple):
     return sol_tuple, evaluate_bitset_cached(sol_tuple)
-
 
 # -------------------------
 # Pareto helpers
 # -------------------------
 def dominates(a: Tuple[int, int], b: Tuple[int, int]) -> bool:
-    """Return True if a dominates b (size larger is better, width smaller is better)."""
     return (a[0] >= b[0] and a[1] < b[1]) or (a[0] > b[0] and a[1] <= b[1])
-
 
 def update_archive(archive: List[Dict], candidate: Dict, archive_cap: int) -> Tuple[List[Dict], bool]:
     cand_score = candidate['score']
@@ -197,22 +184,18 @@ def update_archive(archive: List[Dict], candidate: Dict, archive_cap: int) -> Tu
         
     return new_archive, True
 
-
 def compute_hypervolume(archive: List[Dict], n: int) -> float:
     if not archive or not HAVE_PYGMO:
         return 0.0
         
-    # Convert (size, width) to (width, -size) for pygmo's minimization framework
     points = np.array([[p['score'][1], -p['score'][0]] for p in archive], dtype=float)
     
     try:
         hv = pg.hypervolume(points)
-        # Ref point for (width, -size) -> (high width, low -size)
         ref = [502, 0] 
-        return -hv.compute(ref) # Return the final negative score
+        return -hv.compute(ref)
     except Exception:
         return 0.0
-
 
 # -------------------------
 # Neighborhood operators (MOSA)
@@ -220,13 +203,13 @@ def compute_hypervolume(archive: List[Dict], n: int) -> float:
 def get_neighbor(solution: List[int], n: int) -> List[int]:
     perm, t = solution[:-1], solution[-1]
     r = random.random()
-    if r < 0.35: # Adjacent swap
+    if r < 0.35:
         if n > 1: i = random.randint(0, n - 2); perm[i], perm[i+1] = perm[i+1], perm[i]
-    elif r < 0.70: # Inversion
+    elif r < 0.70:
         if n > 2: a, b = sorted(random.sample(range(n), 2)); perm[a:b+1] = reversed(perm[a:b+1])
-    elif r < 0.95: # Threshold tweak
+    elif r < 0.95:
         shift = int(max(1, n * 0.05)); t = max(0, min(n-1, t + random.randint(-shift, shift)))
-    else: # Block move
+    else:
         if n > 3:
             block_size = random.randint(2, max(3, int(n * 0.05)))
             start = random.randint(0, n - block_size); block = perm[start:start+block_size]
@@ -239,7 +222,7 @@ def get_neighbor(solution: List[int], n: int) -> List[int]:
 # Main MOSA Solver
 # -------------------------
 def mosa_search(n: int, adj_list: List[Set[int]], adj_bits: List[int], config: Dict, seed_solutions: List[List[int]]):
-    _init_worker(adj_bits, n) # Init globals for the main process
+    _init_worker(adj_bits, n)
 
     if seed_solutions:
         current = random.choice(seed_solutions)[:]
@@ -334,12 +317,16 @@ def parse_args():
     parser.add_argument("--max_steps", type=int, default=DEFAULTS['max_steps'])
     parser.add_argument("--steps_per_temp", type=int, default=DEFAULTS['steps_per_temp'])
     parser.add_argument("--initial_temp", type=float, default=DEFAULTS['initial_temp'])
-    parser.add_argument("--final_temp", type=float, help="Overrides cooling rate if set.")
+    parser.add_argument("--final_temp", type=float, default=DEFAULTS['final_temp'])
     parser.add_argument("--cooling_rate", type=float, default=DEFAULTS['cooling_rate'])
     parser.add_argument("--workers", type=int, default=DEFAULTS['workers'])
     parser.add_argument("--archive_cap", type=int, default=DEFAULTS['archive_cap'])
     parser.add_argument("--seed_file", type=str, default=DEFAULTS['seed_file'])
     parser.add_argument("--restart_patience", type=int, default=DEFAULTS['restart_patience'])
+    parser.add_argument("--relink_interval", type=int, default=DEFAULTS['relink_interval'])
+    parser.add_argument("--intensify_interval", type=int, default=DEFAULTS['intensify_interval'])
+    parser.add_argument("--intensify_iters", type=int, default=DEFAULTS['intensify_iters'])
+    parser.add_argument("--log_every", type=int, default=DEFAULTS['log_every'])
     return parser.parse_args()
 
 def main():
@@ -363,7 +350,11 @@ def main():
         except Exception as e:
             print(f"⚠️ Could not load seed file: {e}")
 
-    config = {k: getattr(args, k, v) for k, v in DEFAULTS.items()}
+    # Use a dictionary for config to pass to mosa_search
+    config = {k: getattr(args, k) for k in DEFAULTS}
+    # Override final_temp if it was passed
+    if args.final_temp is not None:
+        config['final_temp'] = args.final_temp
 
     start = time.time()
     archive = mosa_search(n, adj_list, adj_bits, config, seed_solutions=seeds)
@@ -384,7 +375,7 @@ def main():
         "problem": mapping.get(args.problem, args.problem),
         "challenge": "spoc-3-torso-decompositions",
     }
-    with open(outname, "w") as f: json.dump(submission, f, indent=2)
+    with open(outname, "w") as f: json.dump(submission, f, indent=4)
     print(f"📄 Wrote {len(decs)} solutions to {outname}")
     print("Done.")
 
