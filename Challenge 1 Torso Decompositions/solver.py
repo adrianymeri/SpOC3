@@ -31,29 +31,29 @@ CONFIG = {
     "general": {
         "mutation_rate": 0.5,
         "crossover_rate": 0.9,
-        "checkpoint_interval": 5,
-        "elite_count": 6,
-        "elite_ls_multiplier": 4,
-        "stagnation_limit": 12,
+        "checkpoint_interval": 10, # Checkpoint less often on long runs
+        "elite_count": 10,           # Increased from 6
+        "elite_ls_multiplier": 5,    # Increased from 4
+        "stagnation_limit": 15,      # Allow more time before boosting mutation
         "mutation_boost_factor": 1.8,
         "improvement_factor": 0.1,
     },
     "easy": {
-        "pop_size": 120,
-        "generations": 300,
-        "local_search_intensity": 18,
+        "pop_size": 250,              # Increased from 120
+        "generations": 500,           # Increased from 300
+        "local_search_intensity": 20, # Slightly increased from 18
         "target_hv": -1829919
     },
     "medium": {
-        "pop_size": 150,
-        "generations": 400,
-        "local_search_intensity": 22,
+        "pop_size": 300,              # Increased from 150
+        "generations": 600,           # Increased from 400
+        "local_search_intensity": 25, # Slightly increased from 22
         "target_hv": -1745122
     },
     "hard": {
-        "pop_size": 200,
-        "generations": 800,
-        "local_search_intensity": 30,
+        "pop_size": 400,              # Increased from 200
+        "generations": 1200,          # Increased from 800
+        "local_search_intensity": 35, # Slightly increased from 30
         "target_hv": -5493062
     },
 }
