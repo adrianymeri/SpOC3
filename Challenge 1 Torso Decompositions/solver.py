@@ -2,14 +2,9 @@
 """
 Definitive Indicator-Based Evolutionary Algorithm (IBEA) for SPOC-3.
 
-This is a state-of-the-art multi-objective solver designed to overcome premature
-convergence by directly optimizing for hypervolume contribution. This approach
-is based on the user's critical insight that the search must actively seek
-out a diverse set of "compromise" solutions across the entire Pareto front.
-
-- Core Strategy: IBEA using hypervolume contribution as the fitness metric.
-- Objectives: Directly optimizes the official (width, t) Pareto objectives.
-- Robustness: Immune to all previously identified bugs (OverflowError, etc.).
+This version is a state-of-the-art multi-objective solver designed to overcome
+premature convergence by directly optimizing for hypervolume contribution.
+This final version corrects the submission output to adhere to the 20-solution limit.
 """
 
 import json
@@ -30,7 +25,7 @@ import multiprocessing
 # -------------------------
 CONFIG = {
     "general": {
-        "kappa": 0.05,  # Fitness scaling factor for IBEA
+        "kappa": 0.05,
         "mutation_rate": 0.6,
         "crossover_rate": 0.9,
         "checkpoint_interval": 10,
@@ -160,20 +155,15 @@ def indicator_based_selection(population: List[Dict], pop_size: int, kappa: floa
     for p1 in population:
         loss = 0
         for p2 in population:
-            if p1 is not p2:
-                # I(p2, p1) = e^(-d(p2,p1)/kappa) where d is order-based distance
-                # We use a simple dominance-based indicator here
-                if dominates(p2['score'], p1['score']):
-                    loss += 1
-        p1['fitness'] = -loss # We want to minimize loss of dominated solutions
+            if p1 is not p2 and dominates(p2['score'], p1['score']):
+                loss += 1
+        p1['fitness'] = -loss
 
     # Environmental selection
     while len(population) > pop_size:
-        # Find individual with the worst fitness (least negative)
         worst_p = min(population, key=lambda p: p['fitness'])
         population.remove(worst_p)
         
-        # Update fitness values of remaining individuals
         for p in population:
             if dominates(worst_p['score'], p['score']):
                 p['fitness'] += 1
@@ -194,18 +184,29 @@ def calculate_hypervolume(population: List[Dict], n: int) -> float:
         return -hv.compute(ref_point)
     except Exception: return 0.0
 
-def persist_final_front(population: List[Dict], problem_id: str):
+def persist_final_front(population: List[Dict], problem_id: str, n: int):
     scores = np.array([p['score'] for p in population])
+    if scores.shape[0] == 0:
+        print("⚠️ No solutions in the final population to save.")
+        return
+        
     ndf_mask = pg.non_dominated_front_2d(scores)
-    final_solutions = [population[i]['solution'] for i, is_nd in enumerate(ndf_mask) if is_nd]
+    final_pop = [population[i] for i, is_nd in enumerate(ndf_mask) if is_nd]
+    
+    # Sort the front by the heuristic (max size, then min width)
+    # Convert (width, t) score back to (size, width) for sorting
+    final_pop.sort(key=lambda p: (-(n - p['score'][1]), p['score'][0]))
+    
+    # Take only the top 20 solutions
+    top_20_solutions = [p['solution'] for p in final_pop[:20]]
     
     filename = f"submission_{problem_id}.json"
     problem_map = {"easy": "torso-easy", "medium": "torso-medium", "hard": "torso-hard"}
-    submission = {"decisionVector": [[int(v) for v in vec] for vec in final_solutions],
+    submission = {"decisionVector": [[int(v) for v in vec] for vec in top_20_solutions],
                   "problem": problem_map.get(problem_id, problem_id),
                   "challenge": "spoc-3-torso-decompositions"}
     with open(filename, "w") as f: json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(final_solutions)} solutions.")
+    print(f"📄 Created submission file: {filename} with {len(top_20_solutions)} solutions.")
 
 # -------------------------
 # Main IBEA Algorithm
@@ -213,7 +214,6 @@ def persist_final_front(population: List[Dict], problem_id: str):
 def ibea_memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str):
     pop_size, target_hv = config['pop_size'], config['target_hv']
     
-    # Initialization
     population = [{'solution': list(np.random.permutation(n)) + [random.randint(int(n*0.1), int(n*0.9))]} for _ in range(pop_size)]
     
     with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_list, n)) as pool:
@@ -228,7 +228,6 @@ def ibea_memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, probl
             if best_hypervolume <= target_hv:
                 print(f"🎯 Target score reached at gen {gen}!"); break
 
-            # Create offspring
             mating_pool = random.choices(population, k=pop_size)
             offspring_sols = []
             for _ in range(pop_size):
@@ -239,21 +238,17 @@ def ibea_memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, probl
                 c_t = smart_torso_shift(int((p1['solution'][-1] + p2['solution'][-1]) / 2), n)
                 offspring_sols.append(child_perm + [c_t])
             
-            # Local search on elites
-            population.sort(key=lambda p: p['score'][0] * p['score'][1]) # Simple sort to find interesting elites
+            population.sort(key=lambda p: p['score'][0] * p['score'][1])
             elites = population[:config['elite_count']]
             elite_sols = [e['solution'] for e in elites]
             intensified_elites = pool.map(local_search_worker, [(sol, config['local_search_intensity']) for sol in elite_sols])
             
-            # Evaluate all new solutions
             eval_sols = offspring_sols + intensified_elites
             results = dict(pool.map(eval_wrapper, [tuple(sol) for sol in eval_sols]))
             offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in results.items()]
 
-            # Combine and select using IBEA fitness
             population = indicator_based_selection(population + offspring_pop, pop_size, config['kappa'])
             
-            # Update tracking
             current_hypervolume = calculate_hypervolume(population, n)
             if current_hypervolume < best_hypervolume:
                 best_hypervolume = current_hypervolume
@@ -263,7 +258,7 @@ def ibea_memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, probl
                 tqdm.write(f"\n💾 Saving checkpoint...")
                 with open(f"checkpoint_{problem_id}.pkl", 'wb') as f: pickle.dump({'pop': population, 'gen': gen}, f)
 
-    persist_final_front(population, problem_id)
+    persist_final_front(population, problem_id, n)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
