@@ -1,31 +1,25 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 
-// CUDA kernel to calculate the out-degree for each node in each permutation
 __global__ void _evaluate_kernel(
-    const bool *adj_flat,       // Flattened adjacency matrix [N*N]
-    const uint16_t *perms_flat, // Flattened permutations [B*N]
-    uint16_t *degrees_out_flat, // Flattened output degrees [B*N]
-    size_t B,                   // Batch size (number of solutions)
-    size_t N)                   // Number of nodes
+    const bool *adj_flat,
+    const uint16_t *perms_flat,
+    uint16_t *degrees_out_flat,
+    size_t B,
+    size_t N)
 {
-    // Assign one GPU thread to each solution in the batch
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= B) return;
 
-    // Create pointers for this thread's data
-    const bool* adj = &adj_flat[0]; // All threads share the single adjacency matrix
+    const bool* adj = &adj_flat[0];
     const uint16_t* perm = &perms_flat[idx * N];
     uint16_t* degree_out = &degrees_out_flat[idx * N];
 
-    // Allocate memory on the GPU's fast scratchpad memory for bitsets
     extern __shared__ uint64_t shared_mem[];
     uint64_t* adj_bits = shared_mem;
     uint64_t* temp = &shared_mem[N];
     uint64_t* suffix_mask = &shared_mem[2 * N];
 
-    // Convert adjacency matrix to bitsets once per thread block
-    // We use the y-dimension of the thread block for this parallel setup task
     for(int i = threadIdx.y; i < N; i += blockDim.y) {
         uint64_t bits = 0;
         for(int j = 0; j < N; ++j) {
@@ -35,15 +29,13 @@ __global__ void _evaluate_kernel(
         }
         adj_bits[i] = bits;
     }
-    __syncthreads(); // Wait for all threads in the block to finish bitset conversion
+    __syncthreads();
 
-    // Each thread makes a local copy to modify
     for(int i = threadIdx.y; i < N; i += blockDim.y) {
         temp[i] = adj_bits[i];
     }
     __syncthreads();
 
-    // --- Main Evaluation Logic ---
     uint64_t curr_mask = 0;
     for (int i = N - 1; i >= 0; --i) {
         suffix_mask[i] = curr_mask;
@@ -64,15 +56,13 @@ __global__ void _evaluate_kernel(
             s ^= v_bit;
             int v = __ffsll(v_bit) - 1;
             if (v >= 0 && v < N) {
-                // THE FIX IS HERE: Use the standard atomicOr
-                atomicOr(&temp[v], (succ ^ v_bit));
+                // THE FIX IS HERE: Cast the pointer to the correct type for atomicOr
+                atomicOr((unsigned long long int*)&temp[v], (unsigned long long int)(succ ^ v_bit));
             }
         }
     }
 }
 
-
-// C-style wrapper function that Python can call via ctypes
 extern "C" {
     void evaluate_on_gpu(
         const bool *adj_flat,
@@ -81,18 +71,13 @@ extern "C" {
         size_t B,
         size_t N)
     {
-        dim3 threads(256, 4); // Use 4 threads in y-dim for faster data prep
+        dim3 threads(256, 4);
         dim3 blocks((B + threads.x - 1) / threads.x);
         
         size_t shared_mem_size = 3 * N * sizeof(uint64_t);
 
         _evaluate_kernel<<<blocks, threads, shared_mem_size>>>(adj_flat, perms_flat, degrees_out_flat, B, N);
         
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            // This can help debug GPU-side errors if they occur
-            // printf("CUDA kernel launch failed: %s\n", cudaGetErrorString(err));
-        }
         cudaDeviceSynchronize();
     }
 }
