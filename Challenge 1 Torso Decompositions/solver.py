@@ -1,84 +1,83 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 
-__global__ void _evaluate_kernel(
-    const bool *adj_flat,
-    const uint16_t *perms_flat,
-    uint16_t *degrees_out_flat,
-    size_t B,
-    size_t N)
+// This kernel calculates the out-degrees and final fitness values for a batch of permutations.
+__global__ void _evaluate(
+    bool* adjs,          // A batch of adjacency matrices [B x N x N]
+    uint16_t* perms,     // A batch of permutations [B x N]
+    uint16_t* degrees,   // An empty buffer to store intermediate degrees [B x N]
+    int* fitnesses,      // Output: fitness (max width) for each torso `t` [B x N]
+    size_t B,            // Batch size
+    size_t N)            // Number of nodes
 {
+    // Assign one GPU thread per solution in the batch
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= B) return;
 
-    const bool* adj = &adj_flat[0];
-    const uint16_t* perm = &perms_flat[idx * N];
-    uint16_t* degree_out = &degrees_out_flat[idx * N];
+    // Pointers for this thread's specific data
+    bool* adj = &adjs[idx * N * N];
+    uint16_t* perm = &perms[idx * N];
+    uint16_t* degree_out = &degrees[idx * N];
+    int* fitness_out = &fitnesses[idx * N];
 
-    extern __shared__ uint64_t shared_mem[];
-    uint64_t* adj_bits = shared_mem;
-    uint64_t* temp = &shared_mem[N];
-    uint64_t* suffix_mask = &shared_mem[2 * N];
+    // --- Main Evaluation Logic ---
+    // This logic directly implements the "fill-in" procedure from the problem description
+    for (int step = 0; step < N; ++step) {
+        uint16_t u = perm[step];
+        uint16_t current_degree = 0;
 
-    for(int i = threadIdx.y; i < N; i += blockDim.y) {
-        uint64_t bits = 0;
-        for(int j = 0; j < N; ++j) {
-            if(adj[i * N + j]) {
-                bits |= (uint64_t)1 << j;
+        // This loop calculates the out-degree for node u at this step
+        for (int v_idx = step + 1; v_idx < N; ++v_idx) {
+            uint16_t v = perm[v_idx];
+            if (adj[u * N + v]) {
+                current_degree++;
             }
         }
-        adj_bits[i] = bits;
-    }
-    __syncthreads();
+        degree_out[u] = current_degree;
 
-    for(int i = threadIdx.y; i < N; i += blockDim.y) {
-        temp[i] = adj_bits[i];
-    }
-    __syncthreads();
-
-    uint64_t curr_mask = 0;
-    for (int i = N - 1; i >= 0; --i) {
-        suffix_mask[i] = curr_mask;
-        curr_mask |= (uint64_t)1 << perm[i];
-    }
-
-    for (int i = 0; i < N; ++i) {
-        uint16_t u = perm[i];
-        uint64_t succ = temp[u] & suffix_mask[i];
-        
-        degree_out[i] = __popcll(succ);
-        
-        if (succ == 0) continue;
-
-        uint64_t s = succ;
-        while (s > 0) {
-            uint64_t v_bit = s & -s;
-            s ^= v_bit;
-            int v = __ffsll(v_bit) - 1;
-            if (v >= 0 && v < N) {
-                atomicOr((unsigned long long int*)&temp[v], (unsigned long long int)(succ ^ v_bit));
+        // This nested loop adds the "fill-in" edges to the adjacency matrix
+        for (int v1_idx = step + 1; v1_idx < N; ++v1_idx) {
+            for (int v2_idx = v1_idx + 1; v2_idx < N; ++v2_idx) {
+                uint16_t v1 = perm[v1_idx];
+                uint16_t v2 = perm[v2_idx];
+                if (adj[u * N + v1] && adj[u * N + v2]) {
+                    adj[v1 * N + v2] = true;
+                    adj[v2 * N + v1] = true;
+                }
             }
         }
+    }
+    
+    // --- Calculate final fitness scores from the raw degrees ---
+    // For each possible torso start `t`, find the max out-degree in the resulting torso
+    for (int t = 0; t < N; ++t) {
+        int max_degree_in_torso = 0;
+        // The torso consists of nodes from perm[t] to perm[N-1]
+        for (int i = t; i < N; ++i) {
+            uint16_t node_in_torso = perm[i];
+            if (degree_out[node_in_torso] > max_degree_in_torso) {
+                max_degree_in_torso = degree_out[node_in_torso];
+            }
+        }
+        // If width > 500, penalize it as 501, as per problem spec
+        fitness_out[t] = (max_degree_in_torso > 500) ? 501 : max_degree_in_torso;
     }
 }
 
 
+// C-style wrapper function that Python can call via ctypes
 extern "C" {
-    // THIS IS THE CORRECTED FUNCTION NAME
     void evaluate(
-        const bool *adj_flat,
-        const uint16_t *perms_flat,
-        uint16_t *degrees_out_flat,
+        bool *adjs,
+        uint16_t *perms,
+        uint16_t *degrees,
+        int *fitnesses,
         size_t B,
         size_t N)
     {
-        dim3 threads(256, 4);
-        dim3 blocks((B + threads.x - 1) / threads.x);
-        
-        size_t shared_mem_size = 3 * N * sizeof(uint64_t);
-
-        _evaluate_kernel<<<blocks, threads, shared_mem_size>>>(adj_flat, perms_flat, degrees_out_flat, B, N);
-        
+        int threads_per_block = 128;
+        int blocks_per_grid = (B + threads_per_block - 1) / threads_per_block;
+        _evaluate<<<blocks_per_grid, threads_per_block>>>(adjs, perms, degrees, fitnesses, B, N);
         cudaDeviceSynchronize();
     }
 }
