@@ -1,141 +1,166 @@
-#!/usr/bin/env python3
-import os, sys, time, json, urllib.request, subprocess, random, ctypes
-from typing import List, Tuple
+import argparse, ctypes, json, math, os, time, sys
 import numpy as np
+import torch
+from scipy.sparse.csgraph import laplacian
+from numpy.linalg import eigh
+import urllib.request
 from tqdm import tqdm
-import multiprocessing
 import pygmo as pg
 
 # --- Auto-compile CUDA module ---
-if not os.path.exists("evaluator.so") or (os.path.exists("evaluator.cu") and os.path.getmtime("evaluator.cu") > os.path.getmtime("evaluator.so")):
-    subprocess.check_call([sys.executable, "setup_cuda.py"])
+def compile_cython_module(): # Note: The function name is a holdover, it compiles CUDA
+    module_name, pyx_file = "evaluator", "evaluator.cu"
+    so_file = "evaluator.so"
+    
+    if not os.path.exists(so_file) or os.path.getmtime(pyx_file) > os.path.getmtime(so_file):
+        print(f"🚀 Building/updating CUDA module '{so_file}'...")
+        try:
+            # Use setup_cuda.py script to compile
+            subprocess.check_call([sys.executable, "setup_cuda.py"])
+        except Exception as e:
+            print(f"❌ Failed to build CUDA module: {e}"); sys.exit(1)
+
+if os.path.exists("setup_cuda.py") and os.path.exists("evaluator.cu"):
+    compile_cython_module()
+else:
+    if not os.path.exists("evaluator.so"):
+        print("❌ evaluator.so not found and setup_cuda.py or evaluator.cu is missing. Cannot proceed.")
+        sys.exit(1)
 
 libeval = ctypes.CDLL('./evaluator.so')
-evaluate_on_gpu = libeval.evaluate_on_gpu
-evaluate_on_gpu.argtypes = [
+evaluate = libeval.evaluate_on_gpu
+evaluate.argtypes = [
     ctypes.POINTER(ctypes.c_bool), ctypes.POINTER(ctypes.c_uint16),
     ctypes.POINTER(ctypes.c_uint16), ctypes.c_size_t, ctypes.c_size_t,
 ]
 
-# --- CONFIGURATION (Tuned for aggressive GPU search) ---
-CONFIG = {
-    "general": {
-        "pop_size": 8192, # Massive population for the GPU
-        "elite_fraction": 0.1,
-        "mutation_rate": 0.5
-    },
-    "easy": { "generations": 2000 },
-    "medium": { "generations": 4000 },
-    "hard": { "generations": 8000 },
+# --- CORRECTED Graph & Problem Info ---
+GRAPH_SIZES = {
+    "small-graph": 1357,
+    "medium-graph": 4941,
+    "large-graph": 15102,
 }
-PROBLEMS = {
-    "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
-    "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
-    "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
+PROBLEM_URLS = {
+    "small-graph": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
+    "medium-graph": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
+    "large-graph": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
-
-# --- GPU Evaluator Class ---
-class GpuEvaluator:
-    def __init__(self, n, adj):
-        self.n = n
-        self.adj_flat = adj.astype(np.bool_).flatten()
-    
-    def evaluate_batch(self, perms, ts):
-        batch_size = len(perms)
-        perms_gpu = perms.astype(np.uint16)
-        degrees_gpu = np.empty((batch_size, self.n), dtype=np.uint16)
-        
-        evaluate_on_gpu(
-            self.adj_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_bool)),
-            perms_gpu.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16)),
-            degrees_gpu.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16)),
-            batch_size, self.n
-        )
-        
-        widths = np.max(np.where(np.arange(self.n) >= ts[:, None], degrees_gpu, 0), axis=1)
-        sizes = self.n - ts
-        widths[widths > 500] = 501
-        return np.vstack([sizes, widths]).T
 
 # --- Helper Functions ---
-def load_graph(problem_id: str) -> Tuple[int, np.ndarray]:
-    url = PROBLEMS[problem_id]
+def load_graph(problem_id, n_nodes):
+    url = PROBLEM_URLS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
-    edges, max_node = [], 0
+    adj = np.zeros((n_nodes, n_nodes), dtype=bool)
     with urllib.request.urlopen(url) as f:
         for line in f:
             if line.startswith(b'#'): continue
             u, v = map(int, line.strip().split())
-            edges.append((u, v)); max_node = max(max_node, u, v)
-    n = max_node + 1
-    adj = np.zeros((n, n), dtype=bool)
-    for u,v in edges: adj[u, v] = adj[v, u] = True
-    print(f"✅ Loaded graph with {n} nodes.")
-    return n, adj
+            adj[u, v] = adj[v, u] = True
+    print(f"✅ Loaded graph with {n_nodes} nodes.")
+    return adj
 
-# --- Main GPU-Accelerated Genetic Algorithm ---
+def get_node_features(adj, num_eigenvectors):
+    print("🔬 Calculating node features (Laplacian eigenvectors)...")
+    L = laplacian(adj.astype(np.float32), normed=True)
+    eig_vals, eig_vecs = eigh(L)
+    features = np.real(eig_vecs[:, 1:num_eigenvectors+1]).astype(np.float32)
+    return features.T
+
+def calculate_hvi(ts, widths, n_nodes):
+    points = np.vstack([widths, -(n_nodes - ts)]).T
+    ref_point = [n_nodes, 0]
+    try:
+        hv = pg.hypervolume(points)
+        return -hv.compute(ref_point)
+    except Exception as e:
+        print(f"Could not compute hypervolume: {e}")
+        return -1.0
+
+def create_submission(elites, node_features, selected_ts, problem_id):
+    logits = elites[selected_ts] @ node_features
+    perms = logits.argsort(axis=1)
+    return {
+        "decisionVector": [perm.tolist() + [t.item()] for perm, t in zip(perms, selected_ts)],
+        "problem": problem_id, "challenge": "spoc-3-torso-decompositions",
+    }
+
+# --- Main Neuroevolutionary Algorithm ---
 def main():
-    problem_id = input("🔍 Select problem (easy/medium/hard): ").strip().lower() or "easy"
-    if problem_id not in PROBLEMS: sys.exit("❌ Invalid problem ID.")
+    parser = argparse.ArgumentParser(description="GPU-Accelerated Neuroevolutionary Solver for SPOC3")
+    parser.add_argument("--graph", choices=GRAPH_SIZES.keys(), default="small-graph")
+    parser.add_argument("--eigenvectors", type=int, default=16)
+    parser.add_argument("--mutation_stdev", type=float, default=0.1)
+    parser.add_argument("--batch_size", type=int, default=2048)
+    parser.add_argument("--max_generations", type=int, default=10000)
+    parser.add_argument("--checkpoint_every", type=int, default=100)
+    args = parser.parse_args()
+
+    torch.set_grad_enabled(False)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"🔩 Using device: {device}")
     
-    config = CONFIG['general'].copy(); config.update(CONFIG[problem_id])
-    n, adj = load_graph(problem_id)
-    pop_size = config['pop_size']
+    B, N = args.batch_size, GRAPH_SIZES[args.graph]
+    E = args.eigenvectors
     
-    gpu_evaluator = GpuEvaluator(n, adj)
+    adj = load_graph(args.graph, N)
+    node_features = torch.from_numpy(get_node_features(adj, E)).to(device)
+
+    population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
+    elites = torch.zeros((N, E), dtype=torch.float32, device=device)
+    elite_fitnesses = torch.full((N,), 501, dtype=torch.int32, device=device)
     
-    print(f"🧬 Initializing population of size {pop_size} for GPU...")
-    perms = np.vstack([np.random.permutation(n) for _ in range(pop_size)])
-    ts = np.random.randint(0, n // 2, size=pop_size)
+    perms = torch.empty((B, N), dtype=torch.uint16, device=device)
+    degrees = torch.empty((B, N), dtype=torch.uint16, device=device)
+    fitnesses = torch.empty((B, N), dtype=torch.int32, device=device)
     
-    best_hv = -1.0
+    adjs_batch_flat = np.tile(adj, (B, 1, 1)).flatten().astype(np.bool_)
 
-    pbar = tqdm(range(config['generations']), desc="🚀 Evolving on GPU")
-    for gen in pbar:
-        fitnesses = gpu_evaluator.evaluate_batch(perms, ts)
+    pbar = tqdm(range(args.max_generations), desc="🚀 Evolving on GPU")
+    for generation in pbar:
+        logits = population @ node_features
+        perms_cpu = logits.argsort(axis=1).to(torch.uint16)
         
-        # --- Elitist Selection ---
-        # Find the best individuals based on a simple lexicographical sort
-        elite_indices = np.lexsort((-fitnesses[:, 0], fitnesses[:, 1]))[:int(pop_size * config['elite_fraction'])]
+        degrees_cpu = torch.empty((B, N), dtype=torch.uint16)
         
-        # --- Create Next Generation ---
-        parent_indices = np.random.choice(elite_indices, size=pop_size)
-        
-        # Crossover (Simple Uniform Crossover with repair)
-        p1_perms = perms[np.random.choice(parent_indices, size=pop_size)]
-        p2_perms = perms[np.random.choice(parent_indices, size=pop_size)]
-        mask = np.random.randint(0, 2, size=p1_perms.shape, dtype=bool)
-        child_perms = np.where(mask, p1_perms, p2_perms)
-        
-        # Mutation (Inversion)
-        for i in range(pop_size):
-            if random.random() < config['mutation_rate']:
-                a, b = sorted(random.sample(range(n), 2))
-                child_perms[i, a:b+1] = child_perms[i, a:b+1][::-1]
+        # We need a fresh adjacency matrix for each batch evaluation
+        adj_for_eval = torch.from_numpy(np.tile(adj, (B, 1, 1))).to(device)
 
-        # Repair permutations to ensure validity
-        for i in range(pop_size):
-            if len(np.unique(child_perms[i])) < n:
-                child_perms[i] = np.random.permutation(n)
+        evaluate(
+            ctypes.cast(adj_for_eval.data_ptr(), ctypes.POINTER(ctypes.c_bool)),
+            ctypes.cast(perms_cpu.data_ptr(), ctypes.POINTER(ctypes.c_uint16)),
+            ctypes.cast(degrees_cpu.data_ptr(), ctypes.POINTER(ctypes.c_uint16)),
+            B, N
+        )
         
-        perms = child_perms
-        ts = np.random.randint(0, n // 2, size=pop_size) # Re-sample torsos for exploration
+        # Calculate final fitness on CPU from GPU results
+        ts_tensor = torch.arange(N, device='cpu').unsqueeze(0)
+        widths = torch.max(torch.where(torch.arange(N, device='cpu') >= ts_tensor.T, degrees_cpu, 0), axis=1).values
+        fitnesses_cpu = widths.T # Shape (N, B)
 
-        # --- Reporting & Checkpointing ---
-        if gen % 10 == 0:
-            non_dominated_indices = pg.non_dominated_front_2d(fitnesses)
-            best_fitnesses = fitnesses[non_dominated_indices]
-            ref_point = [n, 501]; hv_fitnesses = [(f[1], -f[0]) for f in best_fitnesses]
-            hv = pg.hypervolume(hv_fitnesses); current_hv = -hv.compute(ref_point)
+        best_widths_in_batch, best_indices_in_batch = fitnesses_cpu.min(axis=1)
+        
+        is_better = best_widths_in_batch.cpu() < elite_fitnesses.cpu()
+        elite_fitnesses[is_better] = best_widths_in_batch[is_better].to(device)
+        elite_indices_to_update = best_indices_in_batch[is_better]
+        elites[is_better] = population[elite_indices_to_update]
 
-            if current_hv > best_hv:
-                best_hv = current_hv
-                pbar.write(f"✨ Gen {gen+1}: New best hypervolume {best_hv:,.2f}")
-                with open(f"submission_{problem_id}_checkpoint.json", "w") as f:
-                    sols_to_save = [np.append(perms[i], ts[i]).astype(int).tolist() for i in non_dominated_indices]
-                    json.dump({"decisionVector": sols_to_save, "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f)
+        parent_indices = torch.randint(0, N, (B,), device=device)
+        population[:] = elites[parent_indices]
+        population += torch.randn_like(population) * args.mutation_stdev
 
-            pbar.set_postfix({"best_hv": f"{best_hv:,.0f}"})
+        if generation % 10 == 0:
+            hvi = calculate_hvi(np.arange(N), elite_fitnesses.cpu().numpy(), N)
+            pbar.set_postfix({"best_width_t0": elite_fitnesses[0].item(), "hvi": f"{hvi:,.0f}"})
+
+        if generation > 0 and generation % args.checkpoint_every == 0:
+            ts_to_submit = pg.non_dominated_front_2d(np.vstack([np.arange(N), elite_fitnesses.cpu().numpy()]).T)
+            submission = create_submission(elites.cpu(), node_features.cpu(), torch.from_numpy(ts_to_submit), args.graph)
+            
+            # Create directories if they don't exist
+            os.makedirs(f"submissions/{args.graph}", exist_ok=True)
+            with open(f"submissions/{args.graph}/gen_{generation}.json", "w") as f:
+                json.dump(submission, f)
+            print(f"\n📄 Saved checkpoint submission for generation {generation}")
 
 if __name__ == "__main__":
     main()
