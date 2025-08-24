@@ -1,166 +1,98 @@
-import argparse, ctypes, json, math, os, time, sys
-import numpy as np
-import torch
-from scipy.sparse.csgraph import laplacian
-from numpy.linalg import eigh
-import urllib.request
-from tqdm import tqdm
-import pygmo as pg
+#include <cuda_runtime.h>
+#include <cstdint>
 
-# --- Auto-compile CUDA module ---
-def compile_cython_module(): # Note: The function name is a holdover, it compiles CUDA
-    module_name, pyx_file = "evaluator", "evaluator.cu"
-    so_file = "evaluator.so"
-    
-    if not os.path.exists(so_file) or os.path.getmtime(pyx_file) > os.path.getmtime(so_file):
-        print(f"🚀 Building/updating CUDA module '{so_file}'...")
-        try:
-            # Use setup_cuda.py script to compile
-            subprocess.check_call([sys.executable, "setup_cuda.py"])
-        except Exception as e:
-            print(f"❌ Failed to build CUDA module: {e}"); sys.exit(1)
+// CUDA kernel to calculate the out-degree for each node in each permutation
+__global__ void _evaluate_kernel(
+    const bool *adj_flat,       // Flattened adjacency matrix [N*N]
+    const uint16_t *perms_flat, // Flattened permutations [B*N]
+    uint16_t *degrees_out_flat, // Flattened output degrees [B*N]
+    size_t B,                   // Batch size (number of solutions)
+    size_t N)                   // Number of nodes
+{
+    // Assign one GPU thread to each solution in the batch
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= B) return;
 
-if os.path.exists("setup_cuda.py") and os.path.exists("evaluator.cu"):
-    compile_cython_module()
-else:
-    if not os.path.exists("evaluator.so"):
-        print("❌ evaluator.so not found and setup_cuda.py or evaluator.cu is missing. Cannot proceed.")
-        sys.exit(1)
+    // Create pointers for this thread's data
+    const bool* adj = &adj_flat[0]; // All threads share the single adjacency matrix
+    const uint16_t* perm = &perms_flat[idx * N];
+    uint16_t* degree_out = &degrees_out_flat[idx * N];
 
-libeval = ctypes.CDLL('./evaluator.so')
-evaluate = libeval.evaluate_on_gpu
-evaluate.argtypes = [
-    ctypes.POINTER(ctypes.c_bool), ctypes.POINTER(ctypes.c_uint16),
-    ctypes.POINTER(ctypes.c_uint16), ctypes.c_size_t, ctypes.c_size_t,
-]
+    // Allocate memory on the GPU's fast scratchpad memory for bitsets
+    extern __shared__ uint64_t shared_mem[];
+    uint64_t* adj_bits = shared_mem;
+    uint64_t* temp = &shared_mem[N];
+    uint64_t* suffix_mask = &shared_mem[2 * N];
 
-# --- CORRECTED Graph & Problem Info ---
-GRAPH_SIZES = {
-    "small-graph": 1357,
-    "medium-graph": 4941,
-    "large-graph": 15102,
-}
-PROBLEM_URLS = {
-    "small-graph": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
-    "medium-graph": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
-    "large-graph": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
-}
+    // Convert adjacency matrix to bitsets once per thread block
+    // We use the y-dimension of the thread block for this parallel setup task
+    for(int i = threadIdx.y; i < N; i += blockDim.y) {
+        uint64_t bits = 0;
+        for(int j = 0; j < N; ++j) {
+            if(adj[i * N + j]) {
+                bits |= (uint64_t)1 << j;
+            }
+        }
+        adj_bits[i] = bits;
+    }
+    __syncthreads(); // Wait for all threads in the block to finish bitset conversion
 
-# --- Helper Functions ---
-def load_graph(problem_id, n_nodes):
-    url = PROBLEM_URLS[problem_id]
-    print(f"📥 Loading graph data for '{problem_id}'...")
-    adj = np.zeros((n_nodes, n_nodes), dtype=bool)
-    with urllib.request.urlopen(url) as f:
-        for line in f:
-            if line.startswith(b'#'): continue
-            u, v = map(int, line.strip().split())
-            adj[u, v] = adj[v, u] = True
-    print(f"✅ Loaded graph with {n_nodes} nodes.")
-    return adj
+    // Each thread makes a local copy to modify
+    for(int i = threadIdx.y; i < N; i += blockDim.y) {
+        temp[i] = adj_bits[i];
+    }
+    __syncthreads();
 
-def get_node_features(adj, num_eigenvectors):
-    print("🔬 Calculating node features (Laplacian eigenvectors)...")
-    L = laplacian(adj.astype(np.float32), normed=True)
-    eig_vals, eig_vecs = eigh(L)
-    features = np.real(eig_vecs[:, 1:num_eigenvectors+1]).astype(np.float32)
-    return features.T
-
-def calculate_hvi(ts, widths, n_nodes):
-    points = np.vstack([widths, -(n_nodes - ts)]).T
-    ref_point = [n_nodes, 0]
-    try:
-        hv = pg.hypervolume(points)
-        return -hv.compute(ref_point)
-    except Exception as e:
-        print(f"Could not compute hypervolume: {e}")
-        return -1.0
-
-def create_submission(elites, node_features, selected_ts, problem_id):
-    logits = elites[selected_ts] @ node_features
-    perms = logits.argsort(axis=1)
-    return {
-        "decisionVector": [perm.tolist() + [t.item()] for perm, t in zip(perms, selected_ts)],
-        "problem": problem_id, "challenge": "spoc-3-torso-decompositions",
+    // --- Main Evaluation Logic ---
+    uint64_t curr_mask = 0;
+    for (int i = N - 1; i >= 0; --i) {
+        suffix_mask[i] = curr_mask;
+        curr_mask |= (uint64_t)1 << perm[i];
     }
 
-# --- Main Neuroevolutionary Algorithm ---
-def main():
-    parser = argparse.ArgumentParser(description="GPU-Accelerated Neuroevolutionary Solver for SPOC3")
-    parser.add_argument("--graph", choices=GRAPH_SIZES.keys(), default="small-graph")
-    parser.add_argument("--eigenvectors", type=int, default=16)
-    parser.add_argument("--mutation_stdev", type=float, default=0.1)
-    parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--max_generations", type=int, default=10000)
-    parser.add_argument("--checkpoint_every", type=int, default=100)
-    args = parser.parse_args()
-
-    torch.set_grad_enabled(False)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🔩 Using device: {device}")
-    
-    B, N = args.batch_size, GRAPH_SIZES[args.graph]
-    E = args.eigenvectors
-    
-    adj = load_graph(args.graph, N)
-    node_features = torch.from_numpy(get_node_features(adj, E)).to(device)
-
-    population = torch.randn((B, E), dtype=torch.float32, device=device) * 0.1
-    elites = torch.zeros((N, E), dtype=torch.float32, device=device)
-    elite_fitnesses = torch.full((N,), 501, dtype=torch.int32, device=device)
-    
-    perms = torch.empty((B, N), dtype=torch.uint16, device=device)
-    degrees = torch.empty((B, N), dtype=torch.uint16, device=device)
-    fitnesses = torch.empty((B, N), dtype=torch.int32, device=device)
-    
-    adjs_batch_flat = np.tile(adj, (B, 1, 1)).flatten().astype(np.bool_)
-
-    pbar = tqdm(range(args.max_generations), desc="🚀 Evolving on GPU")
-    for generation in pbar:
-        logits = population @ node_features
-        perms_cpu = logits.argsort(axis=1).to(torch.uint16)
+    for (int i = 0; i < N; ++i) {
+        uint16_t u = perm[i];
+        uint64_t succ = temp[u] & suffix_mask[i];
         
-        degrees_cpu = torch.empty((B, N), dtype=torch.uint16)
+        degree_out[i] = __popcll(succ);
         
-        # We need a fresh adjacency matrix for each batch evaluation
-        adj_for_eval = torch.from_numpy(np.tile(adj, (B, 1, 1))).to(device)
+        if (succ == 0) continue;
 
-        evaluate(
-            ctypes.cast(adj_for_eval.data_ptr(), ctypes.POINTER(ctypes.c_bool)),
-            ctypes.cast(perms_cpu.data_ptr(), ctypes.POINTER(ctypes.c_uint16)),
-            ctypes.cast(degrees_cpu.data_ptr(), ctypes.POINTER(ctypes.c_uint16)),
-            B, N
-        )
+        uint64_t s = succ;
+        while (s > 0) {
+            uint64_t v_bit = s & -s;
+            s ^= v_bit;
+            int v = __ffsll(v_bit) - 1;
+            if (v >= 0 && v < N) {
+                // THE FIX IS HERE: Use the standard atomicOr
+                atomicOr(&temp[v], (succ ^ v_bit));
+            }
+        }
+    }
+}
+
+
+// C-style wrapper function that Python can call via ctypes
+extern "C" {
+    void evaluate_on_gpu(
+        const bool *adj_flat,
+        const uint16_t *perms_flat,
+        uint16_t *degrees_out_flat,
+        size_t B,
+        size_t N)
+    {
+        dim3 threads(256, 4); // Use 4 threads in y-dim for faster data prep
+        dim3 blocks((B + threads.x - 1) / threads.x);
         
-        # Calculate final fitness on CPU from GPU results
-        ts_tensor = torch.arange(N, device='cpu').unsqueeze(0)
-        widths = torch.max(torch.where(torch.arange(N, device='cpu') >= ts_tensor.T, degrees_cpu, 0), axis=1).values
-        fitnesses_cpu = widths.T # Shape (N, B)
+        size_t shared_mem_size = 3 * N * sizeof(uint64_t);
 
-        best_widths_in_batch, best_indices_in_batch = fitnesses_cpu.min(axis=1)
+        _evaluate_kernel<<<blocks, threads, shared_mem_size>>>(adj_flat, perms_flat, degrees_out_flat, B, N);
         
-        is_better = best_widths_in_batch.cpu() < elite_fitnesses.cpu()
-        elite_fitnesses[is_better] = best_widths_in_batch[is_better].to(device)
-        elite_indices_to_update = best_indices_in_batch[is_better]
-        elites[is_better] = population[elite_indices_to_update]
-
-        parent_indices = torch.randint(0, N, (B,), device=device)
-        population[:] = elites[parent_indices]
-        population += torch.randn_like(population) * args.mutation_stdev
-
-        if generation % 10 == 0:
-            hvi = calculate_hvi(np.arange(N), elite_fitnesses.cpu().numpy(), N)
-            pbar.set_postfix({"best_width_t0": elite_fitnesses[0].item(), "hvi": f"{hvi:,.0f}"})
-
-        if generation > 0 and generation % args.checkpoint_every == 0:
-            ts_to_submit = pg.non_dominated_front_2d(np.vstack([np.arange(N), elite_fitnesses.cpu().numpy()]).T)
-            submission = create_submission(elites.cpu(), node_features.cpu(), torch.from_numpy(ts_to_submit), args.graph)
-            
-            # Create directories if they don't exist
-            os.makedirs(f"submissions/{args.graph}", exist_ok=True)
-            with open(f"submissions/{args.graph}/gen_{generation}.json", "w") as f:
-                json.dump(submission, f)
-            print(f"\n📄 Saved checkpoint submission for generation {generation}")
-
-if __name__ == "__main__":
-    main()
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            // This can help debug GPU-side errors if they occur
+            // printf("CUDA kernel launch failed: %s\n", cudaGetErrorString(err));
+        }
+        cudaDeviceSynchronize();
+    }
+}
