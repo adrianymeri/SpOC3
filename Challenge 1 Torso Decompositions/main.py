@@ -8,8 +8,7 @@ import pygmo as pg
 
 # --- Auto-compile Cython module ---
 def compile_cython_module():
-    module_name = "solver_cython"
-    pyx_file = "solver_cython.pyx"
+    module_name, pyx_file = "solver_cython", "solver_cython.pyx"
     try: import importlib.util; ext_suffix = importlib.util.EXTENSIONS[0]
     except (ImportError, AttributeError): import sysconfig; ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
     
@@ -30,16 +29,11 @@ import solver_cython
 CONFIG = {
     "general": {
         "num_islands": os.cpu_count() or 8,
-        "migration_interval": 25, 
-        "migration_size": 5,
-        "stagnation_limit": 50, 
-        "mutation_boost_factor": 2.0,
-        "restart_stagnation_trigger": 150, 
-        "restart_fraction": 0.3,
-        "elite_count": 8, 
-        "elite_ls_multiplier": 4,
-        "crossover_rate": 0.9,
-        "mutation_rate": 0.6 # <-- THE MISSING KEY
+        "migration_interval": 25, "migration_size": 10,
+        "stagnation_limit": 50, "mutation_boost_factor": 2.0,
+        "restart_stagnation_trigger": 150, "restart_fraction": 0.4,
+        "elite_count": 10, "elite_ls_multiplier": 5,
+        "crossover_rate": 0.9, "mutation_rate": 0.6
     },
     "easy": {"pop_size_per_island": 100, "generations": 2500, "local_search_intensity": 25},
     "medium": {"pop_size_per_island": 120, "generations": 4000, "local_search_intensity": 30},
@@ -224,7 +218,7 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
                     islands[i] = crowding_selection(islands[i], len(pop))
 
             if stagnation > config['restart_stagnation_trigger']:
-                pbar.write(f"⚠️ Stagnation limit reached. Shaking up population...")
+                pbar.write(f"⚠️ Stagnation > {config['restart_stagnation_trigger']} gens. Restarting worst individuals...")
                 for i in range(num_islands):
                     num_replace = int(len(islands[i]) * config['restart_fraction'])
                     islands[i].sort(key=lambda p: (p['score'][0], -p['score'][1]))
@@ -241,13 +235,12 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
                 migrants = [p['solution'] for p in all_individuals[:config['migration_size']]]
                 if migrants:
                     for island in islands:
-                        island.sort(key=lambda p: (p['score'][0], -p['score'][1]));
+                        island.sort(key=lambda p: (p['score'][0], -p['score'][1]))
                         for j in range(len(migrants)):
                             if j < len(island): island[j]['solution'] = random.choice(migrants)
 
             found_better = False
             for island in islands:
-                # Ensure island is not empty and solutions have scores
                 valid_scores = [p['score'] for p in island if 'score' in p and p['score'] is not None]
                 if not valid_scores: continue
                 
@@ -258,6 +251,11 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
             if found_better:
                 stagnation = 0
                 pbar.write(f"✨ Gen {gen+1}: New best score {best_score}")
+                # Save checkpoint file
+                final_pop = [p for isle in islands for p in isle]
+                final_front = crowding_selection(final_pop, 20)
+                with open(f"submission_{problem_id}_checkpoint.json", "w") as f:
+                    json.dump({"decisionVector": [p['solution'].tolist() for p in final_front]}, f)
             else:
                 stagnation += 1
             pbar.set_postfix({"best_score": best_score, "stagn": stagnation})
