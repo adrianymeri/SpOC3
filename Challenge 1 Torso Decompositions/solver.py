@@ -56,7 +56,6 @@ __global__ void _evaluate_kernel(
             s ^= v_bit;
             int v = __ffsll(v_bit) - 1;
             if (v >= 0 && v < N) {
-                // THE FIX IS HERE: Cast the pointer and value to the type CUDA expects.
                 atomicOr((unsigned long long int*)&temp[v], (unsigned long long int)(succ ^ v_bit));
             }
         }
@@ -65,7 +64,8 @@ __global__ void _evaluate_kernel(
 
 
 extern "C" {
-    void evaluate_on_gpu(
+    // THIS IS THE CORRECTED FUNCTION NAME
+    void evaluate(
         const bool *adj_flat,
         const uint16_t *perms_flat,
         uint16_t *degrees_out_flat,
