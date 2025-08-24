@@ -1,565 +1,274 @@
 #!/usr/bin/env python3
-"""
-Memetic NSGA-II with elite intensification & adaptive mutation for SPOC-3 torso decompositions.
-
-Patch notes:
-- Elite intensification (parallel stronger LS on top E individuals every generation)
-- Adaptive mutation (increases when no improvement)
-- Larger per-process LRU cache for evaluations
-- Best-solution logging and persistence
-- Keeps fast bitset evaluator + pool initializer from previous version
-"""
-
-import json
-import random
-import time
-import math
-import numpy as np
+import os, sys, time, json, urllib.request, subprocess, random
 from typing import List, Set, Tuple, Dict
-import urllib.request
+import numpy as np
 from tqdm import tqdm
 import multiprocessing
-import os
-import pickle
-from functools import lru_cache
+import pygmo as pg
 
-# -------------------------
-# Config & Problem Uri map
-# -------------------------
+# --- Auto-compile Cython module ---
+def compile_cython_module():
+    module_name, pyx_file = "solver_cython", "solver_cython.pyx"
+    try: import importlib.util; ext_suffix = importlib.util.EXTENSIONS[0]
+    except (ImportError, AttributeError): import sysconfig; ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
+    
+    cython_so_file = f"{module_name}{ext_suffix}"
+    if not os.path.exists(cython_so_file) or os.path.getmtime(pyx_file) > os.path.getmtime(cython_so_file):
+        print(f"🚀 Building/updating Cython module...")
+        try:
+            subprocess.check_call([sys.executable, "setup.py", "build_ext", "--inplace"])
+            print("✅ Cython module built successfully.")
+        except Exception as e:
+            print(f"❌ Failed to build Cython module: {e}"); sys.exit(1)
+
+compile_cython_module()
+import solver_cython
+
+# CONFIGURATION
+# ==============================================================================
 CONFIG = {
     "general": {
-        "mutation_rate": 0.5,
-        "crossover_rate": 0.9,
-        "checkpoint_interval": 5,
-        # elite/intensification params
-        "elite_count": 6,
-        "elite_ls_multiplier": 4,
-        # adaptive mutation
-        "stagnation_limit": 12,  # gens without improvement before raising mutation
-        "mutation_boost_factor": 1.8,
+        "num_islands": os.cpu_count() or 8, "migration_interval": 25, "migration_size": 10,
+        "stagnation_limit": 50, "mutation_boost_factor": 2.0,
+        "restart_stagnation_trigger": 150, "restart_fraction": 0.4,
+        "elite_count": 10, "elite_ls_multiplier": 5,
+        "crossover_rate": 0.9
     },
-    "easy": {"pop_size": 120, "generations": 300, "local_search_intensity": 18},
-    "medium": {"pop_size": 150, "generations": 400, "local_search_intensity": 22},
-    "hard": {"pop_size": 200, "generations": 800, "local_search_intensity": 30},
+    "easy": {"pop_size_per_island": 100, "generations": 2500, "local_search_intensity": 25},
+    "medium": {"pop_size_per_island": 120, "generations": 4000, "local_search_intensity": 30},
+    "hard": {"pop_size_per_island": 150, "generations": 6000, "local_search_intensity": 35},
 }
-
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
     "medium": "https://api.optimize.esa.int/data/spoc3/torso/medium.gr",
     "hard": "https://api.optimize.esa.int/data/spoc3/torso/hard.gr",
 }
 
-# -------------------------
-# Worker globals (set by initializer)
-# -------------------------
-WORKER_ADJ_BITS = None  # list[int] bitset adjacency
-WORKER_N = None
+# --- Worker Functions (for the multiprocessing Pool) ---
+def init_worker(n_val, adj_bits_val):
+    solver_cython.init_worker_cython(n_val, adj_bits_val)
+    random.seed(); np.random.seed()
 
-# -------------------------
-# Utility: load graph & build bitsets
-# -------------------------
-def load_graph(problem_id: str) -> Tuple[int, List[Set[int]]]:
+def eval_wrapper(solution_np: np.ndarray) -> Tuple[np.ndarray, Tuple[int, int]]:
+    size, width = solver_cython.evaluate_solution_cy(solution_np)
+    return solution_np, (int(size), int(width))
+
+def local_search_worker(args: Tuple[np.ndarray, int]) -> np.ndarray:
+    solution, intensity = args
+    n = len(solution) - 1
+    best_sol = solution
+    _, best_score = eval_wrapper(best_sol)
+    
+    for _ in range(intensity):
+        cand_sol = best_sol.copy()
+        r = random.random()
+        perm = cand_sol[:-1]
+
+        if r < 0.4: # Inversion
+            a, b = sorted(random.sample(range(n), 2))
+            perm[a:b+1] = perm[a:b+1][::-1]
+        elif r < 0.8: # Block Move
+            block_size = random.randint(2, max(3, n // 50))
+            if n > block_size:
+                start = random.randint(0, n - block_size)
+                block = perm[start:start+block_size]
+                perm_deleted = np.delete(perm, np.s_[start:start+block_size])
+                insert_pos = random.randint(0, len(perm_deleted))
+                cand_sol[:-1] = np.insert(perm_deleted, insert_pos, block)
+        else: # Torso Shift
+            t = cand_sol[-1]
+            shift = max(1, n // 20)
+            new_t = t + random.randint(-shift, shift)
+            cand_sol[-1] = max(0, min(n - 1, int(new_t)))
+
+        _, cand_score = eval_wrapper(cand_sol)
+        if (cand_score[0] > best_score[0]) or (cand_score[0] == best_score[0] and cand_score[1] < best_score[1]):
+            best_sol = cand_sol
+            best_score = cand_score
+            
+    return best_sol
+
+# --- Core Algorithm Components ---
+def load_graph(problem_id: str) -> Tuple[int, np.ndarray]:
     url = PROBLEMS[problem_id]
     print(f"📥 Loading graph data for '{problem_id}'...")
-    edges = []
-    max_node = 0
+    edges, max_node = [], 0
     with urllib.request.urlopen(url) as f:
         for line in f:
-            if line.startswith(b'#'):
-                continue
+            if line.startswith(b'#'): continue
             u, v = map(int, line.strip().split())
-            edges.append((u, v))
-            max_node = max(max_node, u, v)
+            edges.append((u, v)); max_node = max(max_node, u, v)
     n = max_node + 1
     adj = [set() for _ in range(n)]
-    for u, v in edges:
-        adj[u].add(v)
-        adj[v].add(u)
-    print(f"✅ Loaded graph with {n} nodes and {len(edges)} edges.")
-    return n, adj
-
-def build_adj_bitsets(n: int, adj_list: List[Set[int]]) -> List[int]:
-    adj_bits = [0] * n
+    for u,v in edges: adj[u].add(v); adj[v].add(u)
+    adj_bits = np.zeros(n, dtype=np.uint64)
     for u in range(n):
-        bits = 0
-        for v in adj_list[u]:
-            bits |= (1 << v)
-        adj_bits[u] = bits
-    return adj_bits
+        for v in adj[u]: adj_bits[u] |= (np.uint64(1) << np.uint64(v))
+    print(f"✅ Loaded graph with {n} nodes.")
+    return n, adj_bits
 
-# -------------------------
-# Pool initializer
-# -------------------------
-def _init_worker(adj_bits: List[int], n: int):
-    global WORKER_ADJ_BITS, WORKER_N
-    WORKER_ADJ_BITS = adj_bits
-    WORKER_N = n
-
-# -------------------------
-# Fast bitset evaluator (with robust bitcount)
-# -------------------------
-def bitcount(x: int) -> int:
-    try:
-        return int(x).bit_count()
-    except Exception:
-        return bin(int(x)).count('1')
-
-# Larger per-process cache for better reuse
-@lru_cache(maxsize=500000)
-def evaluate_solution_bitset_cached(solution_tuple: Tuple[int, ...]) -> Tuple[int, int]:
-    global WORKER_ADJ_BITS, WORKER_N
-    if WORKER_ADJ_BITS is None or WORKER_N is None:
-        raise RuntimeError("Worker globals not initialized")
-
-    n = WORKER_N
-    adj_bits = WORKER_ADJ_BITS
-
-    t = solution_tuple[-1]
-    perm = list(solution_tuple[:-1])
-    size = n - t
-    if size <= 0:
-        return (0, 501)
-
-    suffix_mask = [0] * n
-    curr_mask = 0
-    for i in range(n - 1, -1, -1):
-        suffix_mask[i] = curr_mask
-        curr_mask |= (1 << perm[i])
-
-    temp = adj_bits[:]  # copy
-    max_width = 0
-    for i in range(n):
-        u = perm[i]
-        succ = temp[u] & suffix_mask[i]
-        out_deg = bitcount(succ)
-        if out_deg > max_width:
-            max_width = out_deg
-            if max_width >= 500:
-                return (size, 501)
-        if succ == 0:
-            continue
-        s = succ
-        while s:
-            vbit = s & -s
-            s ^= vbit
-            v = vbit.bit_length() - 1
-            temp[v] |= (succ ^ (1 << v))
-    return (size, max_width)
-
-def eval_wrapper(solution_tuple):
-    return (solution_tuple, evaluate_solution_bitset_cached(solution_tuple))
-
-# -------------------------
-# Local search operators
-# -------------------------
-def smart_torso_shift(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
-    t = neighbor[-1]
-    shift = int(max(1, n * 0.05))
-    neighbor[-1] = max(0, min(n - 1, t + random.randint(-shift, shift)))
-    return neighbor
-
-def block_move(solution: List[int], n: int) -> List[int]:
-    neighbor = solution[:]
-    perm = neighbor[:-1]
-    block_size = random.randint(2, max(3, int(n * 0.02)))
-    if n > block_size:
-        start = random.randint(0, n - block_size)
-        block = perm[start:start + block_size]
-        del perm[start:start + block_size]
-        insert_pos = random.randint(0, len(perm))
-        perm[insert_pos:insert_pos] = block
-        neighbor[:-1] = perm
-    return neighbor
-
-def inversion_mutation(perm: List[int]) -> List[int]:
-    a, b = sorted(random.sample(range(len(perm)), 2))
-    perm = perm[:]
-    perm[a:b+1] = reversed(perm[a:b+1])
-    return perm
-
-def swap_mutation(perm: List[int]) -> List[int]:
-    perm = perm[:]
-    i, j = random.sample(range(len(perm)), 2)
-    perm[i], perm[j] = perm[j], perm[i]
-    return perm
-
-# -------------------------
-# Local search in worker
-# -------------------------
-def local_search_worker(args):
-    sol, intensity = args
-    n = WORKER_N
-    best = tuple(int(x) for x in sol)
-    best_score = evaluate_solution_bitset_cached(best)
-
-    for _ in range(intensity):
-        r = random.random()
-        if r < 0.3:
-            neigh = block_move(list(best), n)
-        elif r < 0.7:
-            perm = list(best[:-1])
-            perm = inversion_mutation(perm)
-            neigh = perm + [best[-1]]
-        else:
-            neigh = smart_torso_shift(list(best), n)
-        neigh_t = tuple(int(x) for x in neigh)
-        neigh_score = evaluate_solution_bitset_cached(neigh_t)
-        if (neigh_score[0] > best_score[0]) or (neigh_score[0] == best_score[0] and neigh_score[1] < best_score[1]):
-            best = neigh_t
-            best_score = neigh_score
-    return list(best)
-
-# -------------------------
-# PMX crossover
-# -------------------------
-def pmx_crossover(p1: List[int], p2: List[int]) -> List[int]:
+def pmx_crossover(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
     n = len(p1)
     a, b = sorted(random.sample(range(n), 2))
-    child = [-1] * n
+    child = np.full(n, -1, dtype=np.int64)
     child[a:b+1] = p1[a:b+1]
-    for i in range(a, b+1):
+    for i in range(a, b + 1):
         val = p2[i]
-        if val in child:
-            continue
-        pos = i
-        while True:
-            mapped = p1[pos]
-            try:
-                pos = p2.index(mapped)
-            except ValueError:
-                break
-            if child[pos] == -1:
-                child[pos] = val
-                break
+        if val not in child:
+            pos = i
+            while True:
+                mapped = p1[pos]
+                try: pos = np.where(p2 == mapped)[0][0]
+                except IndexError: break
+                if child[pos] == -1: child[pos] = val; break
     for i in range(n):
-        if child[i] == -1:
-            child[i] = p2[i]
+        if child[i] == -1: child[i] = p2[i]
     return child
 
-# -------------------------
-# Dominance, selection helpers
-# -------------------------
-def dominates(p, q):
-    return (p[0] >= q[0] and p[1] < q[1]) or (p[0] > q[0] and p[1] <= q[1])
+def dominates(p_score, q_score) -> bool:
+    return (p_score[0] >= q_score[0] and p_score[1] < q_score[1]) or \
+           (p_score[0] > q_score[0] and p_score[1] <= q_score[1])
 
 def crowding_selection(population: List[Dict], pop_size: int) -> List[Dict]:
-    for p in population:
-        p['dominates_set'] = []
-        p['dominated_by_count'] = 0
+    if len(population) <= pop_size: return population
+    for p in population: p['dominates_set'], p['dominated_by_count'] = [], 0
     fronts = [[]]
     for p in population:
         for q in population:
-            if p is q:
-                continue
-            if dominates(p['score'], q['score']):
-                p['dominates_set'].append(q)
-            elif dominates(q['score'], p['score']):
-                p['dominated_by_count'] += 1
-        if p['dominated_by_count'] == 0:
-            fronts[0].append(p)
+            if p is q: continue
+            if dominates(p['score'], q['score']): p['dominates_set'].append(q)
+            elif dominates(q['score'], p['score']): p['dominated_by_count'] += 1
+        if p['dominated_by_count'] == 0: fronts[0].append(p)
+    new_population = []
     i = 0
     while i < len(fronts) and fronts[i]:
         next_front = []
         for p in fronts[i]:
             for q in p['dominates_set']:
                 q['dominated_by_count'] -= 1
-                if q['dominated_by_count'] == 0:
-                    next_front.append(q)
+                if q['dominated_by_count'] == 0: next_front.append(q)
+        if len(new_population) + len(fronts[i]) > pop_size:
+            for p in fronts[i]: p['distance'] = 0.0
+            for i_obj in range(2):
+                fronts[i].sort(key=lambda p: p['score'][i_obj])
+                if len(fronts[i]) > 1:
+                    f_min, f_max = fronts[i][0]['score'][i_obj], fronts[i][-1]['score'][i_obj]
+                    fronts[i][0]['distance'] = fronts[i][-1]['distance'] = float('inf')
+                    if f_max > f_min:
+                        for j in range(1, len(fronts[i]) - 1):
+                            fronts[i][j]['distance'] += (fronts[i][j+1]['score'][i_obj] - fronts[i][j-1]['score'][i_obj]) / (f_max - f_min)
+            fronts[i].sort(key=lambda p: p['distance'], reverse=True)
+            new_population.extend(fronts[i][:pop_size - len(new_population)])
+            break
+        new_population.extend(fronts[i])
         fronts.append(next_front)
         i += 1
-
-    new_population = []
-    for front in fronts:
-        if not front:
-            continue
-        if len(new_population) + len(front) > pop_size:
-            for p in front:
-                p['distance'] = 0.0
-            for i_obj in range(2):
-                front.sort(key=lambda p: p['score'][i_obj])
-                front[0]['distance'] = front[-1]['distance'] = float('inf')
-                f_min = front[0]['score'][i_obj]
-                f_max = front[-1]['score'][i_obj]
-                if f_max > f_min:
-                    for j in range(1, len(front) - 1):
-                        prev_v = front[j - 1]['score'][i_obj]
-                        next_v = front[j + 1]['score'][i_obj]
-                        front[j]['distance'] += (next_v - prev_v) / (f_max - f_min)
-            front.sort(key=lambda p: p['distance'], reverse=True)
-            new_population.extend(front[:pop_size - len(new_population)])
-            break
-        new_population.extend(front)
     return new_population
 
-# -------------------------
-# Seeding heuristics (min-degree & min-fill)
-# -------------------------
-def min_degree_order(adj_list: List[Set[int]]) -> List[int]:
-    n = len(adj_list)
-    degree = [len(adj_list[i]) for i in range(n)]
-    neighbors = [set(s) for s in adj_list]
-    import heapq
-    heap = [(degree[i], i) for i in range(n)]
-    heapq.heapify(heap)
-    removed = [False] * n
-    order = []
-    while heap:
-        d, v = heapq.heappop(heap)
-        if removed[v] or degree[v] != d:
-            continue
-        removed[v] = True
-        order.append(v)
-        for u in list(neighbors[v]):
-            if not removed[u]:
-                neighbors[u].remove(v)
-                degree[u] -= 1
-                heapq.heappush(heap, (degree[u], u))
-        neighbors[v].clear()
-    return order
+# --- Main Memetic Algorithm ---
+def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id: str):
+    num_islands, pop_size = config['num_islands'], config['pop_size_per_island']
+    print(f"🧬 Initializing {num_islands} island populations of size {pop_size}...")
+    islands, base_perm = [], np.arange(n, dtype=np.int64)
+    for _ in range(num_islands):
+        island_pop = [{'solution': np.append(np.random.permutation(base_perm), np.random.randint(0, n // 2))} for _ in range(pop_size)]
+        islands.append(island_pop)
 
-def min_fill_order(adj_list: List[Set[int]]) -> List[int]:
-    n = len(adj_list)
-    neighbors = [set(s) for s in adj_list]
-    alive = set(range(n))
-    order = []
-    for _ in range(n):
-        best_v = None
-        best_fill = None
-        for v in alive:
-            neigh = neighbors[v]
-            k = len(neigh)
-            if k <= 1:
-                fill = 0
+    best_front, best_hv = [], -1.0
+    stagnation, base_mutation = 0, config['mutation_rate']
+
+    with multiprocessing.Pool(initializer=init_worker, initargs=(n, adj_bits_np)) as pool:
+        for i in range(num_islands):
+            results = pool.map(eval_wrapper, [p['solution'] for p in islands[i]])
+            for sol, score in results:
+                for p in islands[i]:
+                    if np.array_equal(p['solution'], sol): p['score'] = score; break
+        
+        pbar = tqdm(range(config['generations']), desc="🚀 Evolving")
+        for gen in pbar:
+            mutation_rate = base_mutation * (config['mutation_boost_factor'] if stagnation >= config['stagnation_limit'] else 1.0)
+            
+            for i in range(num_islands):
+                pop = islands[i]
+                mating_pool = crowding_selection(pop, len(pop))
+                offspring = []
+                while len(offspring) < len(pop):
+                    p1, p2 = random.sample(mating_pool, 2)
+                    perm = pmx_crossover(p1['solution'][:-1], p2['solution'][:-1]) if random.random() < config['crossover_rate'] else p1['solution'][:-1].copy()
+                    if random.random() < mutation_rate:
+                        if random.random() < 0.5:
+                            a, b = sorted(random.sample(range(n), 2)); perm[a:b+1] = perm[a:b+1][::-1]
+                        else:
+                            a, b = np.random.choice(n, 2, replace=False); perm[a], perm[b] = perm[b], perm[a]
+                    t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
+                    offspring.append(np.append(perm, t))
+
+                improved = pool.map(local_search_worker, [(sol, config['local_search_intensity']) for sol in offspring])
+                results = pool.map(eval_wrapper, improved)
+                offspring_pop = [{'solution': sol, 'score': score} for sol, score in results]
+                islands[i] = crowding_selection(pop + offspring_pop, len(pop))
+                
+                sorted_pop = sorted(islands[i], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
+                elite_args = [(p['solution'], config['local_search_intensity'] * config['elite_ls_multiplier']) for p in sorted_pop[:config['elite_count']]]
+                if elite_args:
+                    intensified = pool.map(local_search_worker, elite_args)
+                    results = pool.map(eval_wrapper, intensified)
+                    islands[i].extend([{'solution': sol, 'score': score} for sol, score in results])
+                    islands[i] = crowding_selection(islands[i], len(pop))
+
+            if stagnation > config['restart_stagnation_trigger']:
+                pbar.write(f"⚠️ Stagnation limit reached. Restarting worst individuals...")
+                for i in range(num_islands):
+                    num_replace = int(len(islands[i]) * config['restart_fraction'])
+                    islands[i].sort(key=lambda p: (p['score'][0], -p['score'][1]))
+                    for j in range(num_replace):
+                        islands[i][j]['solution'] = np.append(np.random.permutation(base_perm), np.random.randint(0, n // 2))
+                for i in range(num_islands):
+                    num_replace = int(len(islands[i]) * config['restart_fraction'])
+                    results = pool.map(eval_wrapper, [islands[i][j]['solution'] for j in range(num_replace)])
+                    for k, (_, score) in enumerate(results): islands[i][k]['score'] = score
+                stagnation = 0
+
+            if gen > 0 and gen % config['migration_interval'] == 0:
+                all_individuals = sorted([ind for island in islands for ind in island], key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
+                migrants = [p['solution'] for p in all_individuals[:config['migration_size']]]
+                if migrants:
+                    for island in islands:
+                        island.sort(key=lambda p: (p['score'][0], -p['score'][1]))
+                        for j in range(len(migrants)):
+                            if j < len(island): island[j]['solution'] = random.choice(migrants)
+
+            # Checkpoint and track best hypervolume
+            current_front = crowding_selection([p for island in islands for p in island], 20)
+            current_fitnesses = [(p['score'][1], -p['score'][0]) for p in current_front]
+            ref_point = [n, 0]; hv = pg.hypervolume(current_fitnesses); current_hv = -hv.compute(ref_point)
+            
+            if current_hv > best_hv:
+                best_hv = current_hv
+                best_front = current_front
+                stagnation = 0
+                best_score_display = max([p['score'] for p in best_front])
+                pbar.write(f"✨ Gen {gen+1}: New best hypervolume {best_hv:,.2f} (Best point: {best_score_display})")
+                with open(f"submission_{problem_id}_checkpoint.json", "w") as f:
+                    json.dump({"decisionVector": [p['solution'].tolist() for p in best_front]}, f)
             else:
-                existing = 0
-                for u in neigh:
-                    existing += sum(1 for w in neighbors[u] if w in neigh)
-                existing = existing // 2
-                total_pairs = k * (k - 1) // 2
-                fill = total_pairs - existing
-            if best_fill is None or fill < best_fill:
-                best_fill = fill
-                best_v = v
-        order.append(best_v)
-        neigh = neighbors[best_v]
-        for a in list(neigh):
-            for b in list(neigh):
-                if a != b:
-                    neighbors[a].add(b)
-        for u in neigh:
-            neighbors[u].discard(best_v)
-        neighbors[best_v].clear()
-        alive.remove(best_v)
-    return order
+                stagnation += 1
+            pbar.set_postfix({"best_hv": f"{best_hv:,.0f}", "stagn": stagnation})
+    
+    # Final result
+    print(f"\n🏆 Final best hypervolume: {best_hv:,.2f}")
+    with open(f"submission_{problem_id}.json", "w") as f:
+        json.dump({"decisionVector": [p['solution'].tolist() for p in best_front]}, f, indent=4)
+    print(f"📄 Created final submission file: submission_{problem_id}.json")
 
-# -------------------------
-# Utility: compare scores and persistence
-# -------------------------
-def score_better(a, b):
-    # Return True if a better than b (a,b are (size,width))
-    return (a[0] > b[0]) or (a[0] == b[0] and a[1] < b[1])
-
-def persist_best(best_solution, best_score, problem_id):
-    pkl_name = f"best_solution_{problem_id}.pkl"
-    json_name = f"best_submission_{problem_id}.json"
-    with open(pkl_name, "wb") as f:
-        pickle.dump({'solution': best_solution, 'score': best_score}, f)
-    # also write submission-style JSON vector for convenience
-    with open(json_name, "w") as f:
-        json.dump({"decisionVector": [[int(x) for x in best_solution]], "problem": problem_id, "challenge": "spoc-3-torso-decompositions"}, f, indent=2)
-
-# -------------------------
-# Main memetic algorithm with elite intensification & adaptive mutation
-# -------------------------
-def memetic_algorithm(n: int, adj_list: List[Set[int]], config: Dict, problem_id: str) -> List[List[int]]:
-    checkpoint_file = f"checkpoint_{problem_id}.pkl"
-    adj_bits = build_adj_bitsets(n, adj_list)
-    pop_size = config['pop_size']
-
-    # Initial population (seeded + random)
-    population = []
-    seed_orders = []
-    try:
-        seed_orders.append(min_fill_order(adj_list))
-    except Exception:
-        pass
-    try:
-        seed_orders.append(min_degree_order(adj_list))
-    except Exception:
-        pass
-    for base in list(seed_orders):
-        seed_orders.append(list(reversed(base)))
-        for _ in range(3):
-            p = base[:]
-            for _ in range(max(1, len(p)//200)):
-                i, j = random.sample(range(len(p)), 2)
-                p[i], p[j] = p[j], p[i]
-            seed_orders.append(p)
-    while len(seed_orders) < 10:
-        seed_orders.append(list(np.random.permutation(n)))
-    while len(population) < pop_size:
-        base = random.choice(seed_orders)
-        perm = base[:]
-        for _ in range(random.randint(0, 4)):
-            perm = inversion_mutation(perm)
-            perm = swap_mutation(perm)
-        t = random.randint(int(n * 0.2), int(n * 0.8))
-        population.append({'solution': perm + [t]})
-
-    start_gen = 0
-    if os.path.exists(checkpoint_file):
-        with open(checkpoint_file, 'rb') as f:
-            saved = pickle.load(f)
-        population = saved['pop']
-        start_gen = saved['gen'] + 1
-        print(f"🔄 Resuming from gen {start_gen}")
-
-    # tracking best
-    best_solution = None
-    best_score = (-1, 1000)
-    stagnation_counter = 0
-    base_mutation = CONFIG['general']['mutation_rate']
-
-    with multiprocessing.Pool(initializer=_init_worker, initargs=(adj_bits, n)) as pool:
-        # initial evaluate
-        if 'score' not in population[0]:
-            sols = [tuple(int(x) for x in p['solution']) for p in population]
-            results = list(pool.map(eval_wrapper, sols))
-            sol_to_score = {sol: score for sol, score in results}
-            for p in population:
-                p['score'] = sol_to_score.get(tuple(p['solution']), (0, 501))
-
-        # initialize best from initial population
-        for p in population:
-            if best_solution is None or score_better(p['score'], best_score):
-                best_score = p['score']
-                best_solution = list(p['solution'])
-        persist_best(best_solution, best_score, problem_id)
-
-        for gen in tqdm(range(start_gen, config['generations']), desc="🧬 Evolving", initial=start_gen, total=config['generations']):
-            # adaptive mutation update
-            mutation_rate = base_mutation
-            if stagnation_counter >= CONFIG['general']['stagnation_limit']:
-                mutation_rate = min(0.95, base_mutation * CONFIG['general']['mutation_boost_factor'])
-
-            mating_pool = crowding_selection(population, pop_size)
-
-            offspring_sols = []
-            while len(offspring_sols) < pop_size:
-                p1 = random.choice(mating_pool)
-                p2 = random.choice(mating_pool)
-                perm1 = list(p1['solution'][:-1])
-                perm2 = list(p2['solution'][:-1])
-
-                if random.random() < config['crossover_rate']:
-                    child_perm = pmx_crossover(perm1, perm2)
-                else:
-                    child_perm = perm1[:]
-
-                if random.random() < mutation_rate:
-                    if random.random() < 0.6:
-                        child_perm = inversion_mutation(child_perm)
-                    else:
-                        child_perm = swap_mutation(child_perm)
-
-                c_t = int((p1['solution'][-1] + p2['solution'][-1]) / 2)
-                if random.random() < 0.35:
-                    c_t = max(0, min(n - 1, c_t + random.randint(-int(n*0.03), int(n*0.03))))
-                offspring_sols.append(child_perm + [c_t])
-
-            # run normal local search in parallel
-            ls_args = [(sol, config['local_search_intensity']) for sol in offspring_sols]
-            improved_offspring = pool.map(local_search_worker, ls_args)
-
-            # evaluate offspring
-            eval_tuples = [tuple(int(x) for x in sol) for sol in improved_offspring]
-            eval_results = list(pool.map(eval_wrapper, eval_tuples))
-            offspring_pop = [{'solution': list(sol), 'score': score} for sol, score in eval_results]
-
-            # combine and select
-            population = crowding_selection(population + offspring_pop, pop_size)
-
-            # Elite intensification: take top E by score and intensify local search
-            E = CONFIG['general']['elite_count']
-            elite_ls = CONFIG['general']['elite_ls_multiplier']
-            # sort current population by (size desc, width asc)
-            pop_sorted = sorted(population, key=lambda p: (p['score'][0], -p['score'][1]), reverse=True)
-            elites = pop_sorted[:E]
-            elite_args = []
-            for e in elites:
-                # run a stronger LS on their solution
-                elite_args.append((e['solution'], max(1, config['local_search_intensity'] * elite_ls)))
-            if elite_args:
-                improved_elites = pool.map(local_search_worker, elite_args)
-                # evaluate and possibly replace in population
-                eval_tuples = [tuple(int(x) for x in sol) for sol in improved_elites]
-                eval_results = list(pool.map(eval_wrapper, eval_tuples))
-                for sol, score in eval_results:
-                    # find worst dominated by this or simply insert and reselect next gen
-                    population.append({'solution': list(sol), 'score': score})
-                population = crowding_selection(population, pop_size)
-
-            # track best & stagnation
-            current_best = None
-            for p in population:
-                if current_best is None or score_better(p['score'], current_best['score']):
-                    current_best = p
-            if current_best and score_better(current_best['score'], best_score):
-                best_score = current_best['score']
-                best_solution = list(current_best['solution'])
-                persist_best(best_solution, best_score, problem_id)
-                stagnation_counter = 0
-                tqdm.write(f"✨ Gen {gen+1}: New best {best_score}")
-            else:
-                stagnation_counter += 1
-
-            # print summary per generation
-            tqdm.write(f"Gen {gen+1}: best(size,width)={best_score} stagn={stagnation_counter} mut={mutation_rate:.3f}")
-
-            # checkpoint
-            if (gen + 1) % config['checkpoint_interval'] == 0:
-                tqdm.write(f"\n💾 Saving checkpoint at generation {gen + 1}...")
-                to_save = {'pop': population, 'gen': gen}
-                with open(checkpoint_file, 'wb') as f:
-                    pickle.dump(to_save, f)
-
-    final = crowding_selection(population, min(20, len(population)))
-    return [p['solution'] for p in final]
-
-# -------------------------
-# Submission / main
-# -------------------------
-def create_submission_file(decision_vectors: List[List[int]], problem_id: str):
-    filename = f"submission_{problem_id}.json"
-    problem_name_map = {"easy": "small-graph", "medium": "medium-graph", "hard": "large-graph"}
-    final_vectors = [[int(val) for val in vec] for vec in decision_vectors]
-    submission = {
-        "decisionVector": final_vectors,
-        "problem": problem_name_map.get(problem_id, problem_id),
-        "challenge": "spoc-3-torso-decompositions",
-    }
-    with open(filename, "w") as f:
-        json.dump(submission, f, indent=4)
-    print(f"📄 Created submission file: {filename} with {len(decision_vectors)} solutions.")
-
+# --- ENTRY POINT ---
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    random.seed(42)
-    np.random.seed(42)
-
-    problem_id = input("🔍 Select problem (easy/medium/hard) [easy]: ").strip().lower() or "easy"
-    if problem_id not in PROBLEMS:
-        print("❌ Invalid problem ID. Exiting.")
-        exit(1)
-
-    config = CONFIG['general'].copy()
-    config.update(CONFIG[problem_id])
-
-    n, adj = load_graph(problem_id)
-
+    problem_id = input("🔍 Select problem (easy/medium/hard): ").strip().lower() or "easy"
+    if problem_id not in PROBLEMS: sys.exit("❌ Invalid problem ID.")
+    
+    config = CONFIG['general'].copy(); config.update(CONFIG[problem_id])
     start_time = time.time()
-    final_solutions = memetic_algorithm(n, adj, config, problem_id)
+    n, adj_bits = load_graph(problem_id)
+    memetic_algorithm(n, adj_bits, config, problem_id)
     print(f"\n⏱️  Total Optimization Time: {time.time() - start_time:.2f} seconds")
-
-    create_submission_file(final_solutions, problem_id)
