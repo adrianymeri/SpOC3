@@ -8,7 +8,8 @@ import pygmo as pg
 
 # --- Auto-compile Cython module ---
 def compile_cython_module():
-    module_name, pyx_file = "solver_cython", "solver_cython.pyx"
+    module_name = "solver_cython"
+    pyx_file = "solver_cython.pyx"
     try: import importlib.util; ext_suffix = importlib.util.EXTENSIONS[0]
     except (ImportError, AttributeError): import sysconfig; ext_suffix = sysconfig.get_config_var('EXT_SUFFIX') or '.so'
     
@@ -29,15 +30,20 @@ import solver_cython
 CONFIG = {
     "general": {
         "num_islands": os.cpu_count() or 8,
-        "migration_interval": 25, "migration_size": 10,
-        "stagnation_limit": 50, "mutation_boost_factor": 2.0,
-        "restart_stagnation_trigger": 150, "restart_fraction": 0.4,
-        "elite_count": 10, "elite_ls_multiplier": 5,
-        "crossover_rate": 0.9, "mutation_rate": 0.6
+        "migration_interval": 15, # More frequent migration and reporting
+        "migration_size": 10,
+        "stagnation_limit": 40, 
+        "mutation_boost_factor": 2.0,
+        "restart_stagnation_trigger": 120, 
+        "restart_fraction": 0.4,
+        "elite_count": 10, 
+        "elite_ls_multiplier": 5,
+        "crossover_rate": 0.9,
+        "mutation_rate": 0.6
     },
-    "easy": {"pop_size_per_island": 100, "generations": 2500, "local_search_intensity": 25},
-    "medium": {"pop_size_per_island": 120, "generations": 4000, "local_search_intensity": 30},
-    "hard": {"pop_size_per_island": 150, "generations": 6000, "local_search_intensity": 35},
+    "easy": {"pop_size_per_island": 120, "generations": 3000, "local_search_intensity": 25},
+    "medium": {"pop_size_per_island": 150, "generations": 5000, "local_search_intensity": 30},
+    "hard": {"pop_size_per_island": 200, "generations": 8000, "local_search_intensity": 35},
 }
 PROBLEMS = {
     "easy": "https://api.optimize.esa.int/data/spoc3/torso/easy.gr",
@@ -227,7 +233,8 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
                 for i in range(num_islands):
                     num_replace = int(len(islands[i]) * config['restart_fraction'])
                     results = pool.map(eval_wrapper, [islands[i][j]['solution'] for j in range(num_replace)])
-                    for k, (_, score) in enumerate(results): islands[i][k]['score'] = score
+                    for k, (sol, score) in enumerate(results): 
+                        if islands[i][k]['solution'] is sol: islands[i][k]['score'] = score
                 stagnation = 0
 
             if gen > 0 and gen % config['migration_interval'] == 0:
@@ -235,7 +242,7 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
                 migrants = [p['solution'] for p in all_individuals[:config['migration_size']]]
                 if migrants:
                     for island in islands:
-                        island.sort(key=lambda p: (p['score'][0], -p['score'][1]))
+                        island.sort(key=lambda p: (p['score'][0], -p['score'][1]));
                         for j in range(len(migrants)):
                             if j < len(island): island[j]['solution'] = random.choice(migrants)
 
@@ -251,7 +258,6 @@ def memetic_algorithm(n: int, adj_bits_np: np.ndarray, config: Dict, problem_id:
             if found_better:
                 stagnation = 0
                 pbar.write(f"✨ Gen {gen+1}: New best score {best_score}")
-                # Save checkpoint file
                 final_pop = [p for isle in islands for p in isle]
                 final_front = crowding_selection(final_pop, 20)
                 with open(f"submission_{problem_id}_checkpoint.json", "w") as f:
