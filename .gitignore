@@ -1,0 +1,6 @@
+venv
+checkpoints
+submissions
+logs
+.idea
+.DS_Store
