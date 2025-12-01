@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""
-Memetic NSGA-II with elite intensification & adaptive mutation for SPOC-3 torso decompositions.
-
-Patch notes:
-- Elite intensification (parallel stronger LS on top E individuals every generation)
-- Adaptive mutation (increases when no improvement)
-- Larger per-process LRU cache for evaluations
-- Best-solution logging and persistence
-- Keeps fast bitset evaluator + pool initializer from previous version
-"""
-
 import json
 import random
 import time
