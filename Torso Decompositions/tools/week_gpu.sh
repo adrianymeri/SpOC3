@@ -40,7 +40,17 @@ run_stage () {           # $1=problem  $2=seconds  $3=batch
     log "=== stage $prob done ==="
 }
 
-# ---- gate: never burn a week on an unvalidated evaluator -------------------
+# ---- gate: never burn a week on an unvalidated (or absent!) GPU ------------
+# 1. HARD requirement: numba must see the CUDA device. validate_gpu.py alone
+#    is not sufficient -- it validates the numpy reference and exits 0 even
+#    when the GPU path cannot run.
+if ! python3 -c "from numba import cuda; import sys; sys.exit(0 if cuda.is_available() else 1)" \
+        >> logs/week.log 2>&1; then
+    log "FATAL: numba CUDA not available for THIS python3."
+    log "  fix:  python3 -m pip install numba   (same interpreter!)"
+    log "  test: python3 -c 'from numba import cuda; print(cuda.is_available())'"
+    exit 1
+fi
 python3 tools/fastwalk.py small-graph >> logs/week.log 2>&1
 if ! python3 tools/validate_gpu.py --problem small-graph --batch 512 \
         >> logs/week.log 2>&1; then
