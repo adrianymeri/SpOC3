@@ -1,7 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
   <component name="ChangeListManager">
-    <list default="true" id="d43fd1ae-19d1-4f4a-b14a-720ac3a9c845" name="Changes" comment="" />
+    <list default="true" id="d43fd1ae-19d1-4f4a-b14a-720ac3a9c845" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/SpOC3.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/SpOC3.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/NSGA-II.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/checkpoints/large-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/checkpoints/medium-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/checkpoints/small-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/cpu_hill_climb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/logs/large-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/logs/medium-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/logs/small-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/large-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/medium-graph/.gitkeep" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/.gitkeep" beforeDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -31,10 +50,10 @@
   <component name="MarkdownSettingsMigration">
     <option name="stateVersion" value="1" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "customColor": "",
-  "associatedIndex": 8
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;customColor&quot;: &quot;&quot;,
+  &quot;associatedIndex&quot;: 8
+}</component>
   <component name="ProjectId" id="31nO1ODsSiqEQFMhUNHYXEeYG7T" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -42,16 +61,31 @@
   </component>
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
+    "Python.hc1_initial.executor": "Run",
+    "Python.hc1_simple.executor": "Run",
+    "Python.hc6_kbottleneck.executor": "Run",
+    "Python.hc7_initial.executor": "Run",
+    "Python.hill_climbing.executor": "Run",
+    "Python.hill_climbing_v2.executor": "Run",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "hill-climbing",
-    "last_opened_file_path": "/Users/adrianymeri/Desktop/SpOC3",
+    "git-widget-placeholder": "Hill-Climbing-Algorithm",
+    "last_opened_file_path": "/Users/adrianymeri/Desktop",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
   <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/.." />
+    </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/Torso Decompositions/submissions/large-graph" />
+      <recent name="$PROJECT_DIR$/Torso Decompositions/submissions/archieved" />
       <recent name="$PROJECT_DIR$/images" />
     </key>
   </component>
@@ -71,10 +105,21 @@
       <option name="presentableId" value="Default" />
       <updated>1756156154167</updated>
       <workItem from="1756156155253" duration="113000" />
+      <workItem from="1764627423786" duration="1841000" />
+      <workItem from="1778323524920" duration="28863000" />
+      <workItem from="1779798981053" duration="41159000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/SpOC3$hc6_kbottleneck.coverage" NAME="hc6_kbottleneck Coverage Results" MODIFIED="1778700497473" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions/algorithms" />
+    <SUITE FILE_PATH="coverage/SpOC3$hill_climbing.coverage" NAME="hill_climbing Coverage Results" MODIFIED="1778324248348" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions" />
+    <SUITE FILE_PATH="coverage/SpOC3$hc1_simple.coverage" NAME="hc1_simple Coverage Results" MODIFIED="1778411413527" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions" />
+    <SUITE FILE_PATH="coverage/SpOC3$hc1_initial.coverage" NAME="hc1_initial Coverage Results" MODIFIED="1780093805560" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions/algorithms" />
+    <SUITE FILE_PATH="coverage/SpOC3$hill_climbing_v2.coverage" NAME="hill_climbing_v2 Coverage Results" MODIFIED="1778327582943" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions" />
+    <SUITE FILE_PATH="coverage/SpOC3$hc7_initial.coverage" NAME="hc7_initial Coverage Results" MODIFIED="1778432470238" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/Torso Decompositions" />
   </component>
 </project>

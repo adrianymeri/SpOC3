@@ -1,0 +1,5 @@
+.feature_cache/
+__pycache__/
+.fastwalk_cache/
+.DS_Store
+leaderboard_reference/fast-cma-es-master.zip
