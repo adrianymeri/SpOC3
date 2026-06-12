@@ -50,8 +50,63 @@ def fill_suffix_adj(perm, t, ab, n):
     return H, suf
 
 
+def reduce_order3(H):
+    """Width<=3 reduction (Arnborg-Proskurowski rules: islet/twig/series/
+    triangle/buddy; the rare cube rule is omitted, so this is SOUND but very
+    slightly incomplete -- misses, never false positives; every produced order
+    is verified by the exact evaluator downstream). Returns order or None."""
+    H = {v: int(b) for v, b in H.items()}
+    alive = set(H)
+    out = []
+
+    def nbrs(v):
+        x = H[v]; r = []
+        while x:
+            b = x & -x; x ^= b; r.append(b.bit_length()-1)
+        return r
+
+    def eliminate(v):
+        nb = nbrs(v)
+        for u in nb:
+            H[u] &= ~(1 << v)
+        # clique fill among nb
+        for i in range(len(nb)):
+            for j in range(i+1, len(nb)):
+                a, b2 = nb[i], nb[j]
+                if not (H[a] >> b2) & 1:
+                    H[a] |= 1 << b2; H[b2] |= 1 << a
+        alive.discard(v); H[v] = 0; out.append(v)
+
+    progress = True
+    while alive and progress:
+        progress = False
+        for v in list(alive):
+            if v not in alive:
+                continue
+            d = H[v].bit_count()
+            if d <= 2:
+                eliminate(v); progress = True; continue
+            if d == 3:
+                a, b2, c = nbrs(v)
+                edges = (((H[a] >> b2) & 1) + ((H[a] >> c) & 1)
+                         + ((H[b2] >> c) & 1))
+                if edges >= 1:                      # triangle rule (>=1 edge
+                    eliminate(v); progress = True   # among N(v) keeps tw<=3)
+                    continue
+                # buddy rule: another degree-3 vertex with the SAME nbrs
+                for u in list(alive):
+                    if u != v and H[u] == H[v] and H[u].bit_count() == 3:
+                        eliminate(v); eliminate(u)
+                        progress = True
+                        break
+    return out if not alive else None
+
+
 def reduce_order(H, w):
-    """Complete reduction for w<=2. Returns elimination order or None."""
+    """Complete reduction for w<=2 (w==3 routes to reduce_order3).
+    Returns elimination order or None."""
+    if w == 3:
+        return reduce_order3(H)
     H = {v: int(b) for v, b in H.items()}
     deg = {v: H[v].bit_count() for v in H}
     stack = [v for v in H if deg[v] <= w]
@@ -114,8 +169,8 @@ def main():
     print(f"tail-exact -- {args.problem}: pooled {base:,.0f}")
 
     for w in [int(x) for x in args.widths.split(",") if x]:
-        if w > 2:
-            print(f"w={w}: only w<=2 has complete reduction rules; skipping")
+        if w > 3:
+            print(f"w={w}: no reduction rules beyond w=3; skipping")
             continue
         t_cur = bps.get(w, None)
         if t_cur is None:

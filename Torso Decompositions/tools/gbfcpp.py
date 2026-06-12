@@ -153,6 +153,13 @@ def ls_breakpoint(ev, perm0, Wpool, lo, hi, target_w, pred_pos, rng, budget,
     cur = list(perm0)
     pos = np.empty(n, dtype=np.int64); pos[np.asarray(cur)] = np.arange(n)
     t0 = time.time(); evals = 0; accepts = 0; last_improve = time.time()
+    # ACHIEVER POPULATION: distinct orderings that hold the current best
+    # fitness at this breakpoint. The offender census showed the binding
+    # breakpoints are each held by a SINGLE pool ordering -- one positive
+    # example, i.e. supervision collapse for the GBDT weak learner. Collecting
+    # equal-fitness committed states gives the next round's weak learner (and
+    # this round's restarts) a real population.
+    achievers = {tuple(cur[max(0, lo-20):]): list(cur)}
 
     def archive_improved(w_, p_):
         idxs = np.where(w_ < Wpool)[0]
@@ -295,25 +302,34 @@ def ls_breakpoint(ev, perm0, Wpool, lo, hi, target_w, pred_pos, rng, budget,
             if f2 > best_f:
                 best_f = f2; last_improve = time.time()
                 archive_improved(w2, ev.perm)
+                achievers = {tuple(ev.perm[max(0, lo-20):]): list(ev.perm)}
+            elif f2 == best_f and len(achievers) < 12:
+                k = tuple(ev.perm[max(0, lo-20):])
+                if k not in achievers:
+                    achievers[k] = list(ev.perm)        # new distinct achiever
             accepts += 1
         T = max(0.25, T * 0.99995)                      # anneal
-        # stuck: half the time KICK the current solution (ILS), half the
-        # time restart from perm0 or a mate (different basin)
+        # stuck: kick the current solution (ILS), or restart from a distinct
+        # ACHIEVER (same breakpoint, different basin), or from perm0/mates
         if time.time() - last_improve > stall_t:
-            if rng.random() < 0.5:
+            r = rng.random()
+            if r < 0.4:
                 pk = list(ev.perm)
                 for _ in range(int(rng.integers(4, 12))):
                     i = int(rng.integers(max(0, lo - 50), n))
                     j = int(rng.integers(max(1, lo - 50), n))
                     vv = pk.pop(i); pk.insert(j, vv)
                 ev.full(pk)
+            elif r < 0.75 and len(achievers) > 1:
+                ach = list(achievers.values())
+                ev.full(list(ach[int(rng.integers(len(ach)))]))
             else:
                 bases = [perm0] + (mates or [])
                 ev.full(list(bases[int(rng.integers(len(bases)))]))
             cur_f = fitness(staircase(ev.deg))
             pos[np.asarray(ev.perm)] = np.arange(n)
             last_improve = time.time(); T = t0          # reheat
-    return best_f, evals, accepts
+    return best_f, evals, accepts, list(achievers.values())
 
 
 # --------------------------------------------------------------------------- #
@@ -464,9 +480,9 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
         mates = [p for _, p in scored[1:5]]
         if len(pool) > 6:
             mates += [pool[int(rng.integers(5, len(pool)))] for _ in range(2)]
-        bf, evs, acc = ls_breakpoint(ev, base_p, W, lo, hi, tw, pred,
-                                     rng, round_budget, arch, no_gbdt=no_gbdt,
-                                     mates=mates, t0=t0)
+        bf, evs, acc, achievers = ls_breakpoint(
+            ev, base_p, W, lo, hi, tw, pred, rng, round_budget, arch,
+            no_gbdt=no_gbdt, mates=mates, t0=t0)
         cur = -arch.hypervolume(n)
         if cur >= prev - 0.5:
             fails[tw] = fails.get(tw, 0) + 1
@@ -478,7 +494,9 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
             pass
         best = min(best, cur)
         top = arch.top_k_by_hv_contribution(40, n)
-        pool = [list(p) for _, _, p in top] + pool[:40]
+        # achievers enter the pool FIRST: next round's weak learner trains on
+        # a population at the breakpoint instead of a single positive example
+        pool = achievers + [list(p) for _, _, p in top] + pool[:40]
         save_sub()
         msg = (f"  round {r+1:2d} | bp w={tw} t={hi} zone[{lo},{hi}) | {name} | "
                f"{evs} evals {acc} acc | score {best:,.0f}")
