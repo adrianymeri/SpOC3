@@ -436,6 +436,17 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
             fails = {int(k): v for k, v in json.load(open(state_fp)).items()}
         except Exception:
             fails = {}
+    # achiever populations persist too: without this, the anti-supervision-
+    # collapse population dies with each (wave) process and every restart
+    # re-collapses to a single positive example per breakpoint
+    ach_fp = os.path.join(here, "submissions", problem, f".{algo}_achievers.json")
+    ach_store = {}
+    if os.path.exists(ach_fp):
+        try:
+            ach_store = {k: [list(map(int, p)) for p in v]
+                         for k, v in json.load(open(ach_fp)).items()}
+        except Exception:
+            ach_store = {}
     for r in range(rounds):
         W = pooled_staircase(pool, ev)
         bps = breakpoints(W, n)
@@ -480,9 +491,21 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
         mates = [p for _, p in scored[1:5]]
         if len(pool) > 6:
             mates += [pool[int(rng.integers(5, len(pool)))] for _ in range(2)]
+        mates += ach_store.get(str(tw), [])[:6]   # stored breakpoint population
         bf, evs, acc, achievers = ls_breakpoint(
             ev, base_p, W, lo, hi, tw, pred, rng, round_budget, arch,
             no_gbdt=no_gbdt, mates=mates, t0=t0)
+        # merge + persist this breakpoint's achiever population
+        seen_a = set(); merged = []
+        for p in achievers + ach_store.get(str(tw), []):
+            k = tuple(p[max(0, lo-20):][:60])
+            if k not in seen_a:
+                seen_a.add(k); merged.append(list(p))
+        ach_store[str(tw)] = merged[:12]
+        try:
+            json.dump(ach_store, open(ach_fp, "w"))
+        except Exception:
+            pass
         cur = -arch.hypervolume(n)
         if cur >= prev - 0.5:
             fails[tw] = fails.get(tw, 0) + 1
@@ -499,7 +522,8 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
         pool = achievers + [list(p) for _, _, p in top] + pool[:40]
         save_sub()
         msg = (f"  round {r+1:2d} | bp w={tw} t={hi} zone[{lo},{hi}) | {name} | "
-               f"{evs} evals {acc} acc | score {best:,.0f}")
+               f"{evs} evals {acc} acc | ach {len(ach_store.get(str(tw), []))} "
+               f"| score {best:,.0f}")
         if target is not None:
             msg += f" | gap {best-target:+,.0f}" + (" BEAT!" if best < target else "")
         print(msg, flush=True)
