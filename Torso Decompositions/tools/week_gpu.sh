@@ -51,13 +51,20 @@ if ! python3 -c "from numba import cuda; import sys; sys.exit(0 if cuda.is_avail
     log "  test: python3 -c 'from numba import cuda; print(cuda.is_available())'"
     exit 1
 fi
+# 2. the validation must actually EXECUTE a GPU kernel (validate_gpu exits 0
+#    even when it only validated the numpy reference, e.g. on kernel-compile
+#    failures like nvJitLink/NVVM version mismatches)
 python3 tools/fastwalk.py small-graph >> logs/week.log 2>&1
-if ! python3 tools/validate_gpu.py --problem small-graph --batch 512 \
-        >> logs/week.log 2>&1; then
-    log "FATAL: GPU validation failed -- aborting (see logs/week.log)"
+python3 tools/validate_gpu.py --problem small-graph --batch 512 \
+        > logs/validate_last.log 2>&1
+cat logs/validate_last.log >> logs/week.log
+if ! grep -q "GPU vs CPU status mismatches: 0" logs/validate_last.log; then
+    log "FATAL: GPU kernel did not run bit-exact (see logs/validate_last.log)."
+    log "  If it shows an nvJitLink/NVVM error:"
+    log "    python3 -m pip install -U nvidia-nvjitlink-cu12 numba-cuda"
     exit 1
 fi
-log "GPU validated bit-exact; campaign begins"
+log "GPU kernel validated bit-exact; campaign begins"
 
 # ---- the week ---------------------------------------------------------------
 run_stage small-graph  $(( 3*86400 )) 8192
