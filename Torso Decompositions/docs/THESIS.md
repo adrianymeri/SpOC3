@@ -1194,7 +1194,17 @@ different prefix (a globally different fill pattern) can move them. Together
 with the flat 2,520-generation GPU run, this places the residual gap precisely:
 it is in prefix basins that neither breakpoint surgery (which preserves
 prefixes) nor underfunded neuroevolution (which needs ~10⁵ generations to find
-new basins) reaches at our compute.
+new basins) reaches at our compute. The certificates extend to **w = 3** via
+the Arnborg–Proskurowski triangle/buddy rules (`tail_exact.py --widths 3`):
+the entire exactly-decidable tail is blocked for every banked prefix. A
+complementary *offender census* exposes a method-level cause: each binding
+breakpoint (w = 11…14) is achieved by exactly **one** ordering in the
+60-member pool, with pairwise-disjoint blocking-vertex sets — at the front's
+hardest points, the GBDT weak learner's supervision collapses to a single
+positive example. GBFC++ therefore now maintains an **achiever population**
+(distinct equal-fitness orderings at the target breakpoint, collected during
+the walk and fed into the next round's pool and training set), restoring real
+supervision to the weak learner precisely where the residual lives.
 
 **12.4 Reading the ledger.** Three observations organise everything. (i) *No
 method without learning beats its learned counterpart anywhere*: the GPU-linear
