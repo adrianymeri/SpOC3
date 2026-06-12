@@ -33,6 +33,13 @@ def main():
     ap.add_argument("--base-seed", type=int, default=1000)
     args = ap.parse_args()
 
+    # every worker runs single-threaded libraries: with N workers, library
+    # thread pools at -1 spawn N x cores threads and crush the host (observed:
+    # load average 2,500+ from LightGBM n_jobs=-1 alone)
+    wenv = dict(os.environ,
+                GBDT_NJOBS="1", OMP_NUM_THREADS="1",
+                OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1")
+
     for wave in range(args.waves):
         t0 = time.time()
         procs = []
@@ -55,7 +62,7 @@ def main():
                 widths = [w for w in range(32) if w % k == (i - 1 + wave) % k]
                 cmd += ["--only-widths", ",".join(map(str, widths))]
             procs.append(subprocess.Popen(
-                cmd, cwd=ROOT,
+                cmd, cwd=ROOT, env=wenv,
                 stdout=subprocess.DEVNULL if i else None,   # show worker 0 only
                 stderr=subprocess.STDOUT if i else None))
         try:

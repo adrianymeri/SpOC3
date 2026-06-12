@@ -148,6 +148,10 @@ def make_gbdt(backend, seed, rank=False, device="cpu"):
     The GPU only accelerates tree *training*; it does not change the learned
     orderings or the hypervolume — see THESIS.md s9."""
     gpu = str(device).lower() in ("gpu", "cuda")
+    # GBDT_NJOBS caps the library's thread pool (default -1 = all cores).
+    # Parallel drivers (gbfcpp_swarm, diversify) set GBDT_NJOBS=1: with N
+    # workers, n_jobs=-1 spawns N x cores threads and crushes the host.
+    njobs = int(_os.environ.get("GBDT_NJOBS", "-1"))
     order = {"auto": ["lightgbm", "xgboost", "hist", "numpy", "ridge"]}.get(backend, [backend])
     for b in order:
         try:
@@ -158,12 +162,12 @@ def make_gbdt(backend, seed, rank=False, device="cpu"):
                     return ("lightgbm-rank" + ("-gpu" if gpu else ""), lgb.LGBMRanker(
                         objective="lambdarank", n_estimators=600,
                         learning_rate=0.05, num_leaves=63, subsample=0.8,
-                        colsample_bytree=0.8, random_state=seed, n_jobs=-1,
+                        colsample_bytree=0.8, random_state=seed, n_jobs=njobs,
                         verbose=-1, **gkw))
                 return ("lightgbm" + ("-gpu" if gpu else ""), lgb.LGBMRegressor(
                     n_estimators=600, learning_rate=0.05, num_leaves=63,
                     subsample=0.8, colsample_bytree=0.8, random_state=seed,
-                    n_jobs=-1, verbose=-1, **gkw))
+                    n_jobs=njobs, verbose=-1, **gkw))
             if b == "xgboost":
                 import xgboost as xgb
                 gkw = {"device": "cuda", "tree_method": "hist"} if gpu else {}
@@ -171,12 +175,12 @@ def make_gbdt(backend, seed, rank=False, device="cpu"):
                     return ("xgboost-rank" + ("-gpu" if gpu else ""), xgb.XGBRanker(
                         objective="rank:pairwise", n_estimators=600,
                         learning_rate=0.05, max_depth=7, subsample=0.8,
-                        colsample_bytree=0.8, random_state=seed, n_jobs=-1,
+                        colsample_bytree=0.8, random_state=seed, n_jobs=njobs,
                         verbosity=0, **gkw))
                 return ("xgboost" + ("-gpu" if gpu else ""), xgb.XGBRegressor(
                     n_estimators=600, learning_rate=0.05, max_depth=7,
                     subsample=0.8, colsample_bytree=0.8, random_state=seed,
-                    n_jobs=-1, verbosity=0, **gkw))
+                    n_jobs=njobs, verbosity=0, **gkw))
             if b == "hist":
                 from sklearn.ensemble import HistGradientBoostingRegressor
                 return ("hist", HistGradientBoostingRegressor(
