@@ -218,6 +218,23 @@ expensive evaluations is standard (Jin 2011; Loshchilov & Hansen's lq-CMA-ES).
 My surrogate-assisted CMA-ES (§6b) is an instance; its *null* result here
 (throughput-bound, not surrogate-bound) is the relevant finding.
 
+**Learned move selection in local search.** The closest family to GBFC++
+(§11.6) is machine-learning-guided neighbourhood search: neural large
+neighbourhood search for routing (Hottung & Tierney 2020), learned
+destroy/repair selection for ILP-LNS (Song et al. 2020), learning to perform
+local rewriting (Chen & Tian 2019), and the broader ML-for-CO programme
+surveyed by Bengio, Lodi & Prouvost (2021). GBFC++ differs on four axes:
+(i) the proposal model is a *gradient-boosted tree*, not a neural network,
+fitted in milliseconds; (ii) it is trained **online, on the instance being
+solved** (the pool's own elite orderings are the supervision) — there is no
+offline training distribution and hence no train/test generalisation gap to
+defend; (iii) the target it serves is the *hypervolume marginal of a specific
+front breakpoint*, a multi-objective quantity none of the above optimise; and
+(iv) its limits are characterised exactly (the §12.3b fixed-prefix optimality
+certificates), rather than empirically only. The framing of front construction
+itself as boosting (§11), with the proposal policy as one realisation of the
+weak learner, has to my knowledge no analogue in this literature.
+
 **Positioning.** To my knowledge, the specific combination — a continuous
 spectral-policy search *fused with a boosted-tree-learned adaptive elimination
 heuristic via an exact-hypervolume portfolio*, with a controlled ablation
