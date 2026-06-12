@@ -63,6 +63,7 @@ def main():
                 cmd += ["--only-widths", ",".join(map(str, widths))]
             procs.append(subprocess.Popen(
                 cmd, cwd=ROOT, env=wenv,
+                preexec_fn=lambda: os.nice(19),   # always yield to the GPU arm
                 stdout=subprocess.DEVNULL if i else None,   # show worker 0 only
                 stderr=subprocess.STDOUT if i else None))
         try:
