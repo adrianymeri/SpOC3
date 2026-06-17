@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 torso_deletion.py -- the set-space attack on the torso front.
 
 KEY INSIGHT (why this is different from every permutation method):
