@@ -185,22 +185,31 @@ def run(problem, here, rounds, gen, islands, pop, k_eig, backend, seed, procs=1)
         return [pg.sade(gen=gen), pg.de1220(gen=gen), pg.cmaes(gen=gen, force_bounds=True),
                 pg.xnes(gen=gen, force_bounds=True), pg.pso(gen=gen), pg.sade(gen=gen)]
 
+    print("training GBDT column ...", flush=True)
     gcol, gbname = train_gbdt_col(arc, raw, n, seed, backend)
     print(f"gbdt backend: {gbname}", flush=True)
+    migrants = []                                    # elite policies for migration
     for r in range(rounds):
         t0 = time.time()
         Faug = np.hstack([Phi, gcol[:, None]]).astype(np.float64)
         dec = Decoder(Faug, problem, here)
         prob = pg.problem(make_udp(dec))
-        archi = pg.archipelago(t=pg.ring())
         alist = algos()
-        udi = pg.mp_island() if procs > 1 else pg.thread_island()
+        new_migrants = []
         for i in range(islands):
-            archi.push_back(algo=pg.algorithm(alist[i % len(alist)]),
-                            prob=prob, size=pop, udi=udi)
-        archi.evolve(); archi.wait_check()
-        for x in archi.get_champions_x():
-            add_perm(dec.perm(x), problem, here, n, arc)
+            algo = pg.algorithm(alist[i % len(alist)])
+            popn = pg.population(prob, size=pop, seed=seed * 9973 + r * islands + i)
+            for mx in migrants[:max(1, pop // 4)]:    # ring migration: inject elites
+                popn.push_back(mx)
+            popn = algo.evolve(popn)
+            xs = popn.get_x(); fs = popn.get_f().ravel()
+            order = np.argsort(fs)
+            for j in order[:5]:                       # pool best few per island
+                add_perm(dec.perm(xs[j]), problem, here, n, arc)
+            new_migrants.append(xs[order[0]])
+            print(f"  round {r+1} island {i+1}/{islands} ({algo.get_name().split(':')[0]})"
+                  f" best {fs[order[0]]:,.0f}  [{time.time()-t0:.0f}s]", flush=True)
+        migrants = new_migrants
         cur = -hypervolume_2d(arc.points(), n)
         msg = f"round {r+1}/{rounds}: pooled HV {cur:,.0f}"
         if target: msg += f"  gap {cur - target:+,.0f}"
