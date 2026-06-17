@@ -1076,6 +1076,19 @@ def op_min_fill_reinsert(
 # Submission output
 # ---------------------------------------------------------------------------
 
+def load_decision_vectors(fp: str) -> List[List[int]]:
+    """Load a submission JSON, handling both formats:
+    - our format:      [{..., "decisionVector": [...]}]  (list wrapper)
+    - cuda-torso format: {..., "decisionVector": [...]}  (bare dict)
+    Returns the raw decisionVector list, or [] on failure.
+    """
+    try:
+        raw = json.load(open(fp))
+        return (raw[0] if isinstance(raw, list) else raw)["decisionVector"]
+    except Exception:
+        return []
+
+
 def write_submission(
     decision_vectors: List[List[int]],
     problem: str,

@@ -286,7 +286,8 @@ class SepCMAES:
 # ---------------------------------------------------------------------------
 
 def run(problem, budget_s, seed, here, encoding="spectral", eigenvectors=32,
-        num_t_seeds=40, engine="builtin", algo="cmaes", sigma0=0.5):
+        num_t_seeds=40, engine="builtin", algo="cmaes", sigma0=0.5,
+        no_warmstart=False, seed_banked=False):
     rng = np.random.default_rng(seed)
     n, adj = load_graph(graph_path(here, problem))
     adj_bits = build_adj_bitsets(n, adj)
@@ -300,7 +301,8 @@ def run(problem, budget_s, seed, here, encoding="spectral", eigenvectors=32,
     if target is not None:
         print(f"leaderboard target = {target:,}")
     print(f"encoding = {encoding}, engine = {engine}, budget = {budget_s:.0f}s, "
-          f"seed = {seed}, t-grid = {len(t_grid)}")
+          f"seed = {seed}, t-grid = {len(t_grid)}, "
+          f"no-warmstart = {no_warmstart}, seed-banked = {seed_banked}")
 
     build_t0 = time.time()
     if encoding == "spectral":
@@ -321,14 +323,29 @@ def run(problem, budget_s, seed, here, encoding="spectral", eigenvectors=32,
     t0 = time.time()
     archive = ParetoArchive()
 
-    # Seed the archive with a min-degree/min-fill warm start so the submission
-    # is never empty and the search has a feasible anchor to improve on -- the
-    # dense instance starts almost entirely infeasible otherwise.
-    import random as _random
-    ws_perm, ws_label = build_warm_start(n, adj_bits, rng=_random.Random(seed))
-    eval_fitness(ws_perm, adj_bits, n, t_grid, archive)
-    print(f"warm-start seed = {ws_label}; archive {len(archive)}, "
-          f"score = {-archive.hypervolume(n):,.0f}", flush=True)
+    # Optionally seed the archive with all banked orderings so the search
+    # measures improvement from the current best portfolio, not from scratch.
+    if seed_banked:
+        from tools.gbfc import banked as _banked
+        pool = _banked(here, problem, n, adj_bits)
+        import random as _random
+        for p in pool:
+            eval_fitness(p, adj_bits, n, t_grid, archive)
+        print(f"seeded archive from banked pool ({len(pool)} orderings), "
+              f"score = {-archive.hypervolume(n):,.0f}", flush=True)
+
+    if not no_warmstart:
+        # Seed the archive with a min-degree/min-fill warm start so the
+        # submission is never empty and the search has a feasible anchor --
+        # the dense instance starts almost entirely infeasible otherwise.
+        import random as _random
+        ws_perm, ws_label = build_warm_start(n, adj_bits, rng=_random.Random(seed))
+        eval_fitness(ws_perm, adj_bits, n, t_grid, archive)
+        print(f"warm-start seed = {ws_label}; archive {len(archive)}, "
+              f"score = {-archive.hypervolume(n):,.0f}", flush=True)
+    else:
+        print("warm-start skipped (--no-warmstart): CMA-ES starts from random x",
+              flush=True)
 
     def fitness(x: np.ndarray) -> float:
         return eval_fitness(decode(x, features), adj_bits, n, t_grid, archive)
@@ -336,7 +353,14 @@ def run(problem, budget_s, seed, here, encoding="spectral", eigenvectors=32,
     if engine == "fcmaes":
         _run_fcmaes(fitness, dim, budget_s, seed)
     else:
+        # With --no-warmstart, initialise x randomly to explore different
+        # policy basins rather than anchoring near the min-degree solution.
+        if no_warmstart:
+            x0 = rng.normal(0.0, sigma0, dim)
+        else:
+            x0 = np.zeros(dim)
         opt = SepCMAES(dim, sigma0=sigma0, seed=seed)
+        opt.mean = x0.copy()   # override default zero mean
         gen = 0
         last = 0.0
         while time.time() - t0 < budget_s:
@@ -415,10 +439,18 @@ def main():
     ap.add_argument("--engine", default="builtin", choices=["builtin", "fcmaes"])
     ap.add_argument("--sigma0", type=float, default=0.5)
     ap.add_argument("--algo", default="cmaes")
+    ap.add_argument("--no-warmstart", action="store_true",
+                    help="Skip min-degree warm start; init CMA-ES x ~ N(0, sigma0) "
+                         "to explore different prefix basins.")
+    ap.add_argument("--seed-banked", action="store_true",
+                    help="Seed the archive from the current banked pool before search "
+                         "so improvements are measured against the best known score.")
     args = ap.parse_args()
     run(args.problem, args.budget, args.seed, repo_root(),
         encoding=args.encoding, eigenvectors=args.eigenvectors,
-        num_t_seeds=args.num_t_seeds, engine=args.engine, algo=args.algo)
+        num_t_seeds=args.num_t_seeds, engine=args.engine, algo=args.algo,
+        sigma0=args.sigma0, no_warmstart=args.no_warmstart,
+        seed_banked=args.seed_banked)
 
 
 if __name__ == "__main__":

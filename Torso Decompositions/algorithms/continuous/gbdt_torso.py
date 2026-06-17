@@ -64,7 +64,7 @@ import numpy as np
 
 from core import (LEADERBOARD_TARGETS, MAX_TW, ParetoArchive, build_adj_bitsets,
                   graph_path, hypervolume_2d, load_graph, repo_root,
-                  submission_path, write_submission)
+                  submission_path, write_submission, load_decision_vectors)
 from algorithms.continuous.cmaes_torso import (build_node_features, eval_fitness,
                                                decode, SepCMAES, get_features)
 
@@ -222,9 +222,8 @@ def load_elites(here, problem, n, adj_bits, t_grid, archive, top_m):
              + glob.glob(_os.path.join(here, "submissions", problem, "portfolio.json")))
     seen = set(); scored = []
     for fp in files:
-        try:
-            dvs = json.load(open(fp))[0]["decisionVector"]
-        except Exception:
+        dvs = load_decision_vectors(fp)
+        if not dvs:
             continue
         for dv in dvs:
             if not isinstance(dv, list) or len(dv) != n + 1:

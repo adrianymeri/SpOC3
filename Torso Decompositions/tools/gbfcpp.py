@@ -45,7 +45,7 @@ import argparse, json, math, random, time
 import numpy as np
 from core import (load_graph, build_adj_bitsets, graph_path, repo_root, ParetoArchive,
                   hypervolume_2d, MAX_TW, submission_path, write_submission,
-                  LEADERBOARD_TARGETS)
+                  load_decision_vectors, LEADERBOARD_TARGETS)
 from algorithms.continuous.cmaes_torso import get_features
 from algorithms.continuous.gbdt_torso import make_gbdt, training_set
 from tools.gbfc import banked, standardize
@@ -366,9 +366,8 @@ def banked_excluding(here, problem, n, ab, stems):
             continue
         if not os.path.exists(fp):
             continue
-        try:
-            dvs = json.load(open(fp))[0]["decisionVector"]
-        except Exception:
+        dvs = load_decision_vectors(fp)
+        if not dvs:
             continue
         for dv in dvs:
             if isinstance(dv, list) and len(dv) == n + 1 and \
@@ -400,19 +399,27 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
     pool = []
     own = submission_path(here, problem, algo)
     if os.path.exists(own) and not exclude_stems:
-        try:
-            for dv in json.load(open(own))[0]["decisionVector"]:
-                if isinstance(dv, list) and len(dv) == n + 1:
-                    pool.append([int(x) for x in dv[:-1]])
-        except Exception:
-            pass
+        for dv in load_decision_vectors(own):
+            if isinstance(dv, list) and len(dv) == n + 1:
+                pool.append([int(x) for x in dv[:-1]])
     seen = {tuple(p) for p in pool}
     corpus = (banked_excluding(here, problem, n, ab, exclude_stems)
               if exclude_stems else banked(here, problem, n, ab))
     for p in corpus:
         if tuple(p) not in seen:
             seen.add(tuple(p)); pool.append(p)
-    pool = pool[:60]
+    # Build full archive from ALL banked orderings first, then select the
+    # top-60 by HV contribution so we always start from the best achievable
+    # pooled front (not just the first 60 in file order).
+    arch_all = ParetoArchive()
+    for p in pool:
+        w = staircase(ev.full(p))
+        for wt, t in breakpoints(w, n):
+            if wt <= MAX_TW:
+                arch_all.try_add(wt, t, list(p))
+    top_all = arch_all.top_k_by_hv_contribution(60, n)
+    pool = [list(p) for (_, _, p) in top_all]
+
     arch = ParetoArchive()
     for p in pool:
         w = staircase(ev.full(p))
@@ -424,7 +431,7 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
 
     out = submission_path(here, problem, algo)
     def save_sub():
-        top = arch.top_k_by_hv_contribution(20, n)
+        top = arch.top_k_by_hv_contribution(60, n)   # save 60, not 20
         write_submission([list(p)+[int(t)] for (_, t, p) in top], problem, out)
     save_sub()
 

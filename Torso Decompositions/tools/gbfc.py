@@ -31,7 +31,7 @@ import argparse, glob, json, math, time, random
 import numpy as np
 from core import (load_graph, build_adj_bitsets, graph_path, repo_root, ParetoArchive,
                   hypervolume_2d, MAX_TW, min_degree_perm, submission_path, write_submission,
-                  LEADERBOARD_TARGETS, treewidth_lower_bound_mmd)
+                  load_decision_vectors, LEADERBOARD_TARGETS, treewidth_lower_bound_mmd)
 from algorithms.continuous.cmaes_torso import SepCMAES, get_features
 from algorithms.continuous.gbdt_torso import make_gbdt, training_set
 from algorithms.continuous.gpu_eval import build_adj_words, cpu_eval_batch, staircase_widths
@@ -72,8 +72,8 @@ def banked(here, problem, n, ab=None):
     for fp in [os.path.join(sub, "portfolio.json")] + sorted(glob.glob(os.path.join(sub, "*.json"))) \
               + sorted(glob.glob(os.path.join(sub, "seeds", "*.json"))):
         if not os.path.exists(fp): continue
-        try: dvs = json.load(open(fp))[0]["decisionVector"]
-        except Exception: continue
+        dvs = load_decision_vectors(fp)
+        if not dvs: continue
         for dv in dvs:
             if isinstance(dv, list) and len(dv) == n+1 and sorted(int(x) for x in dv[:-1]) == list(range(n)):
                 k = tuple(int(x) for x in dv[:-1])
