@@ -53,6 +53,10 @@ def main():
                    help="+/- window of thresholds around each target to also weight")
     p.add_argument("--band_frac", type=float, default=0.9,
                    help="fraction of reseeding pressure put on the target bands")
+    p.add_argument("--warmstart_pt", type=str, default="",
+                   help="cuda-torso .pt checkpoint to warm-start the elite POLICIES "
+                        "from (skips the random cold start; uses real policies, which "
+                        "-- unlike our constructed orderings -- the decode can hold)")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
     np.random.seed(args.seed); torch.manual_seed(args.seed)
@@ -88,6 +92,20 @@ def main():
     band_w = torch.from_numpy((w / w.sum()).astype(np.float64)).cuda()
     print(f"=== run_band -- {args.graph} | targets={targets} radius={args.band_radius} "
           f"band_frac={args.band_frac} ===", flush=True)
+
+    # warm-start the elite policies from a cuda-torso checkpoint (real policies)
+    if args.warmstart_pt:
+        ck = torch.load(args.warmstart_pt, map_location="cuda")
+        if "elites" in ck and ck["elites"].shape == (N, E):
+            elites[:] = ck["elites"].cuda().float()
+            elite_fitnesses[:] = ck["elite_fitnesses"].cuda().int()
+            # seed the first population from the warm elites (band-weighted)
+            idx0 = torch.multinomial(band_w, B, replacement=True)
+            population[:] = elites[idx0]
+            _, hvi0 = calculate_hvi(ts, elite_fitnesses, N)
+            print(f"warm-started from {args.warmstart_pt}: HVI {hvi0:,}", flush=True)
+        else:
+            print(f"warmstart .pt shape mismatch (need elites {(N, E)}); ignoring", flush=True)
 
     for generation in range(args.max_generations):
         start = time.perf_counter()
