@@ -167,10 +167,14 @@ def run(problem, here, budget_s, emit_evals, rounds, k_eig, backend, seed, bound
 
         # choose the niche to drill: worst-served band (largest width over a
         # local floor) -- the residual the GBDT is meant to attack
+        # drill the BREAKPOINT bands, where +1 torso-size = +1 HV: the grown
+        # thresholds t*(w)-1 (one step earlier than each width's current best).
+        # Rotating over these aims the emitter where the front can actually move,
+        # not at the rigid high-width region.
         valid = np.where(arch_w < 10 ** 9)[0]
-        floor = np.minimum.accumulate(arch_w[valid][::-1])[::-1]  # running min from the right
-        resid = arch_w[valid] - floor
-        tt = int(valid[int(np.argmax(resid + 1e-9 * np.random.rand(len(valid))))])
+        bps = [int(t) for t in valid if t > 0 and arch_w[t] < arch_w[t - 1]]  # width-drop steps
+        targets = sorted({max(0, t - 1) for t in bps}) or [int(valid[len(valid) // 2])]
+        tt = targets[r % len(targets)]
 
         def fitness(x):
             nonlocal evals
