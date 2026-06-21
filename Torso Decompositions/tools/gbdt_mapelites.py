@@ -182,11 +182,16 @@ def run(problem, here, budget_s, emit_evals, rounds, k_eig, backend, seed, bound
         x0 = arch_pol.get(tt)
         if x0 is None:
             x0 = np.random.default_rng(seed + r).normal(0, 0.3, E)
+        before = evals
         if HAVE_FCMAES:
-            res = cmaescpp.minimize(fitness, bounds=Bounds([-bound]*E, [bound]*E),
-                                    x0=np.asarray(x0, float), input_sigma=0.3,
-                                    popsize=31, max_evaluations=emit_evals)
-        else:
+            try:
+                cmaescpp.minimize(fitness, bounds=Bounds([-bound]*E, [bound]*E),
+                                  x0=np.asarray(x0, float), input_sigma=0.3,
+                                  popsize=31, max_evaluations=emit_evals,
+                                  workers=1, delayed_update=False, normalize=False)
+            except Exception as ex:
+                print(f"  [fcmaes emit error: {ex}; falling back]", flush=True)
+        if evals == before:                      # emitter ran nothing -> tested CMA-ES
             _sepcma_emit(fitness, x0, E, emit_evals, 0.3, seed + r)
 
         cur = front_hv()
