@@ -98,14 +98,26 @@ def run(problem, here, bands, budget_s, tw_timeout, kick, seed):
         best = len(S)
         tested = exact = to = 0; tw0 = time.time()
         while time.time() - t0 < budget_s:
-            # KICK: move `kick` low-boundary X-vertices into the torso, then repair
+            # RANDOMIZED large-neighborhood restructure.  Each round explores a
+            # genuinely different region: (a) optionally evict a random handful of
+            # current torso vertices (basin move), (b) kick a RANDOM low-boundary
+            # subset of X back in (random size), (c) repair by dropping among the
+            # worst-boundary vertices STOCHASTICALLY until tw<=W or size<=best.
             Sm = 0
             for s in S: Sm |= 1 << s
-            xs = sorted(X, key=lambda u: (ab[u] & Sm).bit_count())
-            add = xs[:max(1, kick)]
-            S2 = set(S) | set(add); X2 = [u for u in X if u not in S2]
-            # net we are +kick in size; verify exact tw and, if too high, drop the
-            # single worst (highest-boundary) torso vertices until tw<=W or size<=best
+            # (a) basin move: with prob 1/2, evict a few random torso vertices
+            Scur = set(S)
+            if rng.random() < 0.5 and len(Scur) > best - 4:
+                ev = rng.choice(list(Scur), size=min(rng.integers(1, kick + 1), len(Scur)),
+                                replace=False)
+                Scur.difference_update(int(v) for v in ev)
+            # (b) randomized kick: sample from the low-boundary X-vertices
+            xs = sorted([u for u in range(n) if u not in Scur],
+                        key=lambda u: (ab[u] & Sm).bit_count())
+            pool = xs[:max(kick * 4, 16)]                       # low-boundary candidate pool
+            ksz = int(rng.integers(kick, kick * 2 + 1))
+            add = rng.choice(pool, size=min(ksz, len(pool)), replace=False)
+            S2 = Scur | set(int(v) for v in add)
             ok = False
             while len(S2) > best:
                 Slist = list(S2)
@@ -115,10 +127,11 @@ def run(problem, here, bands, budget_s, tw_timeout, kick, seed):
                     exact += 1
                 except TimeoutError:
                     to += 1
-                # drop the highest-torso-degree vertex (likely the tw culprit)
+                # drop stochastically among the highest-boundary vertices
                 Sm2 = 0
                 for s in S2: Sm2 |= 1 << s
-                worst = max(S2, key=lambda s: (ab[s] & Sm2).bit_count())
+                ranked = sorted(S2, key=lambda s: -(ab[s] & Sm2).bit_count())
+                worst = int(rng.choice(ranked[:max(3, kick)]))
                 S2.discard(worst)
                 tested += 1
                 if time.time() - t0 >= budget_s: break
