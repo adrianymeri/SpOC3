@@ -96,60 +96,84 @@ def run(problem, here, bands, budget_s, tw_timeout, kick, seed):
         S = set(perm[t_star:]); X = list(perm[:t_star])      # torso S (size n-t*), deletion X
         full = set(range(n))
         best = len(S)
-        tested = exact = to = 0; tw0 = time.time()
+        tested = exact = to = lat = 0; tw0 = time.time()
+        # PLATEAU-WANDERING search.  `cur` is a working max-size torso (size == best,
+        # tw <= W).  Most steps do a LATERAL swap (remove one, add one, keep size,
+        # exact-verify tw <= W) so `cur` DRIFTS across the whole plateau of maximum
+        # torsos -- leaving the neighbourhood of our front entirely.  Every few steps
+        # we attempt a GROW (+1) from wherever cur has wandered; a success that the
+        # anchored search could never reach is a proven +1 HV.  Periodic random
+        # teleport restarts cur from a fresh maximal torso for basin diversity.
+        cur = set(S); grow_every = 6; step = 0; since_grow = 0
         while time.time() - t0 < budget_s:
-            # RANDOMIZED large-neighborhood restructure.  Each round explores a
-            # genuinely different region: (a) optionally evict a random handful of
-            # current torso vertices (basin move), (b) kick a RANDOM low-boundary
-            # subset of X back in (random size), (c) repair by dropping among the
-            # worst-boundary vertices STOCHASTICALLY until tw<=W or size<=best.
-            Sm = 0
-            for s in S: Sm |= 1 << s
-            # (a) basin move: with prob 1/2, evict a few random torso vertices
-            Scur = set(S)
-            if rng.random() < 0.5 and len(Scur) > best - 4:
-                ev = rng.choice(list(Scur), size=min(rng.integers(1, kick + 1), len(Scur)),
-                                replace=False)
-                Scur.difference_update(int(v) for v in ev)
-            # (b) randomized kick: sample from the low-boundary X-vertices
-            xs = sorted([u for u in range(n) if u not in Scur],
-                        key=lambda u: (ab[u] & Sm).bit_count())
-            pool = xs[:max(kick * 4, 16)]                       # low-boundary candidate pool
-            ksz = int(rng.integers(kick, kick * 2 + 1))
-            add = rng.choice(pool, size=min(ksz, len(pool)), replace=False)
-            S2 = Scur | set(int(v) for v in add)
-            ok = False
-            while len(S2) > best:
-                Slist = list(S2)
-                try:
-                    if tw_le(torso_adj_dict(Slist, ab, n), W, time.time() + tw_timeout):
-                        ok = True; break
-                    exact += 1
-                except TimeoutError:
-                    to += 1
-                # drop stochastically among the highest-boundary vertices
-                Sm2 = 0
-                for s in S2: Sm2 |= 1 << s
-                ranked = sorted(S2, key=lambda s: -(ab[s] & Sm2).bit_count())
-                worst = int(rng.choice(ranked[:max(3, kick)]))
-                S2.discard(worst)
-                tested += 1
-                if time.time() - t0 >= budget_s: break
-            if ok and len(S2) > best:
-                best = len(S2); S = S2; X = [u for u in full if u not in S]
-                wins += 1
-                # build an ordering for this torso and add to the front
-                order = list(S)            # any order works for the SET; record a valid perm
-                permnew = [u for u in full if u not in S] + order
-                # the exact tw<=W certifies a width-<=W elimination exists; bank the SET
-                by_w[W] = (n - len(S), permnew)
-                cur = front_hv()
-                print(f"  w={W}: WIN  torso {best}  front {cur:,.0f}"
-                      f"{f'  gap {cur-target:+,.0f}' if target else ''}", flush=True)
+            step += 1
+            curmask = 0
+            for s in cur: curmask |= 1 << s
+            outside = [u for u in range(n) if u not in cur]
+            outside.sort(key=lambda u: (ab[u] & curmask).bit_count())   # low-boundary first
+            if step % grow_every == 0:
+                # GROW: try to add a low-boundary outside vertex, keeping all of cur
+                grew = False
+                for z in outside[:max(6, kick)]:
+                    cand = cur | {int(z)}
+                    try:
+                        if tw_le(torso_adj_dict(list(cand), ab, n), W, time.time() + tw_timeout):
+                            best = len(cand); S = set(cand); cur = set(cand)
+                            X = [u for u in full if u not in S]; wins += 1; grew = True
+                            permnew = [u for u in full if u not in S] + list(S)
+                            by_w[W] = (n - len(S), permnew)
+                            c = front_hv()
+                            print(f"  w={W}: WIN  torso {best}  front {c:,.0f}"
+                                  f"{f'  gap {c-target:+,.0f}' if target else ''}", flush=True)
+                            break
+                        exact += 1
+                    except TimeoutError:
+                        to += 1
+                    tested += 1
+                since_grow = 0 if grew else since_grow + 1
+            else:
+                # LATERAL drift: remove one vertex, then SEARCH for any replacement
+                # that keeps size == best and tw <= W (accept first feasible) so the
+                # set actually moves instead of almost-always rejecting.
+                v = int(rng.choice(list(cur)))
+                base = cur - {v}
+                bmask = 0
+                for s in base: bmask |= 1 << s
+                cands = [u for u in range(n) if u not in cur and u != v]
+                cands.sort(key=lambda u: (ab[u] & bmask).bit_count())   # low-boundary first
+                pool = cands[:max(kick * 4, 24)]
+                rng.shuffle(pool)
+                for z in pool[:10]:
+                    cand = base | {int(z)}
+                    try:
+                        if tw_le(torso_adj_dict(list(cand), ab, n), W, time.time() + tw_timeout):
+                            cur = cand; lat += 1; break              # accept the wander
+                        exact += 1
+                    except TimeoutError:
+                        to += 1
+                    tested += 1
+            # teleport: if stuck (many failed grows), jump cur far via a burst of
+            # accepted lateral swaps off S, so the next grows start somewhere new
+            if since_grow >= 40:
+                cur = set(S); since_grow = 0
+                for _ in range(kick * 3):
+                    cm = 0
+                    for s in cur: cm |= 1 << s
+                    outs = [u for u in range(n) if u not in cur]
+                    z = int(rng.choice(outs)); v = int(rng.choice(list(cur)))
+                    cand = (cur - {v}) | {z}
+                    try:
+                        if tw_le(torso_adj_dict(list(cand), ab, n), W, time.time() + 0.5):
+                            cur = cand; lat += 1
+                    except TimeoutError:
+                        to += 1
+            if len(cur) < best:
+                cur = set(S)
             if time.time() - tw0 > budget_s / max(1, len(bands)):
                 break
         print(f"  w={W}: done  best torso {best} (was {n-t_star})  "
-              f"[{tested} exact tests, {to} timeouts, {time.time()-tw0:.0f}s]", flush=True)
+              f"[{tested} tests, {lat} lateral drifts, {to} timeouts, "
+              f"{time.time()-tw0:.0f}s]", flush=True)
 
     fin = front_hv()
     print(f"\nfinal front {fin:,.0f}"
