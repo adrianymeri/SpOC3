@@ -102,14 +102,12 @@ def main():
     print(f"warm-start source: {seen} valid orderings; "
           f"{int((best_w<=MAX_TW).sum())}/{n} thresholds covered", flush=True)
 
-    # least-squares policy fit: solve (NodesᵀNodes + reg I) w = Nodesᵀ pos
-    A = nodes.T @ nodes + a.reg * np.eye(E, dtype=np.float64)
-    L = np.linalg.cholesky(A)
+    # least-squares policy fit via pseudoinverse (robust to rank-deficient
+    # polynomial features, where the normal-equations Cholesky fails)
+    pinv = np.linalg.pinv(nodes.astype(np.float64), rcond=1e-8)   # E x N
     def fit_policy(perm):
         pos = np.empty(n, dtype=np.float64); pos[np.asarray(perm)] = np.arange(n)
-        rhs = nodes.T @ pos
-        y = np.linalg.solve(L, rhs)
-        return np.linalg.solve(L.T, y).astype(np.float32)
+        return (pinv @ pos).astype(np.float32)
 
     # one policy per distinct ordering, broadcast to its thresholds
     cache = {}; elites = np.zeros((n, E), dtype=np.float32)
@@ -136,11 +134,13 @@ def main():
             if run <= MAX_TW: dec.try_add(run, t, None)
     src_hv = -hypervolume_2d(src.points(), n)
     dec_hv = -hypervolume_2d(dec.points(), n)
+    degradation = dec_hv - src_hv     # >0 means decoded is WORSE (less negative)
     print(f"\n  source front HV : {src_hv:,.0f}")
-    print(f"  DECODED front HV: {dec_hv:,.0f}   (loss {src_hv-dec_hv:+,.0f})")
-    faithful = (src_hv - dec_hv) < 2000
+    print(f"  DECODED front HV: {dec_hv:,.0f}   (degradation {degradation:+,.0f})")
+    faithful = degradation < 1000
     print("  -> warm-start is FAITHFUL, worth a Kaggle run" if faithful
-          else "  -> decode degraded the front; warm-start likely NOT worth Kaggle hours")
+          else "  -> decode DEGRADED the front; this .pt starts BELOW the source — "
+               "use a real cuda-torso .pt instead")
 
     ck = {
         "args": {"graph": a.problem, "eigenvectors": a.eigenvectors,
