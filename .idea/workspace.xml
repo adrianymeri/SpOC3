@@ -6,6 +6,12 @@
   <component name="ChangeListManager">
     <list default="true" id="d43fd1ae-19d1-4f4a-b14a-720ac3a9c845" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/docs/build/THESIS.pdf" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/docs/build/THESIS.pdf" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/docs/build/body.md" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/docs/build/body.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/docs/build/passx.log" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/docs/build/passx.log" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/.gbfcpp_achievers.json" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/.gbfcpp_achievers.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/.gbfcpp_state.json" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/.gbfcpp_state.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/gbfcpp.json" beforeDir="false" afterPath="$PROJECT_DIR$/Torso Decompositions/submissions/small-graph/gbfcpp.json" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -93,7 +99,7 @@
       <workItem from="1756156155253" duration="113000" />
       <workItem from="1764627423786" duration="1841000" />
       <workItem from="1778323524920" duration="28863000" />
-      <workItem from="1779798981053" duration="46689000" />
+      <workItem from="1779798981053" duration="57580000" />
     </task>
     <servers />
   </component>

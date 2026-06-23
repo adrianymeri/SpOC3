@@ -1,0 +1,6 @@
+=== exact-torso -- small-graph | front -1,829,913  gap +6 ===
+  w=12: done  best torso 1004 (was 1004)  [10270 tests, 0 lateral drifts, 3 timeouts, 4802s]
+  w=13: done  best torso 1121 (was 1121)  [7270 tests, 0 lateral drifts, 90 timeouts, 4802s]
+  w=14: done  best torso 1238 (was 1238)  [5260 tests, 0 lateral drifts, 60 timeouts, 4797s]
+
+final front -1,829,913  gap +6 | 0 bands improved

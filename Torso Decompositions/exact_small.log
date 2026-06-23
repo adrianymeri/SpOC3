@@ -1,0 +1,11 @@
+/Users/adrianymeri/Desktop/SpOC3/Torso Decompositions/tools/torso_deletion.py:58: SyntaxWarning: invalid escape sequence '\S'
+  """Bitset adjacency of torso(S): G[S] plus, for each connected component C
+=== exact-torso -- small-graph | front -1,829,913  gap +6 ===
+  w=8: done  best torso 581 (was 581)  [30464 exact tests, 0 timeouts, 2400s]
+  w=9: done  best torso 678 (was 678)  [18192 exact tests, 0 timeouts, 2400s]
+  w=10: done  best torso 782 (was 782)  [10800 exact tests, 0 timeouts, 2401s]
+  w=11: done  best torso 887 (was 887)  [6816 exact tests, 0 timeouts, 2402s]
+  w=12: done  best torso 1004 (was 1004)  [4544 exact tests, 0 timeouts, 2401s]
+  w=13: done  best torso 1121 (was 1121)  [3286 exact tests, 0 timeouts, 2396s]
+
+final front -1,829,913  gap +6 | 0 bands improved
