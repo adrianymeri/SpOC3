@@ -113,3 +113,29 @@ adds GBDT specialist orderings to cuda-torso's per-threshold pool additively
 (never disturbing the elites), so the booster can only help, and `--no_gbdt`
 gives the exact control. This makes "did GBDT help the state of the art, and by
 how much" a measured quantity rather than a claim.
+
+---
+
+## 6. Results (converged, ~580k generations, V100, identical seed/budget)
+
+| Arm | engine | best internal HVI |
+|---|---|---:|
+| A | cuda-torso **+ GBDT booster** | **−1,828,402** |
+| B | cuda-torso control (`--no_gbdt`) | −1,828,193 |
+| C | stock cuda-torso (`run.py`) | −1,827,944 |
+
+**Δ = A − B ≈ +200 HV** (converged; observed range +184…+211 across the run,
+positive throughout). This is claim (1) of §3, landed: a **measured, controlled
+GBDT contribution to a championship-grade search** on the identical engine, seed,
+and budget.
+
+**Honest reading (claim 4 / §4 stopping rule).** Both arms plateau ~1,500 HV below
+the constructed front (§13, −1,829,913), and pooling either arm with the
+torso-deletion front adds **+0** at every band — small is saturated, so the
+engine-level Δ does not convert to a portfolio-level gain. The beat did **not**
+land here, and §13.6 explains why: small is a certified near-optimum on an
+instance that defeats the SOTA exact solver. The booster *helped the search*
+(+200) but there is no headroom above set-space search on this instance. **The
+booster's portfolio-level payoff is reserved for medium and large**, where the gap
+is 18,844 / 12,561 HV and the same A/B/C protocol is now running. Report the +200
+plainly as what it is; do not inflate it into a beat it did not produce.
