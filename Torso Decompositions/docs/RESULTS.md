@@ -24,7 +24,7 @@ and the continuous-encoding breakthrough that followed (full narrative in
 | **medium (GBFC §11)** | — | **−1,712,688** | −1,745,122 | **98.14 %** | +734 |
 | **large (GBFC §11)** | — | **−5,431,924** | −5,493,062 | **98.89 %** | +329 |
 | **small (GBFC++ §11.6)** | — | **−1,829,735** | −1,829,919 | **99.990 %** | +741 over GBFC |
-| **small (torso-deletion §13)** | — | **−1,829,913** | −1,829,919 | **99.99967 %** | gap **6**, certified |
+| **small (torso-deletion §13)** | — | **−1,829,913** | −1,829,919 | **99.99967 %** | gap **6**, characterised |
 
 The **GBFC rows (§11) are this thesis's primary novel method** — Gradient-Boosted
 Front Construction (`tools/gbfc.py`), which reframes Pareto-front optimisation as

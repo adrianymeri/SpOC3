@@ -42,12 +42,16 @@ permutation-space ceiling to within touching distance of the leaderboard top.
 | **small (GBFC++ §11.6)** | — | **−1,829,735** | −1,829,919 | **99.990 %** |
 | **small (torso-deletion §13)** | — | **−1,829,913** | −1,829,919 | **99.99967 %** |
 
-The small instance is now **certified at gap 6** (§13): −1,829,913 verified against
-ESA's own scorer, with bands 0–7 *proven optimal* by exact branch-and-bound,
-bands 8–14 exhausted by ~2.4 M set-space + 6.5 M ordering-space verified moves,
-and the instance shown to **defeat the state-of-the-art exact treewidth solver**
-(Tamaki PID, no termination in 10.8 h). The set-space *torso-deletion* method and
-the GBDT front-boosting methods (GBFC/GAPS) are the two novel contributions.
+The small instance reaches **gap 6** (§13): −1,829,913 verified against ESA's own
+scorer. Its near-optimality is *characterised, not proven*: exact branch-and-bound
+proves no **single-vertex extension** of our width-w torso exists for bands 0–7
+(local rigidity), bands 8–14 are exhausted by ~2.4 M set-space + 6.5 M
+ordering-space verified moves with no improvement, and the instance is empirically
+hard for exact methods (Tamaki PID does not terminate in 10.8 h). The MMD width
+lower bound is loose here (§5.2), so this is strong search-exhaustion evidence of
+per-band optimality, not a matching-bound proof. The set-space *torso-deletion*
+method and the GBDT front-boosting methods (GBFC/GAPS) are the two novel
+contributions.
 
 The **GBFC rows are the thesis's primary novel contribution** (§11):
 *Gradient-Boosted Front Construction* reframes Pareto-front optimisation as a

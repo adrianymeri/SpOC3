@@ -85,13 +85,13 @@ rest), the Pareto front decomposes into 16 *independent* maximum-bounded-treewid
 torso problems, and a deletion-set hill-climb under an exact width check moves
 breakpoints that permutation search provably cannot — lifting small-graph from
 gap 22 to **gap 6 (−1,829,913, 99.99967 % of the leaderboard top)**, the closest
-approach in the thesis, on a core already proven optimal. I prove an exact
+approach in the thesis. I prove an exact
 hypervolume identity, HV = Σ_w torso_size(w) + (n−16)·n (matching the official
 scorer to the unit), and bound the residual *two-sidedly* — **exact**
 branch-and-bound treewidth proving single-vertex rigidity on bands 0–7, greedy
 shrink from above, and dual-space exhaustion (~2.4 M exact set-space restructures
 and 6.5 M exact ordering-space moves) on bands 8–14 — so the remaining 6 HV is a
-*certified* near-optimum rather than a stopping point. The certificate is verified
+*characterised* near-optimum rather than a stopping point. This is re-verified
 against ESA's own UDP (byte-identical instance, evaluator matching their reference
 exactly, official HV to the unit) and stands on an instance that **defeats the
 state-of-the-art exact solver: Tamaki's PACE-2017 PID champion does not terminate
@@ -1312,15 +1312,23 @@ scale.](figures/fig14_gbdt_ledger.png)
 Sections 4–12 search in the space of *orderings* — directly, with a continuous
 policy, or with boosted-tree guidance. This section changes the search space
 itself, and in doing so drives the small instance to **−1,829,913, six
-hypervolume units (0.0003 %) from the leaderboard top**, on a core already proven
-optimal (§5.2) — the closest any method in this thesis comes to the global best,
-and a result accompanied by a *closed-form* account of exactly how much room
-remains.
+hypervolume units (0.0003 %) from the leaderboard top** — the closest any method
+in this thesis comes to the global best, and a result accompanied by a
+*closed-form* account of exactly how much room remains. (The small-graph width
+floor is *not* itself proven: the MMD lower bound is loose on this sparse instance,
+§5.2; the optimality argument here is search-exhaustion plus exact single-vertex
+rigidity, not a matching lower bound.)
 
-**13.1 The order-independence that nobody exploited.** Eliminating a vertex set
-X (in *any* order) produces, among the remaining vertices $S = V \setminus X$, exactly the
-*torso* edges: u–v whenever u, v ∈ S are joined by a path whose interior lies in
-X. This is independent of the order X is eliminated in. Two consequences follow
+**13.1 Exploiting torso order-independence for this bi-objective.** That the torso
+(the fill among the remaining vertices from eliminating a set) depends only on the
+*set* X, not the elimination order, is a classical property of vertex elimination
+and graph minors (it is the standard well-definedness of the torso / the fill from
+eliminating a separator). The contribution here is not that property but its
+*exploitation for the SpOC bi-objective*: I use it to recast the front as a family
+of independent per-width set problems and to derive the closed-form HV identity of
+§13.2. Concretely, eliminating a vertex set X (in *any* order) produces, among the
+remaining vertices $S = V \setminus X$, exactly the *torso* edges: u–v whenever
+u, v ∈ S are joined by a path whose interior lies in X. Two consequences follow
 that the permutation-space methods cannot see:
 
 > (i) the best achievable width at threshold t for a suffix-set S is the
@@ -1371,9 +1379,14 @@ treewidth is tractable:
   most-promising (lowest-boundary) candidates before the exact solver slows.
 - *From above (shrink).* Greedily reducing the larger width-(w+1) torso to width w
   yields a set **smaller** than torso_size(w) at all 14 bands (e.g. w=9: 584 vs 678).
-- *Dual-space exhaustion.* The +6 must, by the marginal structure (§13.2, each of
-  widths 0–14 worth exactly 1 HV/vertex), be six extra torso-vertices in bands
-  8–14 — bands 0–7 being exact-proven maximal. Those bands then absorb **~2.4 M
+- *Dual-space exhaustion.* By the marginal structure (§13.2, each of widths 0–14
+  worth exactly 1 HV/vertex), the +6 is six extra torso-vertices somewhere in bands
+  0–14. At bands 0–7, exact branch-and-bound proves our width-w torso admits **no
+  single-vertex extension** of width ≤ w (every candidate tested) — *local
+  rigidity*, not a proof of global per-band maximality, since a structurally
+  different size-(T(w)+1) set is not enumerated. Combined with the exhaustive
+  search below finding no larger torso at any band, this is strong evidence the
+  residual lies in bands 8–14. Those bands absorb **~2.4 M
   exact-verified set-space restructures** (946 k on band 1 alone; randomised
   evict–kick and plateau-wandering, `tools/exact_torso.py`) and **6.5 M exact
   C-kernel ordering moves** (`tools/band_climb.py`, simulated annealing on the
@@ -1383,7 +1396,7 @@ treewidth is tractable:
 Both representations — the *set* space (where torso-deletion lives) and the
 *ordering* space (where the policy methods live) — are searched to exhaustion with
 the tight, exact oracle for each, from opposite directions, and every breakpoint
-holds. This converts gap 6 from "a number we stopped at" into a *certified*
+holds. This converts gap 6 from "a number we stopped at" into a *characterised*
 near-optimum: the residual is bounded above and below in closed form, exact on the
 tractable bands, and exhaustively resisted on the rest.
 
@@ -1413,16 +1426,17 @@ hypervolume matches the official `combine_scores` (reference (n, n),
 n = edges.max()+1 = 1357) to the unit. So **−1,829,913 is the official score**,
 not an internal estimate, and the 6-HV gap is a genuine six-torso-vertex deficit.
 
-*The instance is exact-intractable.* I ran **Tamaki's PID solver — the PACE-2017
-exact-treewidth champion — for 10.8 hours on the whole graph; it did not
-terminate.** The state-of-the-art exact method cannot compute even the treewidth
-of this 1 357-vertex instance, let alone certify the high-band max-torso sizes.
-This is the keystone of the certificate: the near-optimality of §13.3 is
-established by exhaustive dual-space search *precisely because* no exact solver can
-reach the answer directly. A leaderboard result within 0.0003 % of optimal is
-unremarkable; one accompanied by a closed-form remainder, exact proofs on the
-tractable bands, and a demonstration that the instance breaks the SOTA exact
-solver is a *characterised* near-optimum.
+*The instance is empirically hard for exact methods (context, not a certificate).*
+I ran **Tamaki's PID solver — the PACE-2017 exact-treewidth champion — for 10.8
+hours on the whole graph; it did not terminate.** This does *not* by itself
+certify the per-band max-torso optima (PID targets whole-graph treewidth, a
+related but distinct quantity), so I make no such claim. What it does establish is
+*why a matching lower bound is out of reach*: the standard exact route is
+intractable on this instance, which is the honest reason the near-optimality of
+§13.3 rests on exhaustive dual-space search and exact single-vertex rigidity rather
+than on a closed lower bound. The contribution is the *characterisation* — a
+closed-form remainder, exact local rigidity, and search-exhaustion — not a proof of
+global optimality.
 
 *Policy search at scale does not close it either.* The leaderboard engine
 (cuda-torso) run to convergence, and a fresh GPU campaign, both produce fronts
@@ -1431,17 +1445,20 @@ The last 6 HV is therefore a compute-scale artefact of the specific (unpublished
 run that produced the leaderboard entry, not a method our search overlooks.
 
 **13.5/13.6 — what §13 establishes.** A second novel method — *torso-deletion*, a
-set-space search exploiting torso order-independence — reaching within 6 HV
-(0.0003 %) of the global best on a treewidth-optimal core; a closed-form
-hypervolume decomposition reducing the score to 16 independent max-torso sizes; a
-two-sided bound made **exact** on the tractable bands (branch-and-bound treewidth)
-and exhaustive on the rest (~2.4 M set-space + 6.5 M ordering-space verified
-moves); a representational separation explaining why no single method closes the
-gap; and a certificate verified against ESA's own scorer on an instance that
-**defeats the state-of-the-art exact solver after 10.8 hours**. Together with GBFC
-(§11) and GAPS (§10) — the GBDT contributions — this is a complete account of both
-*how near* the optimum is and *why* the final fraction of a percent belongs to
-compute, not to a missing idea.
+set-space search built on the (classical) order-independence of the torso —
+reaching within 6 HV (0.0003 %) of the global best; a closed-form hypervolume
+decomposition reducing the score to 16 independent max-torso sizes; a two-sided
+*characterisation* of the residual — **exact** single-vertex rigidity on the
+tractable bands (branch-and-bound treewidth) and search-exhaustion on the rest
+(~2.4 M set-space + 6.5 M ordering-space verified moves); a representational
+separation explaining why no single method closes the gap; and an
+end-to-end re-verification against ESA's own scorer, on an instance that is
+empirically hard for exact methods (Tamaki PID, no termination in 10.8 h). I
+state the near-optimality as *characterised* — local rigidity plus exhaustion —
+**not** as a matching-lower-bound proof (the MMD bound is loose here, §5.2).
+Together with GBFC (§11) and GAPS (§10) — the GBDT contributions — this is an
+honest account of both *how near* the optimum is and *why* the final fraction of a
+percent most plausibly belongs to compute rather than to a missing idea.
 
 ---
 
@@ -1540,8 +1557,10 @@ the GBFC contribution (§11) over the pre-GBFC banked best:
 The small-graph progression is the spine of the thesis:
 −1,828,306 (banked) → −1,828,994 (GBFC, §11) → −1,829,735 (GBFC++, §11.6) →
 **−1,829,913 (torso-deletion, §13)** — gap 22 → gap 6, the closest approach to
-the leaderboard top, on a treewidth-optimal core, with the residual bounded
-two-sidedly in closed form (§13.3). Medium and large are reported at their
+the leaderboard top, with the residual bounded two-sidedly in closed form
+(§13.3). (Near-optimality here rests on exact single-vertex rigidity plus
+multi-method search exhaustion, *not* a matching width lower bound — MMD is loose
+on this sparse instance, §5.2.) Medium and large are reported at their
 **GBFC** values and are *not* compute-converged — the GBDT methods are the best
 contributors there, but those instances were given far less search than small
 and are revisited once the small gap is closed. GBFC/GBFC++ (§11) remain the

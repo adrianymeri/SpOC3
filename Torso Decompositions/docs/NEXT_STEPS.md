@@ -1,7 +1,7 @@
 # Next Steps — the plan from here
 
 *Status snapshot and the concrete path forward. Written after small-graph was
-certified at gap 6 and the medium-graph campaign began showing a large GBDT
+at gap 6 (characterised near-optimum) and the medium-graph campaign began showing a large GBDT
 contribution.*
 
 ---
@@ -10,17 +10,19 @@ contribution.*
 
 | Instance | Best (−HV) | Target | Gap | Status |
 |---|---:|---:|---:|---|
-| **small** | **−1,829,913** | −1,829,919 | **6** (0.0003 %) | **Certified & written up** |
+| **small** | **−1,829,913** | −1,829,919 | **6** (0.0003 %) | **Characterised & written up** |
 | medium | climbing (~−1,709k live) | −1,745,122 | ~36k (early) | **Active GPU campaign** |
 | large | ~−5,480k pooled | −5,493,062 | ~12.5k | Queued after medium |
 
 **Small is done.** −1,829,913 is verified against ESA's own UDP (byte-identical
 instance, evaluator matching `_perm2fitness` exactly, HV matching `combine_scores`
-to the unit). Bands 0–7 are *proven optimal* by exact branch-and-bound; bands 8–14
-were exhausted by ~2.4 M exact set-space restructures and 6.5 M exact ordering-space
-moves; and the instance **defeats Tamaki's PID** (PACE-2017 exact-treewidth
-champion did not terminate in 10.8 h). This is a *certified near-optimum on an
-exact-intractable instance* — a stronger result than a bare leaderboard number.
+to the unit). Near-optimality is *characterised, not proven*: exact branch-and-bound
+proves no single-vertex extension of our width-w torso exists for bands 0–7 (local
+rigidity); bands 8–14 are exhausted by ~2.4 M exact set-space restructures and
+6.5 M exact ordering-space moves with no improvement; the MMD width lower bound is
+loose here (§5.2); and the instance is empirically hard for exact methods (Tamaki
+PID does not terminate in 10.8 h). This is strong search-exhaustion evidence of
+near-optimality — honestly bounded, not oversold as a matching-bound proof.
 The write-up (§13, §13.6, §12.1a) and the rebuilt 40-page PDF reflect this.
 
 ---
@@ -32,7 +34,7 @@ The write-up (§13, §13.6, §12.1a) and the rebuilt 40-page PDF reflect this.
    *This is where the headroom instances pay off* — see §3.
 2. **Set-space torso-deletion (§13).** Exploiting torso order-independence to
    search vertex *sets* under an exact width check; drove small to gap 6 and
-   yielded the closed-form HV decomposition + two-sided certificate.
+   yielded the closed-form HV decomposition + two-sided characterisation.
 
 The honest GBDT story by instance, which medium/large are now sharpening:
 - small Δ ≈ **+200** (engine-level, §12.1a) — small because the instance is
@@ -91,7 +93,7 @@ make sure it runs in Layer 2 there.
 
 ## 5. Small — optional tail, no priority
 
-Small is certified; nothing here changes the thesis. Two harmless background
+Small is characterised at gap 6 and written up; nothing here changes the thesis. Two harmless background
 tickets may still be running and can be left to finish or stopped:
 - the Kaggle warm-started continuation of `13183.pt` (resumes a converged run;
   expected to hold near the plateau, pool only if a band beats ours);
@@ -111,7 +113,7 @@ Pool anything they produce; it can only help, never hurt (additive).
   engine's internal HVI.
 
 **Thesis is complete when:** medium and large each have (a) a best pooled official
-number, and (b) a clean A−B GBDT Δ. Small already has both, plus the certificate.
+number, and (b) a clean A−B GBDT Δ. Small already has both, plus the characterised near-optimum (§13.6).
 
 ---
 

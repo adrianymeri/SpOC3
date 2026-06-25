@@ -133,7 +133,7 @@ and budget.
 the constructed front (§13, −1,829,913), and pooling either arm with the
 torso-deletion front adds **+0** at every band — small is saturated, so the
 engine-level Δ does not convert to a portfolio-level gain. The beat did **not**
-land here, and §13.6 explains why: small is a certified near-optimum on an
+land here, and §13.6 explains why: small is a characterised near-optimum on an
 instance that defeats the SOTA exact solver. The booster *helped the search*
 (+200) but there is no headroom above set-space search on this instance. **The
 booster's portfolio-level payoff is reserved for medium and large**, where the gap
