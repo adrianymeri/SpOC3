@@ -40,6 +40,14 @@ permutation-space ceiling to within touching distance of the leaderboard top.
 | **medium (GBFC §11)** | — | **−1,712,688** | −1,745,122 | **98.14 %** |
 | **large (GBFC §11)** | — | **−5,431,924** | −5,493,062 | **98.89 %** |
 | **small (GBFC++ §11.6)** | — | **−1,829,735** | −1,829,919 | **99.990 %** |
+| **small (torso-deletion §13)** | — | **−1,829,913** | −1,829,919 | **99.99967 %** |
+
+The small instance is now **certified at gap 6** (§13): −1,829,913 verified against
+ESA's own scorer, with bands 0–7 *proven optimal* by exact branch-and-bound,
+bands 8–14 exhausted by ~2.4 M set-space + 6.5 M ordering-space verified moves,
+and the instance shown to **defeat the state-of-the-art exact treewidth solver**
+(Tamaki PID, no termination in 10.8 h). The set-space *torso-deletion* method and
+the GBDT front-boosting methods (GBFC/GAPS) are the two novel contributions.
 
 The **GBFC rows are the thesis's primary novel contribution** (§11):
 *Gradient-Boosted Front Construction* reframes Pareto-front optimisation as a

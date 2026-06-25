@@ -1,7 +1,0 @@
-=== band-climb -- small-graph | front -1,829,913  gap +6 ===
-  w=11: done  obstacle 469->469  torso 887 (was 887)  [6381437 moves, 2846020 accepts, 3600s]
-  w=12: done  obstacle 352->352  torso 1004 (was 1004)  [5396712 moves, 2377491 accepts, 3600s]
-  w=13: done  obstacle 235->235  torso 1121 (was 1121)  [2264519 moves, 974284 accepts, 21087s]
-  w=14: done  obstacle 118->118  torso 1238 (was 1238)  [0 moves, 0 accepts, 0s]
-
-final front -1,829,913  gap +6 | 0 improvements

@@ -3,3 +3,6 @@ __pycache__/
 .fastwalk_cache/
 .DS_Store
 leaderboard_reference/fast-cma-es-master.zip
+*.log
+*.pt
+small_warmstart.pt
