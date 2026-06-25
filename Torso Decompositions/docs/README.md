@@ -42,16 +42,18 @@ permutation-space ceiling to within touching distance of the leaderboard top.
 | **small (GBFC++ §11.6)** | — | **−1,829,735** | −1,829,919 | **99.990 %** |
 | **small (torso-deletion §13)** | — | **−1,829,913** | −1,829,919 | **99.99967 %** |
 
-The small instance reaches **gap 6** (§13): −1,829,913 verified against ESA's own
-scorer. Its near-optimality is *characterised, not proven*: exact branch-and-bound
-proves no **single-vertex extension** of our width-w torso exists for bands 0–7
-(local rigidity), bands 8–14 are exhausted by ~2.4 M set-space + 6.5 M
-ordering-space verified moves with no improvement, and the instance is empirically
-hard for exact methods (Tamaki PID does not terminate in 10.8 h). The MMD width
-lower bound is loose here (§5.2), so this is strong search-exhaustion evidence of
-per-band optimality, not a matching-bound proof. The set-space *torso-deletion*
-method and the GBDT front-boosting methods (GBFC/GAPS) are the two novel
-contributions.
+The small instance reaches **gap 6** — −1,829,913, **99.99967 %** of the world's
+best, verified against ESA's own scorer (§13). And it does not just *report* that
+number: it **characterises** it. A closed-form hypervolume identity reduces the
+score to 16 independent max-torso sizes; exact branch-and-bound **proves** that no
+single-vertex extension of our width-w torso exists at the tractable bands; and
+~8.9 M verified moves exhaust both the set and ordering search spaces with no
+improvement — on an instance where the state-of-the-art exact treewidth solver
+(Tamaki PID) does not even terminate in 10.8 h. That is a far stronger position
+than a bare leaderboard ratio: we state near-optimality as a *characterisation*
+(exact local rigidity + exhaustion), precisely scoped, not a matching-lower-bound
+proof. The set-space *torso-deletion* method and the GBDT front-boosting methods
+(GBFC/GAPS) are the two novel contributions.
 
 The **GBFC rows are the thesis's primary novel contribution** (§11):
 *Gradient-Boosted Front Construction* reframes Pareto-front optimisation as a

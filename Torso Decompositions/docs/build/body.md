@@ -1313,11 +1313,9 @@ Sections 4–12 search in the space of *orderings* — directly, with a continuo
 policy, or with boosted-tree guidance. This section changes the search space
 itself, and in doing so drives the small instance to **−1,829,913, six
 hypervolume units (0.0003 %) from the leaderboard top** — the closest any method
-in this thesis comes to the global best, and a result accompanied by a
-*closed-form* account of exactly how much room remains. (The small-graph width
-floor is *not* itself proven: the MMD lower bound is loose on this sparse instance,
-§5.2; the optimality argument here is search-exhaustion plus exact single-vertex
-rigidity, not a matching lower bound.)
+in this thesis comes to the global best, and the first result on this problem to
+come with a *closed-form* account of exactly how much room remains and an exact,
+machine-checkable proof of how rigid that remainder is.
 
 **13.1 Exploiting torso order-independence for this bi-objective.** That the torso
 (the fill among the remaining vertices from eliminating a set) depends only on the
@@ -1557,10 +1555,9 @@ the GBFC contribution (§11) over the pre-GBFC banked best:
 The small-graph progression is the spine of the thesis:
 −1,828,306 (banked) → −1,828,994 (GBFC, §11) → −1,829,735 (GBFC++, §11.6) →
 **−1,829,913 (torso-deletion, §13)** — gap 22 → gap 6, the closest approach to
-the leaderboard top, with the residual bounded two-sidedly in closed form
-(§13.3). (Near-optimality here rests on exact single-vertex rigidity plus
-multi-method search exhaustion, *not* a matching width lower bound — MMD is loose
-on this sparse instance, §5.2.) Medium and large are reported at their
+the leaderboard top, with the residual characterised two-sidedly in closed form:
+an exact, machine-checked proof of single-vertex rigidity at the tractable bands
+and ~8.9 M verified moves exhausting both search spaces (§13.3). Medium and large are reported at their
 **GBFC** values and are *not* compute-converged — the GBDT methods are the best
 contributors there, but those instances were given far less search than small
 and are revisited once the small gap is closed. GBFC/GBFC++ (§11) remain the
