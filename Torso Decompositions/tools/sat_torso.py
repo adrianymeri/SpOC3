@@ -170,16 +170,24 @@ def main():
 
     if a.whole:
         full = adjd(list(range(n)), ab, n)
-        print(f"whole-graph: reducing core then SAT (heuristic tw = 15) ...", flush=True)
-        for k in range(2, 16):
+        UB = 15                              # we have a width-15 elimination ordering
+        print(f"whole-graph: testing tw<=k DOWNWARD from {UB-1} "
+              f"(reductions are strongest at high k) ...", flush=True)
+        proven = UB
+        for k in range(UB - 1, 1, -1):
+            core = reduce_core(full, k)
             t0 = time.time()
             r = tw_le_sat(full, k, time.time() + a.tw_timeout)
-            print(f"  tw <= {k}?  {r}   [{time.time()-t0:.0f}s, core after reduction varies]", flush=True)
+            print(f"  tw <= {k}?  core={len(core)}  -> {r}   [{time.time()-t0:.0f}s]", flush=True)
             if r is True:
-                print(f"  -> exact treewidth = {k}"); break
-            if r is None:
-                print("  -> SAT cut off; core too large at this k"); break
-        return
+                proven = k; continue          # tw <= k; try to go lower
+            if r is False:
+                print(f"  => EXACT treewidth = {k+1}  (tw>{k}, and a width-{k+1} "
+                      f"ordering exists) -- settles §5.2"); return
+            print(f"  => SAT cut off at k={k}: core ({len(core)}) too large. "
+                  f"Best proven so far: tw <= {proven}. Treewidth stays uncomputed "
+                  f"(same hard core as PID)."); return
+        print(f"  => tw <= {proven}"); return
 
     by_w = load_front(here, a.problem, n, ev)
 
