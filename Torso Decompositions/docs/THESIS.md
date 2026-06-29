@@ -1464,6 +1464,61 @@ Together with GBFC (§11) and GAPS (§10) — the GBDT contributions — this is
 honest account of both *how near* the optimum is and *why* the final fraction of a
 percent most plausibly belongs to compute rather than to a missing idea.
 
+**13.7 GBDT as a landscape *probe*: why the wall sits at band 8.** Every other
+GBDT in this work *generates* orderings (GAPS §10, GBFC §11). Here I turn the
+model around and use it to *explain* the optimum we already hold. For each width
+band `w` I label every vertex by membership in the optimal width-`w` torso,
+`1[v ∈ S(w)]`, and train a gradient-boosted tree to predict that label from the
+same spectral/degree node-features the search uses, reading off **permutation
+importance** — the cross-validated AUC collapse when a feature family is shuffled
+(`tools/landscape_gbdt.py`; numpy GBDT, 3-fold CV, k = 32 Laplacian
+eigenvectors). The result is a band × feature-family map of *what the landscape
+rewards at each resolution*.
+
+Two facts emerge, and both land squarely on the hard bands. First, membership is
+**almost perfectly predictable** (CV-AUC ≥ 0.992 at every band, → 1.000 at
+w = 14): the optimal front is a tightly structured object, not a lucky scatter of
+vertices. Second, *which* structure decides membership **flips at band 8**. On the
+low bands (w = 1–7) the dominant signal is the **local neighbour-degree profile**
+(importance ≈ 0.18 → 0.12) with the global Laplacian eigenvectors a minor,
+rising term. At **w = 8 the local signal collapses** (nbr-degree 0.12 → 0.06)
+and the **low Laplacian eigenvectors take over** (eig-low 0.14 → 0.21), and from
+w = 9 onward they dominate outright (≈ 0.40–0.48) while every local feature falls
+to ≈ 0. In words: the coarse bands are decided by *who your neighbours are*; the
+fine bands are decided by *where you sit in the global community/separator
+structure of the graph*.
+
+![GBDT permutation-importance map of optimal torso membership (small-graph). The
+determining signal hands off from the local neighbour-degree column (bands 1–7)
+to the low-Laplacian-eigenvector column (bands 8–14) exactly at the band-8
+boundary — the same boundary at which the +6 HV gap and the clique obstruction
+live.](figures/landscape_small-graph.png)
+
+A fitness-landscape walk in torso-set space corroborates this from the search
+side (single in/out swaps preserving feasibility, exact min-degree width oracle).
+The low bands sit on a **connected neutral network** — bands 1–3 accept only
+size-preserving moves (neutrality = 1.0), so the search drifts freely among
+equivalent optima — but by **band 4 the optimum freezes**: no feasible neutral or
+improving swap exists at all (neutrality = 0.0, zero accepted moves through
+band 7). So two *independent* transitions — the neutral plateau collapsing at
+w ≈ 4, and the determining signal going global at w ≈ 8 — both fall inside the
+hard zone (bands 8–14) where §13.3 proves the residual 6 HV provably lives behind
+the (w+2)-clique wall.
+
+This is the mechanistic reason the plateau is a wall and not a way-station:
+*precisely at the bands where an improvement would have to come from, neighbourhood
+search has neither a neutral path to follow nor a local feature gradient to climb —
+the relevant structure is global and spectral, which no single-vertex move can
+see.* It also explains, post-hoc, why our local attacks (band-climb, clique-break,
+SAT single-vertex grows) all froze on bands 8–14: they search the wrong
+representation for those bands. The same probe is **forward-useful**: run on
+medium/large it names which feature family carries the signal at each band, so the
+decode can be given capacity exactly where the landscape rewards it — the one
+place on these instances where the plateau is still genuinely escapable. The
+contribution here is *understanding*, honestly scoped: it characterises and
+explains the small-graph wall (it does not move it), and turns "the search
+plateaus" from an observation into a measured property of the landscape.
+
 ---
 
 ### Reproducibility
@@ -1515,6 +1570,11 @@ percent most plausibly belongs to compute rather than to a missing idea.
   `--verify`/`--search` for band-level exact tests). Together these upgrade the
   §13.3 bound from heuristic to exact on the tractable bands and exhaustive on the
   rest.
+- **GBDT landscape probe (§13.7):** `tools/landscape_gbdt.py` (per-band membership
+  GBDT + permutation importance; fitness-landscape ruggedness/neutrality walk;
+  writes `docs/figures/landscape_<problem>.{csv,png}`). Establishes the band-8
+  local→global signal hand-off and the neutral-network→frozen transition that
+  explain the small-graph wall.
 - **GBDT-on-SOTA leaderboard attempt:** `tools/run_gbdt.py` (cuda-torso engine +
   additive GBDT front-booster, with `--no_gbdt` control) and `tools/run_band.py`
   (per-threshold-band concentration, `--warmstart_pt`); protocol in
