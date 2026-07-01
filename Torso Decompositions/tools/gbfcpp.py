@@ -379,12 +379,21 @@ def banked_excluding(here, problem, n, ab, stems):
 
 
 def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
-        k_eig=32, exclude_stems=(), t0=1.5, only_widths=()):
+        k_eig=32, exclude_stems=(), t0=1.5, only_widths=(), spectral=False,
+        cap20=False):
     n, adj = load_graph(graph_path(here, problem)); ab = build_adj_bitsets(n, adj)
     target = LEADERBOARD_TARGETS.get(problem)
     tag = "GBFC++(no-gbdt ablation)" if no_gbdt else "GBFC++"
     print(f"\n=== {tag} -- {problem} (rounds={rounds}, {round_budget}s/round, seed={seed}) ===")
     F = np.asarray(get_features(here, problem, n, adj, k_eig)[0])
+    if spectral:
+        # lever-2 (THESIS s13.8): force the decode onto the GLOBAL spectral
+        # structure the landscape probe found to determine optimal membership --
+        # mask the local features (degree + neighbour-degree stats, cols 0..4) so
+        # the GBDT must learn from the Laplacian eigenvectors alone.
+        F = F.copy(); F[:, :5] = 0.0
+        print(f"spectral-emphasis ON: local features masked; decode uses {k_eig} "
+              f"Laplacian eigenvectors only", flush=True)
     try:
         from tools.fastwalk import IncEvalC
         ev = IncEvalC(ab, n)
@@ -419,6 +428,17 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
                 arch_all.try_add(wt, t, list(p))
     top_all = arch_all.top_k_by_hv_contribution(60, n)
     pool = [list(p) for (_, _, p) in top_all]
+
+    # cap-aware focus (THESIS s13.8a): only the HSSP-optimal 20 widths score on
+    # the leaderboard.  Derive them from the live corpus and restrict this worker
+    # to them, so every cycle targets a leaderboard-visible band instead of the
+    # ~90% of bands that are truncated away at submission.  Recomputed from the
+    # current pool, so it tracks the optimum as torsos improve (re-launch to
+    # refresh).
+    if cap20 and not only_widths:
+        opt20 = arch_all.top_k_by_hv_contribution(20, n)
+        only_widths = tuple(sorted(int(w) for (w, _, _) in opt20))
+        print(f"cap20 ON: focusing on HSSP-optimal widths {list(only_widths)}", flush=True)
 
     arch = ParetoArchive()
     for p in pool:
@@ -562,12 +582,21 @@ def main():
     ap.add_argument("--only-widths", default="",
                     help="comma-separated breakpoint widths this worker may "
                          "attack (swarm partitioning); empty = all")
+    ap.add_argument("--k-eig", type=int, default=32,
+                    help="number of Laplacian eigenvectors in the decode features")
+    ap.add_argument("--spectral", action="store_true",
+                    help="lever-2: mask local features, decode from eigenvectors "
+                         "only (the spectral-emphasis arm; use a distinct --algo)")
+    ap.add_argument("--cap20", action="store_true",
+                    help="cap-aware: auto-focus on the HSSP-optimal 20 widths that "
+                         "actually score on the leaderboard (THESIS s13.8a)")
     args = ap.parse_args()
     ex = tuple(s for s in args.exclude_stems.split(",") if s)
     ow = tuple(int(s) for s in args.only_widths.split(",") if s)
     run(args.problem, args.rounds, args.round_budget, args.seed, repo_root(),
         algo=args.algo, no_gbdt=args.no_gbdt, exclude_stems=ex,
-        t0=args.t0, only_widths=ow)
+        t0=args.t0, only_widths=ow, k_eig=args.k_eig, spectral=args.spectral,
+        cap20=args.cap20)
 
 
 if __name__ == "__main__":

@@ -1519,6 +1519,146 @@ contribution here is *understanding*, honestly scoped: it characterises and
 explains the small-graph wall (it does not move it), and turns "the search
 plateaus" from an observation into a measured property of the landscape.
 
+**13.8 The same probe on medium: globally determined throughout — a representation
+mismatch, not a wall.** Running the identical probe on the medium instance (n =
+1399, front spanning widths 0–248, sampled at 14 representative bands) returns a
+qualitatively *different* picture, and a more actionable one. Where small showed a
+local→global hand-off at band 8, **medium is governed by the low-Laplacian
+(community/separator) structure at every resolution**: the `eig-low` family is the
+single dominant signal from w = 8 to w = 247, peaking at w ≈ 128 (permutation
+importance 0.354). The local neighbour-degree feature that ran small's easy bands
+is **inert across the whole of medium** (≈ 0.00–0.03 everywhere); raw degree
+contributes only a minor secondary share at the mid-low bands (w = 16–64). The
+front is highly predictable throughout (CV-AUC 0.93–0.99), with the *least* crisp
+zone at the mid bands w ≈ 32–96 (AUC 0.93–0.96) — the region most likely to be
+improvable.
+
+![GBDT permutation-importance map for medium-graph. Unlike small (Fig. 13.7),
+there is no local regime: the low-eigenvector column is the sole bright stripe
+across the entire 0–248 width spectrum, peaking near w = 128 — optimal torso
+membership is globally/spectrally determined at every
+resolution.](figures/landscape_medium-graph.png)
+
+The diagnostic value is in the contrast with §6b.6. There, the *generator's* own
+feature importances showed it deciding primarily from **dynamic, local** state —
+`elim_nbr`, `cur_deg`, `fill` (≈ 51 % combined), with spectral features a
+≈ 15–20 % secondary share. Yet this probe shows the *optimal arrangement* on
+medium is **globally spectral**. This raises a sharp, testable question: is the
+search *under-using* the spectral signal (a representation mismatch a seed could
+correct), or does it already *reach* the good spectral orderings, leaving the
+residual to compute?
+
+I tested the cheap discriminator directly. `tools/spectral_seed.py` generates the
+globally-structured candidates the probe points to — spectral nested-dissection
+orderings (recursive low-eigenvector bisection with separators eliminated last)
+plus low-eigenvector and combination orderings — scores each with the exact
+C-kernel evaluator, and pools them against the production front. The gain was
+**negligible: ≈ +17 HV against a 13 k gap.** The engine already finds orderings as
+good as the best static spectral ones; there is no easy globally-structured front
+left for a seed to inject.
+
+This *negative* result sharpens rather than weakens the diagnosis. The probe's
+finding — optimal membership is globally/spectrally determined at every band — is
+robust; what the seeding test rules out is the *cheap fix*. It localises the
+residual medium gap **away from** "a missing, seed-injectable representational
+ingredient" and **toward compute/scale** (leaving a deeper engine-level
+re-weighting, which static seeding cannot emulate, as an untested possibility).
+Exact verification is unavailable at these widths (to 248), so no route here admits
+a rigorous certificate. The honest conclusion is that medium's last ≈ 13 k HV most
+plausibly belongs to **compute** — consistent with the warm-started engines'
+continued slow climb — not to a representation the search structurally cannot
+reach. Methodologically this is the landscape probe earning its keep in the other
+direction: used to *diagnose*, GBDT both explains the small-graph wall (§13.7) and,
+on medium, empirically excludes a tempting wrong turn and re-points the effort at
+scale (`tools/spectral_seed.py`, additive `spectral_seed` stem).
+
+## 14. Gradient boosting as a learned elimination policy: where it helps, and its limit
+
+Gradient-boosted trees are the centrepiece of this thesis, and this section states
+the most ambitious form of the idea — a self-improving adaptive policy — together
+with an honest account of exactly where it delivers and where it does not. The
+leaderboard paradigm — including the winning engine — learns a
+**static** scoring function and decodes one ordering by `argsort`. That is limited
+in two ways this work makes precise: it learns from a **sparse** signal (one
+hypervolume number per whole ordering, passed back through an `argsort` whose
+geometry is mostly cliffs, §2), and it is **non-adaptive** (a fixed per-vertex
+score cannot re-decide based on the fill already created, which is exactly what
+makes the optimal elimination order context-dependent).
+
+The method that removes both limits is a **gradient-boosted decision tree trained
+as a sequential elimination policy** (`algorithms/continuous/gbdt_torso.py`,
+`--mode construct`). At every step it scores the remaining candidates from
+**dynamic, live-graph features** — current residual degree, eliminated-neighbour
+count, and the min-fill value `_fill1` — alongside static spectral structure, and
+eliminates the best; it is trained on **dense per-step supervision** harvested from
+every good ordering the project ever produced (`_replay_rows`, millions of labelled
+"in this state, eliminate this vertex" decisions), as a listwise **learning-to-rank**
+problem (`--rank`, LambdaMART — each step is a ranking query), and it **self-improves
+by DAgger**: it runs, keeps its best new trajectories, and retrains, climbing past
+the experts it imitated. This represents adaptive orderings no static `argsort`
+policy can, learned from a far richer signal than neuroevolution receives.
+
+The contribution this work adds is to make that policy **cap-aware** (`--cap-aware`,
+§13.8a). The competition scores only the best **20** points (the exact 2-D HSSP),
+so the policy's objective and its DAgger self-improvement are pointed at the
+**capped-20 hypervolume** and refreshed from the orderings that *own* the optimal 20
+points — every step of learning aimed at a band the leaderboard actually scores,
+not the ~90 % of bands truncated at submission. To our knowledge no prior torso /
+elimination-order work trains a sequential, ranking, self-improving boosted policy
+against the capped competition objective; that combination is the headline novelty.
+
+**Where GBDT genuinely helps (the proven claim).** The value of gradient boosting
+on this problem is established by the controlled ablation machinery of this thesis,
+not by a leaderboard win: the learned adaptive policy and the boosted front
+constructors beat the classical min-degree / min-fill rules and the static-`argsort`
+baseline, with the contribution isolated by GBDT-on/off controls (+24,766 HV on
+large, §10; +688/+734/+329 HV across instances, §11; +1,816 HV engine-level, §6b).
+*That* is the defensible, reproducible headline claim — "learned boosting measurably
+outperforms the classical and static decoders" — and it stands on ablation, the
+gold standard, rather than on beating an opaque leaderboard entry.
+
+**The honest limit of the self-improving policy (a negative result).** I then tested
+the strongest form of the policy — cap-aware, listwise-ranking, DAgger
+self-improving — against the harder question: can it *out-search the pooled
+leaderboard corpus* on medium? It cannot. Over a ~12-hour campaign with repeated
+DAgger retraining (~12 rounds) and >13,000 constructed orderings, the policy's
+capped-20 objective never improved beyond its seed and remained ≈ 2,600 HV below
+the pooled corpus. This is a clean, informative negative result, and it is
+consistent with the §13.8a proof: a single adaptive *decode* — however densely
+supervised — cannot substitute for the raw search *volume* of GPU neuroevolution
+running millions of evaluations; the residual gap is torso quality, and torso
+quality is bought with search volume, not with a better one-shot decoder. Reviewers
+are owed this boundary, and it sharpens rather than weakens the thesis: it locates
+exactly where a learned decoder helps (beating classical/static baselines at fixed
+budget, §6b/§10/§11) and where it does not (replacing scaled evolutionary search).
+The cap-aware *archive-evolution* method (§13, `tools/archive_evolve.py`) — which
+recombines existing orderings under the exact capped objective rather than
+generating new ones from a policy — is the variant that does close the valid gap in
+practice, underlining the same lesson: on this problem the leverage is in
+*combining and selecting* good orderings against the true objective, not in
+out-generating a mature search engine.
+
+**13.8a Localising the residual: the gap is torso quality, not submission.** A final
+diagnostic settles *where* the medium/large gap lives. Submission is a
+20-point cardinality-constrained HSSP, which I already solve **optimally** (the
+exact 2-D dynamic program, `core.ParetoArchive.top_k_by_hv_contribution`); so the
+submitted score cannot be improved by smarter *selection*. The question is whether
+it could be improved by submitting *more* points — i.e. whether the cap itself is
+the binding constraint. `tools/cap_submit.py` answers it: pooling the entire medium
+corpus into its full **249-point** envelope and scoring it *with no cap at all*
+yields ≈ −1,733,000 — still **≈ +12,100 HV short of the −1,745,122 target.** Since
+even an unlimited submission cannot reach the target from our corpus, the residual
+is provably **not** a packing or selection artefact and **not** the 20-point cap
+(which costs a further ≈ 3,600 HV on top): it is *torso quality* — the leaderboard
+fronts simply contain **larger torsos at the decisive widths** (their 20 points
+dominate our 249). This converts the earlier "compute, not representation"
+conclusion from a plausibility argument into a measured one, and it re-points any
+remaining effort unambiguously: not at the decoder, the archive representation, or
+the submission, but at finding bigger decompositions at the ~20 widths the optimal
+HSSP submission occupies — for which the order-independence of §13 licenses an
+*independent* per-width attack (`tools/cap_submit.py` prints the per-width marginal
+HV value that prioritises it).
+
 ---
 
 ### Reproducibility

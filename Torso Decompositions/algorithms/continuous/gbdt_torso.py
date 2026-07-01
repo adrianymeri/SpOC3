@@ -217,9 +217,11 @@ class _Ridge:
 def load_elites(here, problem, n, adj_bits, t_grid, archive, top_m):
     """Read every elite ordering from the cmaes submissions, seed the archive,
     and return the top-M unique perms by induced-front HV."""
-    files = (glob.glob(_os.path.join(here, "submissions", problem, "seeds", "cmaes*.json"))
-             + glob.glob(_os.path.join(here, "submissions", problem, "cmaes*.json"))
-             + glob.glob(_os.path.join(here, "submissions", problem, "portfolio.json")))
+    # train/seed from the ENTIRE corpus (cuda-torso, gbfcpp, cap20, gbdt, cmaes,
+    # portfolio ...) -- the policy must learn from the BEST orderings, not a weak
+    # subset, or it imitates weak decisions and starts from a weak archive.
+    files = (glob.glob(_os.path.join(here, "submissions", problem, "seeds", "*.json"))
+             + glob.glob(_os.path.join(here, "submissions", problem, "*.json")))
     seen = set(); scored = []
     for fp in files:
         dvs = load_decision_vectors(fp)
@@ -352,9 +354,31 @@ def _feature_names(F_dim, k_eig):
 
 def construct_search(F, adj_bits, n, archive, elites, budget_s, seed, backend,
                      shortlist=64, neg=4, retrain_rounds=3, rank=False,
-                     report_importance=False, k_eig=32, device="cpu"):
+                     report_importance=False, k_eig=32, device="cpu", cap_aware=False,
+                     save_path=None, problem=None):
     rng = np.random.default_rng(seed)
-    t0 = time.time(); built = 0; best = -archive.hypervolume(n); cap = 0
+    t0 = time.time(); built = 0; cap = 0
+
+    def save_now():
+        if not save_path:
+            return
+        import json as _json
+        top = archive.top_k_by_hv_contribution(20, n)
+        dvs = [list(p) + [int(t)] for (w, t, p) in top]
+        _json.dump({"challenge": "spoc-3-torso-decompositions", "problem": problem,
+                    "decisionVector": dvs}, open(save_path, "w"))
+
+    def cur_score():
+        # cap_aware: optimise the EXACT competition objective (HV of the best <=20
+        # points, the 2-D HSSP), not the full per-band envelope.  Aligns the
+        # adaptive policy and its DAgger self-improvement with what is scored.
+        if cap_aware:
+            top = archive.top_k_by_hv_contribution(20, n)
+            return -hypervolume_2d([(w, t) for (w, t, _) in top], n)
+        return -archive.hypervolume(n)
+    best = cur_score()
+    if cap_aware:
+        print("    cap-aware: optimising the capped-20 HSSP objective", flush=True)
 
     def add_front(perm, deg_seq):
         if deg_seq.max() > MAX_TW:
@@ -403,23 +427,39 @@ def construct_search(F, adj_bits, n, archive, elites, budget_s, seed, backend,
             built += 1
             if not add_front(perm, ds):
                 cap += 1
-            sc = -archive.hypervolume(n)
+            sc = cur_score()
             if sc < best - 1 or built % 25 == 0:
                 if sc < best:
-                    best = sc
+                    best = sc; save_now()      # persist on every improvement
                 print(f"    built {built} orders ({cap} capped) | score {sc:,.0f} | t {time.time()-t0:.0f}s", flush=True)
-        # DAgger: refresh elite pool from the best constructed orderings
-        ents = {}
-        for w, t, p in sorted(archive.entries(), key=lambda e: (e[0], e[1])):
-            ents.setdefault(tuple(p), 1)
-        pool = []
-        for p in list(ents)[:80]:
-            from algorithms.continuous.cmaes_torso import eval_fitness as _ef
-            hv = -_ef(list(p), adj_bits, n, sorted({int(round(i*(n-1)/39)) for i in range(40)}), ParetoArchive())
-            if hv > 0:
-                pool.append((hv, list(p)))
-        pool.sort(key=lambda z: -z[0])
-    print(f"  construct done: {built} adaptive orderings, {cap} capped, final {-archive.hypervolume(n):,.0f}", flush=True)
+        # DAgger: refresh the elite pool the policy retrains on.
+        if cap_aware:
+            # focus on the decisions that matter: the orderings that OWN the
+            # HSSP-optimal 20 points (high weight) + a few diverse others.
+            seen = set(); pool = []
+            for w, t, p in archive.top_k_by_hv_contribution(20, n):
+                key = tuple(p)
+                if key not in seen:
+                    seen.add(key); pool.append((2.0, list(p)))
+            for w, t, p in sorted(archive.entries(), key=lambda e: (e[0], e[1])):
+                key = tuple(p)
+                if key not in seen:
+                    seen.add(key); pool.append((1.0, list(p)))
+                if len(pool) >= 80:
+                    break
+        else:
+            ents = {}
+            for w, t, p in sorted(archive.entries(), key=lambda e: (e[0], e[1])):
+                ents.setdefault(tuple(p), 1)
+            pool = []
+            for p in list(ents)[:80]:
+                from algorithms.continuous.cmaes_torso import eval_fitness as _ef
+                hv = -_ef(list(p), adj_bits, n, sorted({int(round(i*(n-1)/39)) for i in range(40)}), ParetoArchive())
+                if hv > 0:
+                    pool.append((hv, list(p)))
+            pool.sort(key=lambda z: -z[0])
+    print(f"  construct done: {built} adaptive orderings, {cap} capped, "
+          f"final {cur_score():,.0f}", flush=True)
 
 
 def surrogate_search(F, adj_bits, n, t_grid, archive, elites, budget_s, seed,
@@ -483,7 +523,8 @@ def surrogate_search(F, adj_bits, n, t_grid, archive, elites, budget_s, seed,
 
 def run(problem, budget_s, seed, here, eigenvectors=32, num_t_seeds=40, mode="surrogate",
         backend="auto", rounds=3, elite_top=80, refine_frac=0.5, algo="gbdt",
-        surrogate_factor=8, rank=False, report_importance=False, device="cpu"):
+        surrogate_factor=8, rank=False, report_importance=False, device="cpu",
+        cap_aware=False):
     rng = np.random.default_rng(seed)
     n, adj = load_graph(graph_path(here, problem)); adj_bits = build_adj_bitsets(n, adj)
     target = LEADERBOARD_TARGETS.get(problem)
@@ -506,7 +547,9 @@ def run(problem, budget_s, seed, here, eigenvectors=32, num_t_seeds=40, mode="su
         else:
             construct_search(F, adj_bits, n, archive, elites, budget_s, seed, backend,
                              rank=rank, report_importance=report_importance,
-                             k_eig=eigenvectors, device=device)
+                             k_eig=eigenvectors, device=device, cap_aware=cap_aware,
+                             retrain_rounds=max(3, rounds),
+                             save_path=submission_path(here, problem, algo), problem=problem)
         rounds = 0
     elif mode == "surrogate":
         if not elites:
@@ -603,6 +646,9 @@ def main():
                          "(LambdaMART) instead of pointwise regression")
     ap.add_argument("--feature-importance", action="store_true",
                     help="construct mode: print GBDT feature importances (round 0)")
+    ap.add_argument("--cap-aware", action="store_true",
+                    help="construct mode: optimise the capped-20 HSSP objective and "
+                         "DAgger-refresh from the best-20 owners (THESIS s13.8a)")
     ap.add_argument("--device", default="cpu", choices=["cpu", "gpu", "cuda"],
                     help="gpu/cuda: train the boosted trees on the GPU "
                          "(XGBoost device=cuda works with the stock wheel; LightGBM "
@@ -614,7 +660,8 @@ def main():
         backend=args.backend, rounds=args.rounds, elite_top=args.elite_top,
         refine_frac=args.refine_frac, algo=args.algo,
         surrogate_factor=args.surrogate_factor, rank=args.rank,
-        report_importance=args.feature_importance, device=args.device)
+        report_importance=args.feature_importance, device=args.device,
+        cap_aware=args.cap_aware)
 
 
 if __name__ == "__main__":
