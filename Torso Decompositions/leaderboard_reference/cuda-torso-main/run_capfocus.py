@@ -52,6 +52,8 @@ def main():
                         help="fraction of breeding probability concentrated on focus windows")
     parser.add_argument("--focus-halfwidth", type=int, default=8,
                         help="window half-width (positions) around each focus size")
+    parser.add_argument("--warmstart_pt", type=str, default="",
+                        help="checkpoint .pt to resume elites from (front_to_checkpoint format)")
     args = parser.parse_args()
 
     run_id = int(time.time())
@@ -82,6 +84,12 @@ def main():
     # CAP-FOCUSED BREEDING: concentrate multinomial mass on breakpoint positions
     # whose torso sizes are the ones the capped-20 submission actually uses.
     # position i <-> torso size N - i  (fitness[i] = width of suffix from i)
+    if args.warmstart_pt:
+        ck = torch.load(args.warmstart_pt, map_location="cuda")
+        elites[:] = ck["elites"]
+        elite_fitnesses[:] = ck["elite_fitnesses"].to(torch.int)
+        print(f"RESUMED from {args.warmstart_pt}", flush=True)
+
     elite_range = torch.ones((N, ), dtype=torch.float32, device="cuda")
     if args.focus_sizes:
         sizes = [int(s) for s in args.focus_sizes.split(",") if s.strip()]
