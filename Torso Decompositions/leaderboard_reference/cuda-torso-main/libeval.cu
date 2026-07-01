@@ -17,7 +17,7 @@ __global__ void _evaluate(
         int vertex;
         uint16_t degree;
         uint16_t nz[3000];
-        int adj_offset = idx * N * N;
+        size_t adj_offset = idx * N * N;   // FIX: int32 overflow for N>=2048ish at batch 1024 (large-graph)
         for (int step = 0; step < N; step++) {
             vertex = perms[idx * N + step];
 
