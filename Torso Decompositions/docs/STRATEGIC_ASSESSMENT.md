@@ -107,3 +107,30 @@ it comes, comes from bigger decompositions at ~20 widths — nothing else.
 
 *(Companion tools: `tools/cap_submit.py`, `tools/landscape_gbdt.py`; THESIS §13.7, §13.8,
 §13.8a.)*
+
+
+---
+
+## Update 2026-07-01 — the large-graph campaign (reverse-engineering payoff)
+
+Three findings that redirected the endgame:
+
+1. **cap_submit on large (never measured before): gap +28,574, of which 16,013 HV
+   is cap cost — 4x medium's.** Large is the least-squeezed instance and its
+   torso-quality residual (~12.5k) is ~0.5% per visible width vs medium's ~5%:
+   proportionally 10x closer to target.
+2. **int32 overflow in the reference kernel (libeval.cu, `int adj_offset = idx*N*N`):
+   crashes large-graph at batch > 364. Medium fit inside int32 by 7% luck.
+   Fixed (size_t) — the reference engine now runs large at batch 1024 (3x the
+   evaluation width the winner's public engine was capable of).**
+3. **Uniform elite breeding (`elite_range = ones(N)/B`): the winner's engine puts
+   0.8% of its selection pressure on the ~20 sizes the capped submission keeps.
+   run_capfocus concentrates 90% of breeding mass on the HSSP-optimal sizes —
+   cap-aware optimisation applied inside the generator for the first time.**
+
+Deployment: server = run_gbdt (warm) + run_capfocus (warm) + gbfcpp_cap20 on large,
+medium cuda hedge; Mac = 2x archive_evolve + gbfcpp_cap20 on large, medium hedge.
+Warm-start via front_to_checkpoint (claimed fitnesses = corpus per-position widths →
+elite gate = "beat the corpus"; engine's own early submissions are decode-degraded
+and are filtered by per-band-max pooling). First hours: gap +28,533 → +28,249 with
+envelope growth (crossover finding genuinely new torso points).

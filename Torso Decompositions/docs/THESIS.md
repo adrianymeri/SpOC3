@@ -1,4 +1,4 @@
-# A Continuous-Encoding Breakthrough for Multi-Objective Torso Decomposition
+# Gradient-Boosted Decision Trees for Multi-Objective Torso Decomposition: Learned Construction, Cap-Aware Search, and a Near-Optimality Characterisation
 
 **Adrian Ymeri** · University of Prishtina · SpOC-3 Torso Decompositions
 
@@ -109,6 +109,28 @@ idea. The two novelties are complementary — GBDT-as-front-boosting (GBFC/GAPS)
 for *learning*, set-space search (torso-deletion) for *search* — and both are
 argued to transfer to the wider elimination-ordering family (treewidth, minimum
 fill-in).
+
+Three further contributions complete the thesis. First, GBDT as a *diagnostic*:
+a landscape probe (§13.7–13.8) that trains boosted models to *explain* the optimal
+front rather than generate it, revealing a local→global feature handoff at exactly
+the bands where the small-graph wall sits, and a fully spectrally-determined
+landscape on medium. Second, **cap-aware optimisation** (§13.8a, §14–14.1): the
+competition scores only the best 20 points, yet every engine — including the
+leaderboard winner's — optimises the full front and truncates at submission. I
+solve the 20-point selection exactly (2-D HSSP dynamic program), prove by
+uncapped-envelope scoring that the residual medium/large gap is *torso quality*
+rather than packing, and carry the cap into the search itself (`--cap20`
+breakpoint search, capped-archive evolution) and finally into the reference
+generator: an int32-overflow fix that lets the winning engine run the large
+instance at batch 1024 for the first time (as published it crashes above batch
+364), and cap-focused breeding that concentrates its selection pressure — 0.8 %
+of which falls on scoring sizes under the published uniform sampling — to 90 %
+on the 20 sizes the submission keeps. Third, an honest negative boundary (§14):
+the strongest self-improving form of the boosted policy does not out-search the
+pooled corpus, locating precisely where learned decoding helps and where raw
+search volume is irreplaceable. As of 1 July 2026 the valid capped-20 standings
+are small **−1,829,913** (gap 6, characterised near-optimum), medium
+**−1,732,324** (99.27 %), and large **−5,464,888** (99.49 %, campaign active).
 
 ---
 
@@ -373,6 +395,34 @@ each is seeded from the shared elite archive — which is *why* the GBDT
 contribution must be read from the controlled ablation (§6b.2), not from a
 per-seed score that would merely echo the inherited portfolio. The per-instance
 variance table (medium/large via the same command) is reported in the appendix.
+
+---
+
+## 5.2 A structural lower bound (gap to optimum)
+
+The leaderboard ratio measures progress against a moving human target; a
+stronger, instance-intrinsic measure is the gap to a *structural* lower bound on
+the torso width. The minor-min-width (MMD) treewidth lower bound (Bodlaender &
+Koster 2011; `core.treewidth_lower_bound_mmd`) gives a provable floor on the
+minimum achievable width:
+
+| Instance | n | MMD width lower bound | width cap |
+|---|--:|--:|--:|
+| small  | 1357 | 2 | 500 |
+| medium | 1399 | 38 | 500 |
+| large  | 2426 | **499** | 500 |
+
+On `large-graph` the bound is decisive: the width floor (499) is within **one**
+of the feasibility cap (500), so the dense corner of the front — the
+minimum-width, low-`t` region — is provably near-optimal, and the residual
+hypervolume gap to the leaderboard must therefore lie in the *interior* of the
+front (intermediate `t`), not at the corner. On `small`/`medium` the MMD bound is
+loose — a known property of minor-min-width on sparse graphs, where it
+under-estimates the true treewidth — so it certifies the corner only weakly
+there; tighter bounds (LBN/LBP, MMD+) would be a separate computation. The honest
+summary: a structural certificate confirms near-optimality of the *dense-instance
+corner*, complementing the leaderboard ratio rather than replacing it, and it
+localises the remaining large-graph gap to the front interior.
 
 ---
 
@@ -1631,7 +1681,7 @@ quality is bought with search volume, not with a better one-shot decoder. Review
 are owed this boundary, and it sharpens rather than weakens the thesis: it locates
 exactly where a learned decoder helps (beating classical/static baselines at fixed
 budget, §6b/§10/§11) and where it does not (replacing scaled evolutionary search).
-The cap-aware *archive-evolution* method (§13, `tools/archive_evolve.py`) — which
+The cap-aware *archive-evolution* method (§14.1, `tools/archive_evolve.py`) — which
 recombines existing orderings under the exact capped objective rather than
 generating new ones from a policy — is the variant that does close the valid gap in
 practice, underlining the same lesson: on this problem the leverage is in
@@ -1658,6 +1708,48 @@ the submission, but at finding bigger decompositions at the ~20 widths the optim
 HSSP submission occupies — for which the order-independence of §13 licenses an
 *independent* per-width attack (`tools/cap_submit.py` prints the per-width marginal
 HV value that prioritises it).
+
+### 14.1 Cap-aware optimisation at the generator: the large-graph campaign
+
+Acting on §13.8a's re-pointing, the same diagnostic was run on **large** — the one
+instance no cap-aware machinery had ever touched. The measurement reframed the
+endgame: valid best-20 gap **+28,574**, of which **16,013 HV is cap cost** (4× the
+medium figure — large's 500-point envelope is the least-squeezed corpus in the
+project), and a torso-quality residual of ≈ +12,500 that works out to **≈ 0.5 %
+additional torso size per visible width**, against medium's ≈ 5 % — proportionally
+the closest instance to its target by an order of magnitude.
+
+Deploying the reference engine (cuda-torso) on large exposed two latent defects in
+the winning code itself, both material to the campaign:
+
+1. **An int32 overflow.** The CUDA kernel computes `int adj_offset = idx * N * N`;
+   for N = 2,426 this overflows for batch indices ≥ 364, producing an illegal
+   memory access — *the published winning engine cannot run the large instance at
+   batch sizes above 364*. On medium (N = 1,399) the worst-case offset fits inside
+   int32 with a 7 % margin: the engine works there by luck. The one-word fix
+   (`size_t`) enables, to our knowledge, the first large-graph runs at batch 1024 —
+   3× the evaluation width per generation the public engine was capable of.
+2. **Uniform elite breeding.** The engine maintains one elite per breakpoint
+   position (N of them) and samples parents *uniformly*
+   (`elite_range = ones(N)/B`): on large, **0.8 %** of its selection pressure
+   lands on the ~20 sizes the capped submission keeps. `run_capfocus.py`
+   re-weights that single tensor, concentrating 90 % of breeding mass in ±8-position
+   windows around the HSSP-optimal sizes — cap-aware optimisation applied *inside*
+   the generator for the first time, with the uniform arm retained as a same-GPU,
+   same-warm-start control (an in-vivo ablation of cap-aware breeding).
+
+The third arm, **capped-archive evolution** (`tools/archive_evolve.py`), completes
+the method family sketched in §14: the *individual* is a capped archive of
+orderings, fitness is the **exact capped-20 hypervolume** (HSSP-selected), the
+operators are order-crossover between archive members and block mutation, and
+acceptance requires strict capped improvement (saved incrementally on every win).
+It is the practical workhorse of the campaign: on medium it drove the valid gap
+from ≈ +15,900 to ≈ +12,800, and on large its first hours moved the gap
++28,574 → +28,174 while *growing the uncapped envelope* — i.e. its crossover
+produces genuinely new, larger torso points, not merely repackings. The campaign
+(two warm-started GPU arms, capfocus vs uniform, plus cap-aware CPU search on both
+machines) is ongoing; final numbers are reported at thesis freeze, and any claim
+against the live leaderboard is re-verified at submission time.
 
 ---
 
@@ -1715,6 +1807,15 @@ HV value that prioritises it).
   writes `docs/figures/landscape_<problem>.{csv,png}`). Establishes the band-8
   local→global signal hand-off and the neutral-network→frozen transition that
   explain the small-graph wall.
+- **Cap-aware optimisation (§13.8a, §14–14.1):** `tools/cap_submit.py` (valid
+  ≤20-point submission via the exact 2-D HSSP DP; uncapped-envelope diagnostic;
+  per-width marginal-value table), `tools/gbfcpp.py --cap20` (breakpoint search
+  auto-focused on HSSP-optimal widths), `tools/archive_evolve.py` (capped-archive
+  evolution: order-crossover + block mutation under strict capped-20 acceptance),
+  `leaderboard_reference/cuda-torso-main/run_capfocus.py` (cap-focused breeding
+  inside the reference engine; `--focus-sizes/--focus-mass/--focus-halfwidth`,
+  warm-start via `tools/front_to_checkpoint.py`), and the one-word
+  `libeval.cu` int32-overflow fix that enables large-graph at batch 1024.
 - **GBDT-on-SOTA leaderboard attempt:** `tools/run_gbdt.py` (cuda-torso engine +
   additive GBDT front-booster, with `--no_gbdt` control) and `tools/run_band.py`
   (per-threshold-band concentration, `--warmstart_pt`); protocol in
@@ -1752,11 +1853,17 @@ HV value that prioritises it).
 Best verified score per instance (official `tools/portfolio.py` re-scores), with
 the GBFC contribution (§11) over the pre-GBFC banked best:
 
-| Instance | best (−HV) | Leaderboard top | % of top | method |
+| Instance | best (−HV, valid ≤20-point) | Leaderboard top | % of top | method |
 |---|---:|---:|---:|---|
 | small  | **−1,829,913** | −1,829,919 | **99.99967 %** | torso-deletion (§13; gap **6**) |
-| medium | **−1,712,688** | −1,745,122 | 98.14 % | GBFC (§11; +734) |
-| large  | **−5,431,924** | −5,493,062 | 98.89 % | GBFC (§11; +329) |
+| medium | **−1,732,324** | −1,745,122 | **99.27 %** | cap-aware pool: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
+| large  | **−5,464,888** | −5,493,062 | **99.49 %** | cap-aware campaign (§14.1; *active*, 1 July 2026) |
+
+Medium and large are reported as **valid capped-20 submissions** (`tools/cap_submit.py`,
+exact HSSP selection) — the objective ESA scores; earlier GBFC-era figures
+(−1,712,688 / −5,431,924) were full-front values before the cap-aware campaign and
+are retained in §11/§12 as historical method-contribution baselines. The large
+number is a live campaign value and is restated at freeze.
 
 The small-graph progression is the spine of the thesis:
 −1,828,306 (banked) → −1,828,994 (GBFC, §11) → −1,829,735 (GBFC++, §11.6) →
@@ -1822,34 +1929,6 @@ reflects the inherited portfolio, and the GBDT contribution is correctly read
 from the controlled ablation (§6b.2), not from this table. (`gbdt` rows show the
 portfolio at the time those seeds were written; the final union is slightly
 better — §"Final verified results".)
-
----
-
-## 5.2 A structural lower bound (gap to optimum)
-
-The leaderboard ratio measures progress against a moving human target; a
-stronger, instance-intrinsic measure is the gap to a *structural* lower bound on
-the torso width. The minor-min-width (MMD) treewidth lower bound (Bodlaender &
-Koster 2011; `core.treewidth_lower_bound_mmd`) gives a provable floor on the
-minimum achievable width:
-
-| Instance | n | MMD width lower bound | width cap |
-|---|--:|--:|--:|
-| small  | 1357 | 2 | 500 |
-| medium | 1399 | 38 | 500 |
-| large  | 2426 | **499** | 500 |
-
-On `large-graph` the bound is decisive: the width floor (499) is within **one**
-of the feasibility cap (500), so the dense corner of the front — the
-minimum-width, low-`t` region — is provably near-optimal, and the residual
-hypervolume gap to the leaderboard must therefore lie in the *interior* of the
-front (intermediate `t`), not at the corner. On `small`/`medium` the MMD bound is
-loose — a known property of minor-min-width on sparse graphs, where it
-under-estimates the true treewidth — so it certifies the corner only weakly
-there; tighter bounds (LBN/LBP, MMD+) would be a separate computation. The honest
-summary: a structural certificate confirms near-optimality of the *dense-instance
-corner*, complementing the leaderboard ratio rather than replacing it, and it
-localises the remaining large-graph gap to the front interior.
 
 ---
 

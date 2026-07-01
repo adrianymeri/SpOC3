@@ -1,8 +1,16 @@
 # Next Steps — the plan from here
 
-*Status snapshot and the concrete path forward. Written after small-graph was
-at gap 6 (characterised near-optimum) and the medium-graph campaign began showing a large GBDT
-contribution.*
+*Status (updated 2026-07-01): small at gap 6 (characterised near-optimum, done).
+Medium at gap +12,798 valid; residual +9,492 proven torso-quality — slow compute grind,
+hedge arms only. **Primary campaign: LARGE** (gap +28,249 valid, ~16k of it cap-headroom,
+residual +12,341 ≈ 0.5%/width — proportionally the closest instance). Deployed levers:
+(1) int32 kernel fix → cuda-torso at batch 1024 on large for the first time;
+(2) run_capfocus — 90% of breeding mass on the 20 HSSP-scoring sizes (the winner's
+engine breeds uniformly over N=2426, i.e. 0.8% pressure on what scores);
+(3) archive_evolve crossover + gbfcpp --cap20 squeezing on both machines.
+Daily truth: `python3 tools/cap_submit.py --problem large-graph`.*
+
+*Original snapshot below (historical).*
 
 ---
 
