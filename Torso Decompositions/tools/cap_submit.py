@@ -88,7 +88,19 @@ def main():
     by_w = build_envelope(here, a.problem, n, ev)
     pts = [(w, t, p) for w, (t, p) in sorted(by_w.items())]
     full_hv = hypervolume_2d([(w, t) for w, t, _ in pts], n)
-    sel, cap_hv = greedy_select(pts, n, a.k)
+    # EXACT selection: the 2-D HSSP dynamic program (same as the search arms).
+    arc = ParetoArchive()
+    for w, tt, p in pts:
+        arc.try_add(w, tt, p)
+    top = arc.top_k_by_hv_contribution(a.k, n)
+    exact_hv = hypervolume_2d([(w, tt) for (w, tt, _) in top], n)
+    sel_g, cap_hv_g = greedy_select(pts, n, a.k)
+    if exact_hv >= cap_hv_g:
+        cap_hv = exact_hv
+        key = {(w, tt) for (w, tt, _) in top}
+        sel = [i for i, (w, tt, _) in enumerate(pts) if (w, tt) in key][:a.k]
+    else:                                   # defensive: keep whichever is better
+        sel, cap_hv = sel_g, cap_hv_g
     print(f"=== cap_submit {a.problem} | envelope {len(pts)} pts ===")
     print(f"full envelope (uncapped, NOT submittable): {-full_hv:,.0f}")
     print(f"best-{a.k} submission (VALID):              {-cap_hv:,.0f}"
