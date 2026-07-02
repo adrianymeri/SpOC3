@@ -112,11 +112,42 @@ def crossover(p1, p2, n, rng):
     return head + tail
 
 
-def mutate(perm, n, ab, rng, vis_widths, mate=None):
+def twin_classes(n, adj):
+    """True-twin classes (identical closed neighbourhoods). True twins induce a
+    graph automorphism, so permuting them leaves every suffix width invariant --
+    they are interchangeable UNITS. medium: 73% of vertices; large: 34% incl. a
+    375-clique class at deg 499."""
+    import collections
+    h = collections.defaultdict(list)
+    for v in range(n):
+        h[frozenset(adj[v] | {v})].append(v)
+    return [c for c in h.values() if len(c) > 1]
+
+
+def twin_move(perm, classes, n, rng):
+    """Coordinated multi-vertex move: relocate an entire twin class (or a random
+    contiguous chunk of it) as ONE block. Single-vertex moves are provably frozen
+    on the mature fronts; class-blocks are the symmetry-licensed moves that
+    single-vertex search structurally lacks."""
+    c = classes[rng.randrange(len(classes))]
+    k = len(c) if len(c) <= 8 or rng.random() < 0.5 else rng.randint(2, len(c))
+    cs = set(rng.sample(c, k))
+    pos = [i for i, v in enumerate(perm) if v in cs]
+    block = [perm[i] for i in pos]
+    p = [v for v in perm if v not in cs]
+    j = rng.choice([min(pos), max(pos) - len(block) + 1,
+                    rng.randint(0, len(p)), rng.randint(len(p) // 2, len(p))])
+    j = max(0, min(j, len(p)))
+    return p[:j] + block + p[j:]
+
+
+def mutate(perm, n, ab, rng, vis_widths, mate=None, classes=None):
     """Generate a NEW ordering by (a) order-crossover with a mate, (b) a short
     block relocation toward the torso side, or (c) a fresh randomised min-fill
     restart -- the three together give recombination + local + diversity."""
     r = rng.random()
+    if classes and r < 0.30:
+        return twin_move(list(perm), classes, n, rng)
     if mate is not None and r < 0.5:
         return crossover(list(perm), list(mate), n, rng)
     if r < 0.7:
@@ -131,10 +162,17 @@ def mutate(perm, n, ab, rng, vis_widths, mate=None):
     return p
 
 
-def run(problem, here, iters, pool_cap, seed):
+def run(problem, here, iters, pool_cap, seed, twins=False):
     n, adj = load_graph(graph_path(here, problem)); ab = build_adj_bitsets(n, adj)
     ev = IncEvalC(ab, n); target = LEADERBOARD_TARGETS.get(problem)
     rng = random.Random(seed); nprng = np.random.default_rng(seed)
+
+    classes = None
+    if twins:
+        classes = twin_classes(n, adj)
+        cov = sum(len(c) for c in classes)
+        print(f"    twin moves ON: {len(classes)} true-twin classes, "
+              f"{cov}/{n} vertices ({100*cov//n}%)", flush=True)
 
     members = load_seed_orders(here, problem, n, ev, pool_cap)
     cur, top = capped_hv(members, n)
@@ -148,7 +186,7 @@ def run(problem, here, iters, pool_cap, seed):
     for it in range(iters):
         src = members[rng.randrange(len(members))][0]
         mate = members[rng.randrange(len(members))][0]
-        mp = mutate(src, n, ab, rng, vis, mate)
+        mp = mutate(src, n, ab, rng, vis, mate, classes)
         pts = order_front(mp, ev, n)
         trial = members + [(mp, pts)]
         h, top = capped_hv(trial, n)
@@ -181,9 +219,11 @@ def main():
     ap.add_argument("--iters", type=int, default=4000)
     ap.add_argument("--pool", type=int, default=36)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--twins", action="store_true",
+                    help="enable true-twin class-block moves (symmetry-licensed multi-vertex moves)")
     a = ap.parse_args()
     run(a.problem, os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        a.iters, a.pool, a.seed)
+        a.iters, a.pool, a.seed, a.twins)
 
 
 if __name__ == "__main__":
