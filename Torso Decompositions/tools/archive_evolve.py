@@ -202,7 +202,8 @@ def run(problem, here, iters, pool_cap, seed, twins=False):
                   f"(accept #{accepts}, pool {len(members)}) ***", flush=True)
             # save additively on every improvement
             dvs = [list(p) + [int(t)] for (_, t, p) in top]
-            out = os.path.join(here, "submissions", problem, "archive_evolve.json")
+            out = os.path.join(here, "submissions", problem,
+                               f"archive_evolve_s{seed}{'_tw' if twins else ''}.json")
             json.dump({"challenge": "spoc-3-torso-decompositions", "problem": problem,
                        "decisionVector": dvs}, open(out, "w"))
         if it % 500 == 0 and it:

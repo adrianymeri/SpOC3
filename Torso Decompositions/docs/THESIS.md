@@ -2026,6 +2026,20 @@ better — §"Final verified results".)
 
 **Elimination orderings, chordality and treewidth**
 
+- Robertson, N., & Seymour, P. D. (1986). Graph minors. II. Algorithmic aspects
+  of tree-width. *Journal of Algorithms*, 7(3), 309–322.
+- Arnborg, S., Corneil, D. G., & Proskurowski, A. (1987). Complexity of finding
+  embeddings in a k-tree. *SIAM Journal on Algebraic and Discrete Methods*,
+  8(2), 277–284. (NP-completeness of treewidth.)
+- Bodlaender, H. L. (1996). A linear-time algorithm for finding
+  tree-decompositions of small treewidth. *SIAM Journal on Computing*, 25(6),
+  1305–1317.
+- Yannakakis, M. (1981). Computing the minimum fill-in is NP-complete.
+  *SIAM Journal on Algebraic and Discrete Methods*, 2(1), 77–79.
+- Tamaki, H. (2019). Positive-instance driven dynamic programming for treewidth.
+  *Journal of Experimental Algorithmics*, 24, 1–36. (PACE-2017 champion; the
+  exact engine of §13.6.)
+
 - Berry, A., Blair, J. R. S., Heggernes, P., & Peyton, B. W. (2004). Maximum
   cardinality search for computing minimal triangulations of graphs.
   *Algorithmica*, 39(4), 287–298.
@@ -2053,6 +2067,24 @@ better — §"Final verified results".)
 - Ros, R., & Hansen, N. (2008). A simple modification in CMA-ES achieving linear
   time and space complexity. *PPSN X*, 296–305.
 
+**Hypervolume theory and subset selection (the capped objective)**
+
+- Zitzler, E., & Thiele, L. (1999). Multiobjective evolutionary algorithms: a
+  comparative case study and the strength Pareto approach. *IEEE Transactions
+  on Evolutionary Computation*, 3(4), 257–271. (Origin of the hypervolume
+  indicator.)
+- Auger, A., Bader, J., Brockhoff, D., & Zitzler, E. (2012). Hypervolume-based
+  multiobjective optimization: theoretical foundations and practical
+  implications. *Theoretical Computer Science*, 425, 75–103.
+- Kuhn, T., Fonseca, C. M., Paquete, L., Ruzika, S., Duarte, M. M., &
+  Figueira, J. R. (2016). Hypervolume subset selection in two dimensions:
+  formulations and algorithms. *Evolutionary Computation*, 24(3), 411–425.
+  (The exact 2-D HSSP this thesis solves at submission and inside the search,
+  §13.8a/§14.)
+- Guerreiro, A. P., Fonseca, C. M., & Paquete, L. (2021). The hypervolume
+  indicator: computational problems and algorithms. *ACM Computing Surveys*,
+  54(6), 1–42.
+
 **Multi-objective optimisation and metaheuristics**
 
 - Beume, N., Naujoks, B., & Emmerich, M. (2007). SMS-EMOA: multiobjective
@@ -2065,6 +2097,11 @@ better — §"Final verified results".)
   Computing*, 1(3) and 2(1).
 - Lourenço, H. R., Martin, O. C., & Stützle, T. (2003). Iterated local search.
   In *Handbook of Metaheuristics*, 320–353.
+- Shaw, P. (1998). Using constraint programming and local search methods to
+  solve vehicle routing problems. *CP 1998*, LNCS 1520, 417–431. (Origin of
+  Large Neighborhood Search, the winning paradigm of §14.4.)
+- Pisinger, D., & Ropke, S. (2010). Large neighborhood search. In *Handbook of
+  Metaheuristics*, 399–419.
 - Mladenović, N., & Hansen, P. (1997). Variable neighborhood search.
   *Computers & Operations Research*, 24(11), 1097–1100.
 - Burke, E. K., & Bykov, Y. (2017). The late acceptance hill-climbing heuristic.
@@ -2086,12 +2123,26 @@ better — §"Final verified results".)
   *GECCO 2012*, 321–328.
 - Khalil, E. B., Le Bodic, P., Song, L., Nemhauser, G., & Dilkina, B. (2016).
   Learning to branch in mixed integer programming. *AAAI 2016*.
+- Ross, S., Gordon, G., & Bagnell, J. A. (2011). A reduction of imitation
+  learning and structured prediction to no-regret online learning. *AISTATS
+  2011*. (DAgger; the self-improvement loop of §14.)
+- Burges, C. J. C. (2010). From RankNet to LambdaRank to LambdaMART: an
+  overview. *Microsoft Research TR-2010-82*. (The listwise ranking objective
+  of the §14 policy.)
 - Gasse, M., Chételat, D., Ferroni, N., Charlin, L., & Lodi, A. (2019). Exact
   combinatorial optimization with graph convolutional neural networks.
   *NeurIPS 32*.
 - Schuetz, M. J. A., Brubaker, J. K., & Katzgraber, H. G. (2022). Combinatorial
   optimization with physics-inspired graph neural networks. *Nature Machine
   Intelligence*, 4, 367–377.
+
+**Graph symmetry and modular decomposition (the twin structure, §14.2)**
+
+- Gallai, T. (1967). Transitiv orientierbare Graphen. *Acta Mathematica
+  Academiae Scientiarum Hungaricae*, 18, 25–66. (Modules and modular
+  decomposition; true twins are the trivial modules exploited in §14.2.)
+- Habib, M., & Paul, C. (2010). A survey of the algorithmic aspects of modular
+  decomposition. *Computer Science Review*, 4(1), 41–59.
 
 **Gradient-boosted decision trees**
 
