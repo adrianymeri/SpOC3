@@ -116,6 +116,11 @@ def main():
     json.dump({"challenge": "spoc-3-torso-decompositions", "problem": a.problem,
                "decisionVector": dvs}, open(out, "w"))
     print(f"\nwrote VALID submission -> {out}  ({len(dvs)} points)")
+    # official Optimize-platform wrapper (top-level array; README format)
+    pout = out.replace(".json", "_platform.json")
+    json.dump([{"decisionVector": dvs, "problem": a.problem,
+                "challenge": "spoc-3-torso-decompositions"}], open(pout, "w"))
+    print(f"wrote platform-format copy   -> {pout}")
     prio = ",".join(str(w) for _, w, _ in sorted(rows, reverse=True))
     print(f"\nattack-priority widths (feed to gbfcpp --only-widths):\n{prio}")
 
