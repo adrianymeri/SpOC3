@@ -1751,6 +1751,75 @@ produces genuinely new, larger torso points, not merely repackings. The campaign
 machines) is ongoing; final numbers are reported at thesis freeze, and any claim
 against the live leaderboard is re-verified at submission time.
 
+### 14.2 Instance structure I: true-twin symmetry, and an operator licensed by it
+
+Analysing the official instances revealed massive planted symmetry that, to our
+knowledge, no published account of this benchmark records. A *true-twin class* is
+a set of vertices sharing a closed neighbourhood; its members induce a graph
+automorphism, so permuting them within any elimination ordering leaves every
+suffix width invariant — they are interchangeable units. The medium instance has
+**73 %** of its vertices in 507 twin classes; the hard instance has 34 % in 117
+classes, including planted blowups of **375 mutually adjacent twins at degree 499**,
+102 at degree 399, and 62 at degree 299 — degrees that sit exactly at the decisive
+front widths. (The easy instance has none, consistent with its §13 rigidity.)
+A competitor's account (Limmer, p.c.) independently confirms the winning
+large-graph entry exploited this planted structure.
+
+Two measured consequences. First, optimal orderings are **not** class-contiguous:
+gathering classes into blocks preserves widths at low/mid bands but costs +46/+65
+width in the deep-torso region, because a twin class is a clique and a width-w
+torso can host at most ~w+1 of its members — optimal fronts must *split* classes
+across the breakpoint (mean scatter 126 positions in the evolved owners). A pure
+quotient-space constructor is therefore structurally handicapped at exactly the
+scoring widths (verified: 0/400 construct accepts), while a **twin-block move** —
+relocating a class or chunk as one unit — is the symmetry-licensed *coordinated
+multi-vertex move* that the single-vertex rigidity results of §13 never excluded.
+Second, that operator works: in a same-corpus, same-machine controlled ablation
+(`archive_evolve --twins` vs. an identical arm without), the twin arm sustained
+**~1.7x the acceptance rate** (54 accepts/36.5k iters vs. 41/46.5k) and broke the
+medium plateau (+1,188 HV overnight). Campaign values; final table at freeze.
+
+### 14.3 Instance structure II: the per-width class-quota law
+
+The planted classes obey a closed-form inclusion law. A twin class c is a clique
+with e_c external neighbours (375-class: e=125; 102: e=298; 62: e=238); if k of
+its members lie in a width-w torso with their external neighbourhood largely
+resident, the first member eliminated has outdegree >= (k-1) + externals-later,
+whence **k <~ w + 1 - e_c**. Auditing the evolved best-20 against this bound shows
+the front *saturates it exactly* at the top widths (325/375 at w=449; 275/375 at
+w=399 — to the vertex) and sits 2–5 members short at several mid widths, with
+non-monotone mid-range inclusions — named, targetable slack. A quota-repair
+operator (move under-quota members across the breakpoint, verify exactly)
+converted this slack into verified capped-20 improvements on its first pass
+(3 accepts). The law also explains the instance design: the high-width Pareto
+frontier of the hard instance is governed by class arithmetic, which is the
+structure the winning entry "exploited to construct solutions".
+
+### 14.4 The winning method, disclosed, reproduced, and re-aimed
+
+Through correspondence (S. Limmer, Honda Research Institute Europe, p.c., July
+2026, cited with permission) the unpublished winning approach for this problem is
+now on record: a multi-objective **Large Neighborhood Search** over permutation
+vertices with two operator pairs — (B) *neighbor destroy* (a vertex and its
+original-graph neighbours; large destroy size) with *balanced repair*, inserting
+each vertex at the median position of its already-inserted neighbours per the
+MEDIAN PLACEMENT algorithm of Biedl, Chan, Ganjali, Hajiaghayi and Wood (DAM 148,
+2005, Sec. 5), and (A) small random destroy with random repair, with (B) run to
+stall before switching. The relevance of balancedness is structural: MEDIAN
+PLACEMENT bounds total imbalance by m + n/2, pushing outdegrees toward deg/2 —
+and torso width *is* a maximum outdegree. We reimplemented the method faithfully
+(including the odd-arity side rule of their Lemma 16) with one deliberate change:
+acceptance on the **exact capped-20 hypervolume** (§13.8a) rather than a
+full-front criterion. First-hours evidence: all early accepts arise from operator
+set (B), with 19 accepts in 6.5k iterations on medium and immediate accepts on
+large — the strongest single arm observed on medium in the project. The lineage
+is fully documented: the winners' recipe, the 2005 algorithm it builds on, and a
+scored-objective refinement they did not use.
+
+*Campaign status at time of writing:* large-graph valid capped-20 gap
++28,574 -> +25,266 in three days (11.6 % closed); medium +15,900 -> ~+11,000.
+All figures are restated at thesis freeze.
+
 ---
 
 ### Reproducibility
@@ -1816,6 +1885,11 @@ against the live leaderboard is re-verified at submission time.
   inside the reference engine; `--focus-sizes/--focus-mass/--focus-halfwidth`,
   warm-start via `tools/front_to_checkpoint.py`), and the one-word
   `libeval.cu` int32-overflow fix that enables large-graph at batch 1024.
+- **Instance-structure suite (§14.2–14.4):** `tools/twin_construct.py` (twin-quotient
+  constructor; negative result), `tools/archive_evolve.py --twins` (twin-block
+  moves + the controlled ablation), `tools/quota_repair.py` (per-width class-quota
+  repair), `tools/hri_lns.py` (faithful MO-LNS per Limmer p.c. / Biedl et al. 2005,
+  capped-20 acceptance).
 - **GBDT-on-SOTA leaderboard attempt:** `tools/run_gbdt.py` (cuda-torso engine +
   additive GBDT front-booster, with `--no_gbdt` control) and `tools/run_band.py`
   (per-threshold-band concentration, `--warmstart_pt`); protocol in
@@ -1935,6 +2009,13 @@ better — §"Final verified results".)
 ## References
 
 **Problem and competition**
+
+- Biedl, T., Chan, T., Ganjali, Y., Hajiaghayi, M.T., Wood, D.R. (2005). Balanced
+  vertex-orderings of graphs. *Discrete Applied Mathematics* 148(1), 27–48.
+  (Basis of the winning entry's balanced-repair operator, §14.4.)
+- Limmer, S. (2026). Personal communication, Honda Research Institute Europe,
+  July 2026. Cited with permission. (Winning SpOC-3 torso approach: MO-LNS,
+  §14.4; confirmation of structure exploitation by the large-graph top, §14.2.)
 
 - European Space Agency, Advanced Concepts Team. *SpOC 3: Torso Decompositions.*
   Optimise competition, 2024. https://optimise.esa.int/

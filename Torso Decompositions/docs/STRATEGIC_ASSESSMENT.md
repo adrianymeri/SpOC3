@@ -134,3 +134,28 @@ Warm-start via front_to_checkpoint (claimed fitnesses = corpus per-position widt
 elite gate = "beat the corpus"; engine's own early submissions are decode-degraded
 and are filtered by per-band-max pooling). First hours: gap +28,533 → +28,249 with
 envelope growth (crossover finding genuinely new torso points).
+
+---
+
+## Update 2026-07-02 (evening) — HRI recipe implemented; audit
+
+**Limmer (p.c., cited with permission) disclosed the winning MO-LNS:** vertex-level
+destroy/repair; set B = neighbor destroy (vertex + original-graph neighbours, large
+size) + balanced repair (MEDIAN PLACEMENT, Biedl et al. DAM 148 (2005) Sec. 5 —
+paper obtained and read; our implementation is faithful incl. the odd-k side rule
+of Lemma 16); set A = small random destroy + random repair; B until stall, then A.
+Also: Spacekangaroos' large-graph result exploited planted graph structure —
+independently confirming our twin-class discovery.
+
+**Ours differs deliberately in one place:** acceptance is the exact capped-20 HSSP
+hypervolume (the scored objective), not a full-front criterion.
+
+**First-hours evidence:** hri_lns large 5 accepts/3k iters (all set B); medium 19
+accepts/6.5k iters (-1,733,855 -> -1,734,129). Twins ablation holds (~1.7x accept
+rate). Quota law converted (+3 accepts, owner-8 375-class moves). Live: large
+best-20 -5,467,796 (gap +25,266, from +28,574 at pivot); medium gap ~+11,0xx and
+falling fast under LNS.
+
+**Known implementation freedoms vs. the p.c. (acceptable, monitored):** single-seed
+neighbor destroy (theirs possibly multi-seed); stall-toggle B<->A (theirs possibly
+one-way); insertion ordering = degree-descending (unspecified in p.c.).

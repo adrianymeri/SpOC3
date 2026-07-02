@@ -6,12 +6,15 @@
 > [SpOC-3 Torso-Decompositions challenge](https://optimize.esa.int/challenge/spoc-3-torso-decompositions/About).
 
 > **Note — this README covers the permutation-space chapter only.** The
-> project's current best results come from the later *continuous-encoding +
-> GBDT* paradigm (GBFC §11 and GBFC++ §11.6): **99.990 % / 98.14 % / 98.89 %**
-> of the leaderboard top on small / medium / large. See
-> **[docs/THESIS.md](docs/THESIS.md)** (the centerpiece) and
-> **[docs/RESULTS.md](docs/RESULTS.md)**; the GBFC++ breakpoint-boosting method
-> and its verified small-graph **−1,829,735** are in THESIS §11.6.
+> project's centerpiece is the *GBDT* paradigm (GBFC §11, GBFC++ §11.6, the
+> adaptive policy §14) plus **cap-aware optimisation** (§13.8a/§14): all scores
+> below are the *valid ≤20-point capped submissions* (the objective ESA scores).
+> Current standing — small **−1,829,913** (gap 6, characterised near-optimum);
+> medium **−1,732,324** (gap +12,798); large **−5,464,813** (gap +28,249,
+> active campaign: cap-focused cuda-torso @ batch 1024 via our int32 kernel fix,
+> archive-evolve crossover, gbfcpp --cap20). See **[docs/THESIS.md](docs/THESIS.md)**
+> (centerpiece), **[docs/RESULTS.md](docs/RESULTS.md)**, and
+> **[docs/STRATEGIC_ASSESSMENT.md](docs/STRATEGIC_ASSESSMENT.md)** (campaign log).
 
 ## Abstract
 
