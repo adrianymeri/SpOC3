@@ -129,7 +129,7 @@ on the 20 sizes the submission keeps. Third, an honest negative boundary (§14):
 the strongest self-improving form of the boosted policy does not out-search the
 pooled corpus, locating precisely where learned decoding helps and where raw
 search volume is irreplaceable. As of 1 July 2026 the valid capped-20 standings
-are small **−1,829,913** (gap 6, characterised near-optimum), medium
+are small **−1,829,914** (gap 5; the gap-6 local-operator wall fell to a from-scratch basin draw, §14.4), medium
 **−1,732,324** (99.27 %), and large **−5,464,888** (99.49 %, campaign active).
 
 ---
@@ -1816,6 +1816,28 @@ large — the strongest single arm observed on medium in the project. The lineag
 is fully documented: the winners' recipe, the 2005 algorithm it builds on, and a
 scored-objective refinement they did not use.
 
+The same operator family was finally directed at the small instance's
+characterised gap-6 wall — the one neighbourhood family that the §13 exhaustion
+predated. The result: **300,000 iterations of neighbor-destroy / balanced-repair
+(with the random-perturbation fallback) produced zero accepts against the gap-6
+front.** The wall therefore stands against single-vertex moves, set-space
+restructures, ordering-space annealing, spectral restructuring, exact band
+attacks, *and* the winning paradigm's own large-neighbourhood operator — closing
+the §13 characterisation over every operator family known to have succeeded on
+this benchmark.
+
+**Postscript — the wall falls by birth, not by force (5 July 2026).** Within a
+day of the above, a *from-scratch* GPU lottery (the reference neuro-evolution
+engine, batch 1024, no warm start — deliberately sampling fresh basins rather
+than perturbing our optimum) produced an ordering whose width-11 torso holds
+**888** vertices, one more than the 887 that every local operator family had
+failed to move: verified official score **−1,829,914, gap 5** (99.99973 %). The
+epistemological point is sharper than the point itself: the §13 wall is a
+*local-operator* wall — exhaustion over every known move family certifies a
+deep basin, not global optimality — and the escape came from initialisation
+diversity, the same mechanism that plausibly produced the leaderboard top. The
+remaining gap-5 characterisation inherits this caveat explicitly.
+
 *Campaign status at time of writing:* large-graph valid capped-20 gap
 +28,574 -> +25,266 in three days (11.6 % closed); medium +15,900 -> ~+11,000.
 All figures are restated at thesis freeze.
@@ -1929,7 +1951,7 @@ the GBFC contribution (§11) over the pre-GBFC banked best:
 
 | Instance | best (−HV, valid ≤20-point) | Leaderboard top | % of top | method |
 |---|---:|---:|---:|---|
-| small  | **−1,829,913** | −1,829,919 | **99.99967 %** | torso-deletion (§13; gap **6**) |
+| small  | **−1,829,914** | −1,829,919 | **99.99973 %** | torso-deletion + from-scratch basin draw (§13, §14.4; gap **5**) |
 | medium | **−1,732,324** | −1,745,122 | **99.27 %** | cap-aware pool: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
 | large  | **−5,464,888** | −5,493,062 | **99.49 %** | cap-aware campaign (§14.1; *active*, 1 July 2026) |
 
