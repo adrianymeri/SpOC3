@@ -100,6 +100,7 @@ def run(problem, here, iters, seed, use_gbdt, pool_cap, destroy_cap,
             p = width_profile(perm, ev, n); profs[key] = p
         return p
 
+    stem = f"hri_lns_gbdt_s{seed}{'' if use_gbdt else '_ctrl'}"   # per-arm, no clobber
     tag = "GBDT-guided" if use_gbdt else "RANDOM (control / --no-gbdt)"
     print(f"=== HRI-LNS+GBDT {problem} | {tag} | seeded {len(members)} orders | "
           f"capped-20 {cur:,.0f}{f'  gap {cur-target:+,.0f}' if target else ''} | "
@@ -154,7 +155,7 @@ def run(problem, here, iters, seed, use_gbdt, pool_cap, destroy_cap,
                   f"{f'  gap {cur-target:+,.0f}' if target else ''} "
                   f"(accept #{accepts}) ***", flush=True)
             dvs = [list(p) + [int(t)] for (_, t, p) in top2]
-            out = os.path.join(here, "submissions", problem, "hri_lns_gbdt.json")
+            out = os.path.join(here, "submissions", problem, stem + ".json")
             json.dump({"challenge": "spoc-3-torso-decompositions",
                        "problem": problem, "decisionVector": dvs}, open(out, "w"))
 
