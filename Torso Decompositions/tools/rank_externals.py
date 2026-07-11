@@ -142,22 +142,33 @@ def main():
     arc = ParetoArchive()
 
     if a.mode == "gen":
+        # v2: sample PERTURBATIONS of the outdeg baseline (local exploration
+        # around the good frontier), and log invalid runs with achieved=501 so
+        # the model learns the feasibility boundary too.
         t0 = time.time()
         with open(DATA, "a") as fh:
             for s in range(a.samples):
                 w = rng.randrange(a.wmin, a.wmax)
                 chosen = {}
-                def order_ext(ci, ext, chosen=chosen):
-                    rng.shuffle(ext); chosen[ci] = ext; return ext
+                def order_ext(ci, ext, chosen=chosen, w=w):
+                    Kset = set(cliques[ci][1])
+                    ext = sorted(ext, key=lambda v: len(adj[v] - Kset))
+                    qx = max(0, DEGS[ci] - w - len(cliques[ci][0]))
+                    if qx and len(ext) > qx:
+                        nswap = rng.randint(1, max(2, qx // 6))
+                        for _ in range(nswap):
+                            i = rng.randrange(qx)
+                            j = rng.randrange(qx, len(ext))
+                            ext[i], ext[j] = ext[j], ext[i]
+                    chosen[ci] = ext
+                    return ext
                 head = build_head(w, cliques, order_ext)
                 wt = evaluate(head, templates[s % len(templates)], n, ev, arc)
-                if wt is None:
-                    continue
-                q = {ci: max(0, DEGS[ci] - len(cliques[ci][0]) - (0 if DEGS[ci] - w <= len(cliques[ci][0]) else 0)) for ci in range(3)}
-                used = {ci: chosen.get(ci, [])[:max(0, DEGS[ci] - w - len(cliques[ci][0]))] for ci in range(3)}
-                fh.write(json.dumps({"w": w, "achieved": wt,
+                used = {ci: chosen.get(ci, [])[:max(0, DEGS[ci] - w - len(cliques[ci][0]))]
+                        for ci in range(3)}
+                fh.write(json.dumps({"w": w, "achieved": wt if wt is not None else 501,
                                      "ext": {str(ci): used[ci] for ci in range(3)}}) + "\n")
-                if (s + 1) % 20 == 0:
+                if (s + 1) % 100 == 0:
                     print(f"  gen {s+1}/{a.samples} last(w={w} got {wt})"
                           f" [{time.time()-t0:.0f}s]", flush=True)
         out = os.path.join(HERE, "submissions", PROBLEM, "cp_rand.json")
@@ -216,11 +227,19 @@ def main():
             def order_ext(ci, ext):
                 if mode == "rand":
                     r2 = random.Random(w * 7 + ci); e = list(ext); r2.shuffle(e); return e
+                Kset = set(cliques[ci][1])
+                bydeg = sorted(ext, key=lambda v: len(adj[v] - Kset))
                 if mode == "outdeg":
-                    return sorted(ext, key=lambda v: len(adj[v] - set(cliques[ci][1])))
+                    return bydeg
+                # gbdt v2: SELECT the set by model score, ORDER it by outdeg
+                # (safe elimination order), rest appended for completeness
+                qx = max(0, DEGS[ci] - w - len(cliques[ci][0]))
                 rows = [features(v, ci, adj, cliques, comp) + [w] for v in ext]
                 sc = pred(rows)
-                return [v for _, v in sorted(zip(sc, ext))]
+                picked = [v for _, v in sorted(zip(sc, ext), key=lambda z: z[0])][:qx]
+                pset = set(picked)
+                ordered = [v for v in bydeg if v in pset] + [v for v in bydeg if v not in pset]
+                return ordered
             return order_ext
         for j, mode in enumerate(["rand", "outdeg", "gbdt"]):
             best = None
