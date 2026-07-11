@@ -9,6 +9,14 @@ canonical-scorer-verified (`tools/verify_submission.py`) and 0-capped._
 
 ## 0. Headline results
 
+> **Live campaign standing (2026-07-11, certificate-guided):** small **−1,829,914**
+> (gap 5, characterised); medium **−1,739,519** (gap +5,603, 99.68 %); large
+> **−5,476,639** (gap +16,423, 99.70 %, **6 of 20 submitted points proven
+> Pareto-optimal** by the clique-packing certificate — THESIS §15,
+> [PLANTED_STRUCTURE_CERTIFICATES.md](PLANTED_STRUCTURE_CERTIFICATES.md)).
+> The tables below are the frozen per-method scoreboard; the campaign values
+> above are pooled cap-20 submissions (`tools/cap_submit.py`).
+
 The project's final standing, after four chapters of permutation-space search
 and the continuous-encoding breakthrough that followed (full narrative in
 [THESIS.md](THESIS.md)):

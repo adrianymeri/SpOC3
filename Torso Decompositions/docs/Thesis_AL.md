@@ -551,7 +551,27 @@ E njëjta familje operatorësh më në fund u drejtua te muri i karakterizuar i 
 
 **Pas-shkrim — muri bie nga lindja, jo nga forca (5 korrik 2026).** Brenda një dite nga sa më sipër, një lotari GPU *nga-e-para* (motori referencë i neuro-evolucionit, paketë 1024, pa nisje ngrohtë — duke mostruar qëllimisht pellgje të freskët në vend që të perturbojë optimumin tonë) prodhoi një renditje torsi gjerësi-11 i së cilës mban **888** kulme, një më shumë se 887 që çdo familje operatori lokal kishte dështuar të lëvizte: rezultat zyrtar i verifikuar **−1,829,914, hendek 5** (99.99973 %). Pika epistemologjike është më e mprehtë se vetë pika: muri i §13 është një mur *operatori-lokal* — shterimi mbi çdo familje lëvizjeje të njohur certifikon një pellg të thellë, jo optimalitet global — dhe shpëtimi erdhi nga diversiteti i inicializimit, i njëjti mekanizëm që me gjasa prodhoi majën e tabelës. Karakterizimi i mbetur i hendekut-5 e trashëgon këtë paralajmërim shprehimisht.
 
-*Statusi i fushatës në kohën e shkrimit:* hendeku i vlefshëm i kufizuar-në-20 i graf-it të madh +28,574 -> +17,417 (39 % i mbyllur); i mesmi +15,900 -> +6,221 (61 % i mbyllur). Të gjitha shifrat rideklarohen te ngrirja e tezës.
+*Statusi i fushatës në kohën e shkrimit:* hendeku i vlefshëm i kufizuar-në-20 i graf-it të madh +28,574 -> +16,423 (43 % i mbyllur); i mesmi +15,900 -> +5,603 (65 % i mbyllur). Të gjitha shifrat rideklarohen te ngrirja e tezës.
+
+---
+
+## 15. Konstruksioni i mbjellë, i zbuluar dhe i certifikuar: prova optimaliteti me paketim klikash dhe dekompozimi i kostos-së-kufirit
+
+*(11 korrik 2026. Dokument shoqërues: `docs/PLANTED_STRUCTURE_CERTIFICATES.md`; mjetet: `tools/clique_prefix.py`, `tools/rank_externals.py`, `tools/unlock_diff.py`, `tools/consolidate_pool.py`. Versioni i plotë në anglisht: THESIS §15.)*
+
+**15.1 Zbulimi i projektuesit dhe rikuperimi i plotë i instancës.** Bannach (komunikim personal, 10 korrik 2026, cituar me leje) zbuloi gjeneratorin: çdo instancë është një **bashkim disjunkt grafesh me pemë-gjerësi të ulët, të ngjitura me një graf të dendur**. Për graf-in e madh e rikuperojmë konstruksionin *plotësisht*: ngjitësi është saktësisht tre klika kulm-disjunkte — K₅₀₀ ⊇ klasa binjake 375-kulmëshe (shkalla 499), K₄₀₀ ⊇ klasa 102 (399), K₃₀₀ ⊇ klasa 62 (299); 500+400+300 = 1200 = e gjithë bërthama e dendur. Komponentët e mbjellë: 25 komponentë me 1226 kulme, secili me gjerësi min-fill ≤ 6.
+
+**15.2 Certifikata e paketimit të klikave.** *Teoremë.* Për klika kulm-disjunkte K₁,…,K_m, çdo zgjidhje me gjerësi torsi ≤ w plotëson t ≥ Σᵢ max(0, |Kᵢ| − w − 1). *Vërtetim:* eliminimi vetëm shton skaje; kulmi i parë i Kᵢ i eliminuar në një hap torsi ende sheh çdo kulm të mëvonshëm të Kᵢ. ∎ Me paketimin {500, 400, 300}: **t(w) ≥ (499−w)₊ + (399−w)₊ + (299−w)₊**.
+
+**15.3 Gjashtë pika të dorëzuara janë provueshëm Pareto-optimale.** Zarfi e takon kufirin saktësisht në w = 299, 332, 365, 399, 449, 499 — gjashtë nga 20 pikat e dorëzimit janë **optimale**, duke e zgjeruar karakterizimin dyanësh të §13 në të gjithë të tretën e sipërme të frontit të graf-it të madh. Çdo cikël kërkimi në w ≥ 299 është provueshëm i humbur.
+
+**15.4 Dekompozimi i kostos-së-kufirit.** Në fotografinë e 11 korrikut (hendeku +16,423), mbetja e zarfit me pika të pakufizuara është vetëm **+1,263** — pengesa është *forma e frontit nën kufirin 20-pikësh*, jo cilësia e torsove. Levat: **A** — arritja e kufirit në w ∈ [180, 299), tavan **+6,311**; **B** — zhvendosja majtas e çkyçjeve të mesme (hapi +487-torso në w=99 etj.), **+18,259** për 15 gjerësi. A+B e mund majën e tabelës me ≈ 6,700.
+
+**15.5 Struktura e Levës B.** Diferencat e kokave (`tools/unlock_diff.py`) tregojnë se çkyçjet janë *komponentë të tërë të mbjellë* që hyjnë në tors; në w=122 koka mban ende **253 kulme ngjitësi më shumë** se sa kërkon certifikata, dhe dy komponentë (n=46, n=21) nuk hyjnë kurrë — objektivat më të mprehtë të hapur.
+
+**15.6 Kufiri i GBDT-së, i mprehur.** Ndërtuam tubacionin e plotë të mësimit (`tools/rank_externals.py`: 5,000 konstruksione si të dhëna, LightGBM mbi 583k rreshta, ndarje përzgjedhje/renditje-e-sigurt). Rezultati — një negativ i ndershëm që pasqyron dekoderin-beam: heuristika e shkallës-së-jashtme i bie rankuesit të mësuar pothuajse kudo; pengesa e vërtetë është **ndërveprimi kokë–bisht**, jo identiteti i eksternalëve të pranuar. GBDT e fiton vendin si *politikë propozimi brenda kërkimit me gjendje* (GBFC++, gjeneratori i ndërgjegjshëm-ndaj-kufirit), jo si përzgjedhës statik kombinatorik — tani me ablacion të kontrolluar me dy baza (rastësor / shkallë-e-jashtme / GBDT).
+
+**15.7 Pasoja operacionale.** Certifikata rialokoi tërë flotën: krahët e small-graph në pension (mbetja +5), të gjithë krahët e graf-it të madh të kufizuar në dhjetë gjerësitë e hapura {99, 104, 122, 133, 153, 175, 195, 219, 244, 274}; gjerësitë e certifikuara marrin zero llogaritje. Higjiena e pool-it u bë e provueshme (`tools/consolidate_pool.py`, verifikim bit-për-bit para arkivimit) dhe sinkronizimi dy-makinësh me një URL (`tools/sync_pool.sh`).
 
 ---
 
@@ -586,8 +606,8 @@ Rezultati më i mirë i verifikuar për instancë (ri-vlerësime zyrtare `tools/
 | Instanca | më e mira (−HV, e vlefshme ≤20-pika) | Maja e tabelës | % e majës | metoda |
 |---|---:|---:|---:|---|
 | i vogël  | **−1,829,914** | −1,829,919 | **99.99973 %** | fshirja-e-torsit + tërheqje pellgu nga-e-para (§13, §14.4; hendek **5**) |
-| i mesëm | **−1,738,901** | −1,745,122 | **99.64 %** | pool i ndërgjegjshëm-ndaj-kufirit: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
-| i madh  | **−5,475,645** | −5,493,062 | **99.68 %** | fushatë e ndërgjegjshme-ndaj-kufirit (§14.1; *aktive*, 8 korrik 2026) |
+| i mesëm | **−1,739,519** | −1,745,122 | **99.68 %** | pool i ndërgjegjshëm-ndaj-kufirit: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
+| i madh  | **−5,476,639** | −5,493,062 | **99.70 %** | fushatë e udhëhequr-nga-certifikata (§14.1, §15; *aktive*, 11 korrik 2026; 6/20 pika të provuara optimale) |
 
 I mesmi dhe i madhi raportohen si **dorëzime të vlefshme të kufizuara-në-20** (`tools/cap_submit.py`, përzgjedhje e saktë HSSP) — objektivi që ESA vlerëson; shifrat e mëhershme të epokës-GBFC (−1,712,688 / −5,431,924) ishin vlera të frontit-të-plotë para fushatës së ndërgjegjshme-ndaj-kufirit dhe mbahen në §11/§12 si baza historike të kontributit-metodë. Numri i madh është një vlerë fushate e gjallë dhe rideklarohet te ngrirja.
 

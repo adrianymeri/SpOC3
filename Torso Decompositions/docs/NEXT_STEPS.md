@@ -1,14 +1,18 @@
 # Next Steps — the plan from here
 
-*Status (updated 2026-07-01): small at gap 6 (characterised near-optimum, done).
-Medium at gap +12,798 valid; residual +9,492 proven torso-quality — slow compute grind,
-hedge arms only. **Primary campaign: LARGE** (gap +28,249 valid, ~16k of it cap-headroom,
-residual +12,341 ≈ 0.5%/width — proportionally the closest instance). Deployed levers:
-(1) int32 kernel fix → cuda-torso at batch 1024 on large for the first time;
-(2) run_capfocus — 90% of breeding mass on the 20 HSSP-scoring sizes (the winner's
-engine breeds uniformly over N=2426, i.e. 0.8% pressure on what scores);
-(3) archive_evolve crossover + gbfcpp --cap20 squeezing on both machines.
-Daily truth: `python3 tools/cap_submit.py --problem large-graph`.*
+*Status (updated 2026-07-11): small gap 5 — done, arms retired. Medium gap +5,603
+(residual +2,913) — two hedge arms. **Primary campaign: LARGE, now
+certificate-guided** (gap +16,423; residual only +1,263 ⇒ the gap is cap cost,
+not torso quality). The clique-packing certificate (THESIS §15,
+PLANTED_STRUCTURE_CERTIFICATES.md) proves w ≥ 299 optimal (6/20 submitted points)
+and localises everything recoverable: Lever A = attain the bound on w∈[180,299)
+(+6,311 ceiling); Lever B = shift the mid-range component unlocks left
+(+18,259 for a 15-width shift). Fleet: all large arms on the ten slack widths
+{99,104,122,133,153,175,195,219,244,274}, LNS re-seeded from clique-prefix
+constructions, two GPU arms warm. If the slack widths stall for 48 h → deploy
+`tools/boundary_lns.py` (head/tail-seam destroy-repair — the bottleneck the
+rank_externals ablation isolated). Daily truth: two-way `tools/sync_pool.sh`,
+then `python3 tools/cap_submit.py --problem large-graph`.*
 
 *Original snapshot below (historical).*
 

@@ -110,6 +110,33 @@ instance, confirmed by the designer; (ii) a clique-packing optimality certificat
 quantification of cap-20 geometry (14,944 cap cost decomposed into zone losses);
 (iv) GBDT-as-ranker inside a certificate-reduced search space, with clean ablations.
 
+## 6b. Results appendix (evening, 2026-07-11)
+
+Everything below was measured after this document was first written.
+
+- **Constructor (`tools/clique_prefix.py`, v0 = ascending out-degree externals):**
+  attains the bound at w=298 only; overshoot grows monotonically to ~+97 at
+  w=130 (quota head for 130 achieves width 227). Constructions are dominated by
+  the LNS envelope at 260+ but seed the under-explored 125–200 band.
+- **GBDT head-admission ranker (`tools/rank_externals.py`):** v1 (uniform random
+  training subsets) unsafe and worse; v2 (perturbation sampling, 5,000 runs,
+  583k rows, selection/order split) safe but still loses to out-degree at ~41/43
+  widths. Verdict: static-feature set-selection is not where the slack lives;
+  the binding constraint is the head–tail interaction. Full table:
+  `rank_ablation_v2.txt`. This is the §15.6 negative result.
+- **Unlock diffs (`tools/unlock_diff.py`):** 82→99 admits five whole planted
+  components (~464/508 moved vertices); 99→122 admits comp6/comp4/comp3; at
+  w=122 the head still holds 253 more glue vertices than the certificate
+  requires; comp16 (n=46) and comp14 (n=21) never enter the torso mid-range.
+- **Fleet (since 11 July, evening):** both machines run gbfcpp `--cap20
+  --only-widths 99,104,122,133,153,175,195,219,244,274` + re-seeded hri_lns;
+  server adds capfocus + run_gbdt GPU arms; small retired. Standing at
+  retargeting: large −5,476,639 (gap +16,423, residual +1,263), medium
+  −1,739,519 (gap +5,603), small −1,829,914 (gap +5).
+- **Contingency:** if the slack widths stall 48 h, deploy `tools/boundary_lns.py`
+  (destroy/repair across the head/tail seam of constructed orderings,
+  w∈[130,220], exact capped-20 acceptance).
+
 ## 7. Medium: same methodology, different structure (open)
 
 Medium's twin classes are K₆'s (bound trivial beyond w≈5) — the clique certificate does

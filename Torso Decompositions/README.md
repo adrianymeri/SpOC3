@@ -7,13 +7,15 @@
 
 > **Note — this README covers the permutation-space chapter only.** The
 > project's centerpiece is the *GBDT* paradigm (GBFC §11, GBFC++ §11.6, the
-> adaptive policy §14) plus **cap-aware optimisation** (§13.8a/§14): all scores
+> adaptive policy §14) plus **cap-aware optimisation** (§13.8a/§14) and, since
+> 11 July 2026, the **clique-packing optimality certificates** (§15): all scores
 > below are the *valid ≤20-point capped submissions* (the objective ESA scores).
-> Current standing — small **−1,829,913** (gap 6, characterised near-optimum);
-> medium **−1,732,324** (gap +12,798); large **−5,464,813** (gap +28,249,
-> active campaign: cap-focused cuda-torso @ batch 1024 via our int32 kernel fix,
-> archive-evolve crossover, gbfcpp --cap20). See **[docs/THESIS.md](docs/THESIS.md)**
-> (centerpiece), **[docs/RESULTS.md](docs/RESULTS.md)**, and
+> Current standing — small **−1,829,914** (gap 5, characterised near-optimum);
+> medium **−1,739,519** (gap +5,603); large **−5,476,639** (gap +16,423,
+> **6 of 20 submitted points proven Pareto-optimal**; certificate-guided
+> campaign on the ten provably-open widths). See **[docs/THESIS.md](docs/THESIS.md)**
+> (centerpiece, §15), **[docs/PLANTED_STRUCTURE_CERTIFICATES.md](docs/PLANTED_STRUCTURE_CERTIFICATES.md)**,
+> **[docs/RESULTS.md](docs/RESULTS.md)**, and
 > **[docs/STRATEGIC_ASSESSMENT.md](docs/STRATEGIC_ASSESSMENT.md)** (campaign log).
 
 ## Abstract

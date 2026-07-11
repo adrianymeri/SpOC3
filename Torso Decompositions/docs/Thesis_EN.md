@@ -1849,8 +1849,119 @@ diversity, the same mechanism that plausibly produced the leaderboard top. The
 remaining gap-5 characterisation inherits this caveat explicitly.
 
 *Campaign status at time of writing:* large-graph valid capped-20 gap
-+28,574 -> +17,417 (39 % closed); medium +15,900 -> +6,221 (61 % closed).
++28,574 -> +16,423 (43 % closed); medium +15,900 -> +5,603 (65 % closed).
 All figures are restated at thesis freeze.
+
+---
+
+## 15. The planted construction, disclosed and certified: clique-packing optimality proofs and the cap-cost decomposition
+
+*(11 July 2026. Companion document: `docs/PLANTED_STRUCTURE_CERTIFICATES.md`;
+tools: `tools/clique_prefix.py`, `tools/rank_externals.py`, `tools/unlock_diff.py`,
+`tools/consolidate_pool.py`.)*
+
+### 15.1 The designer's disclosure, and full recovery of the instance
+
+Bannach (p.c., 10 July 2026, cited with permission) disclosed the generator:
+each instance is a **disjoint union of low-treewidth graphs glued together by a
+dense graph**, built so that "a decent torso can be recovered"; the generating
+script itself is lost. For large-graph we recover the construction *completely*:
+
+- **The glue is exactly three vertex-disjoint cliques** — K₅₀₀ ⊇ the 375-vertex
+  true-twin class at degree 499, K₄₀₀ ⊇ the 102-class at 399, K₃₀₀ ⊇ the
+  62-class at 299. Verified: each class's closed neighbourhood induces a clique;
+  the three are pairwise disjoint; 500+400+300 = 1200 = the entire dense core
+  (core number ≥ 50). The twin classes of §14.2 are thus not incidental
+  symmetry: they are the *interiors* of the planted glue cliques.
+- **The planted components:** deleting the glue leaves 25 components on 1226
+  vertices with min-fill width ≤ 6 each (19 of them ≤ 2); per-vertex external
+  degree into the glue is ≤ 25, mostly ≤ 4.
+
+### 15.2 The clique-packing certificate
+
+**Theorem (packing lower bound).** Let K₁,…,K_m be vertex-disjoint cliques of
+G. Every solution (π, t) whose torso width is ≤ w satisfies
+t ≥ Σᵢ max(0, |Kᵢ| − w − 1).
+
+*Proof.* Elimination only adds edges, so when the first vertex of Kᵢ is
+eliminated at a torso step, every Kᵢ-vertex later in π is still its neighbour.
+If the head holds jᵢ vertices of Kᵢ, that step has fill-width ≥ |Kᵢ| − jᵢ − 1,
+hence jᵢ ≥ |Kᵢ| − w − 1; the Kᵢ are disjoint, so the head sizes add. ∎
+
+With the packing {500, 400, 300}: **t(w) ≥ (499−w)₊ + (399−w)₊ + (299−w)₊** —
+a piecewise diagonal of slope 3/2/1 over w ∈ [195, 499].
+
+### 15.3 Six submitted points are provably Pareto-optimal
+
+The live envelope *meets the bound exactly* at w = 299, 332, 365, 399, 449, 499
+(t = 300, 234, 168, 100, 50, 0). These six points of the capped-20 submission
+are therefore **optimal — not heuristically strong, optimal**, extending the
+two-sided small-graph characterisation of §13 to the entire top third of the
+large-graph front. Two consequences: (i) every search cycle spent at w ≥ 299
+is provably wasted (the 0-accept twin-construct arms of §14.2 are thereby
+*explained*, not merely observed); (ii) on the certified diagonal the optimal
+≤20-point HSSP spacing is a closed-form geometry problem (zone loss ≈ s·g²/2 on
+slope s over gap g), not a search problem.
+
+### 15.4 The cap-cost decomposition: where the remaining gap lives
+
+At the 11 July snapshot (gap +16,423): the unlimited-point envelope residual is
+only **+1,263** — the leaderboard's 20 points are worth ≈ our 500-point
+envelope. The binding constraint is *front shape under the 20-point cap*
+(cap cost ≈ 15k), not torso quality. The certificate localises the recoverable
+part in two levers: **Lever A** — attain the bound on w ∈ [180, 299), certified
+slack 15–90 head-vertices per width, worth **+6,311** capped HV if fully
+absorbed; **Lever B** — shift the mid-range unlock widths (the +487-torso step
+at w=99, +179 at w=82, +113/129 at 130/174) left, worth **+18,259** for a
+15-width shift. A+B recomputed under exact HSSP selection beats the leaderboard
+top by ≈ 6,700. Figure `docs/figures/fig15_certificates.png` shows the envelope
+hugging the bound over the certified region, the Lever-A slack arrows, and the
+Lever-B unlock band.
+
+### 15.5 Lever-B structure (`tools/unlock_diff.py`)
+
+Diffing achiever heads shows the unlocks are *whole planted components*
+entering the torso: the w 82→99 jump admits five components (≈464 of the 508
+moved vertices); 99→122 admits three more (comp6, comp4, comp3). At w=122 the
+head still carries **253 more glue vertices than the certificate requires**,
+and two components (comp16, n=46; comp14, n=21) never enter the torso at any
+mid-range width — the sharpest open targets the analysis produces.
+
+### 15.6 The GBDT boundary, sharpened: head-admission ranking is not learnable from static features
+
+The certificate reduces w ∈ [180, 299) to one open choice: *which* K₄₀₀/K₃₀₀
+externals join the head (twins are forced and, being clique-internal,
+eliminate with zero fill). We built the full learning pipeline
+(`tools/rank_externals.py`): 5,000 constructions as training data (perturbations
+of the out-degree baseline, infeasible runs labelled at the 501 boundary),
+a LightGBM regressor on 583k vertex-context rows, and a selection/ordering
+split (model selects the set, safe out-degree order eliminates it). Result —
+an honest negative that mirrors the beam-decoder result of the strategic
+assessment: the ascending-out-degree heuristic (achieved width 227–298 over
+the band) beats the learned ranker (237–434) almost everywhere, and single-swap
+perturbations of the baseline almost always *worsen* it. The construction sits
+in a sharp local optimum whose binding constraint is the **head–tail
+interaction**, not the identity of the admitted externals. This bounds the
+GBDT paradigm from above exactly where §6b/§14 bound it from below: *GBDT
+earns its keep as a proposal policy inside stateful search (GBFC++, the
+cap-aware generator), and not as a static combinatorial selector* — now with a
+controlled two-baseline ablation (random / out-degree / GBDT) as evidence.
+
+### 15.7 Operational consequences
+
+The certificate re-allocated the entire fleet (11 July): small-graph arms
+retired (residual +5, characterised); all large-graph arms restricted to the
+ten HSSP-visible slack widths {99, 104, 122, 133, 153, 175, 195, 219, 244, 274}
+(`gbfcpp --cap20 --only-widths`, LNS re-seeded from quota-correct clique-prefix
+constructions); certified widths receive zero compute. Pool hygiene became
+provable: `tools/consolidate_pool.py` compresses any submission pool into one
+`full_envelope.json` reproducing the per-width envelope bit-for-bit (verified
+before any file is archived — a naive mtime-based prune measurably lost
+~1,030 HV of envelope before this tool existed), and `tools/sync_pool.sh`
+ships the whole pool between machines in one URL. In GBDT-centric terms: the
+certificate deletes ≥ 40 % of the width range from the search space by proof,
+and every remaining GBDT cycle lands on a width where improvement is still
+mathematically possible.
 
 ---
 
@@ -1865,6 +1976,11 @@ All figures are restated at thesis freeze.
   `python3 tools/ablation_gbdt.py` (prints WITH / WITHOUT / contribution per
   instance; large-graph = +2,524 HV).
 - Threshold harvest: `tools/refine_thresholds.py`. Figures: `tools/make_figures.py`.
+- **Certificates & planted structure (§15):** constructor `tools/clique_prefix.py`;
+  ranker + ablation `tools/rank_externals.py --mode gen|train|construct`
+  (table: `rank_ablation_v2.txt`); unlock analysis `tools/unlock_diff.py`
+  (`unlock_82_99.txt`, `unlock_99_122.txt`); lossless pool compression
+  `tools/consolidate_pool.py`; two-machine pool sync `tools/sync_pool.sh`.
 - **GPU scale-up (§9):** batch evaluator `algorithms/continuous/gpu_eval.py`;
   correctness gate `tools/validate_gpu.py` (GPU vs `core.evaluate`, bit-for-bit);
   large-population search `tools/gpu_search.py` (warm-started from
@@ -1962,8 +2078,8 @@ the GBFC contribution (§11) over the pre-GBFC banked best:
 | Instance | best (−HV, valid ≤20-point) | Leaderboard top | % of top | method |
 |---|---:|---:|---:|---|
 | small  | **−1,829,914** | −1,829,919 | **99.99973 %** | torso-deletion + from-scratch basin draw (§13, §14.4; gap **5**) |
-| medium | **−1,738,901** | −1,745,122 | **99.64 %** | cap-aware pool: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
-| large  | **−5,475,645** | −5,493,062 | **99.68 %** | cap-aware campaign (§14.1; *active*, 8 July 2026) |
+| medium | **−1,739,519** | −1,745,122 | **99.68 %** | cap-aware pool: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
+| large  | **−5,476,639** | −5,493,062 | **99.70 %** | certificate-guided cap-aware campaign (§14.1, §15; *active*, 11 July 2026; 6/20 points proven optimal) |
 
 Medium and large are reported as **valid capped-20 submissions** (`tools/cap_submit.py`,
 exact HSSP selection) — the objective ESA scores; earlier GBFC-era figures

@@ -159,3 +159,35 @@ falling fast under LNS.
 **Known implementation freedoms vs. the p.c. (acceptable, monitored):** single-seed
 neighbor destroy (theirs possibly multi-seed); stall-toggle B<->A (theirs possibly
 one-way); insertion ordering = degree-descending (unspecified in p.c.).
+
+---
+
+## Update 2026-07-11 — the certificate pivot (Bannach p.c. -> proofs -> fleet reallocation)
+
+Bannach (p.c., cited with permission) disclosed the generator: disjoint union of
+low-treewidth graphs glued by a dense graph. Full recovery for large-graph followed
+the same day: **glue = K500 ⊔ K400 ⊔ K300 exactly** (the twin classes are the clique
+interiors; 1200 = whole dense core), 25 planted components of min-fill width ≤ 6.
+
+**The decisive measurement is upgraded to a proof.** The clique-packing bound
+t(w) ≥ (499−w)₊ + (399−w)₊ + (299−w)₊ meets the live envelope EXACTLY at
+w = 299/332/365/399/449/499 — six of the 20 submitted points are Pareto-optimal
+(THESIS §15). The June conclusion "the gap is torso quality, needs compute" is
+now refined: at the 11-July snapshot (gap +16,423) the unlimited-point residual
+is only +1,263, i.e. **the binding constraint is front shape under the 20-point
+cap**, localised in Lever A (bound attainment on w∈[180,299), ceiling +6,311)
+and Lever B (mid-range component unlocks, ceiling +18,259). A+B > leaderboard.
+
+**New measured negatives (thesis-grade):** (i) quota-correct clique-prefix
+construction overshoots the bound by 0 (w=298) to ~97 (w=130) — the fill from
+clique externals compounds at low w; (ii) a full GBDT head-admission ranker
+(583k rows, LightGBM, selection/order split) loses to ascending-out-degree
+almost everywhere; single-swap perturbations of the baseline nearly always hurt.
+Conclusion: the open bottleneck is the **head–tail interaction**, matching the
+LNS-shaped success story, not static selection. Contingency arm if the slack
+widths stall: `tools/boundary_lns.py` (seam-window destroy/repair).
+
+**Ops:** fleet retargeted to the ten HSSP-visible slack widths; small retired
+(+5 characterised); `consolidate_pool.py` (bit-verified lossless pool
+compression — a naive mtime prune had cost ~1,030 HV of envelope) +
+`sync_pool.sh` (whole-pool two-machine sync, one URL) are now the daily loop.
