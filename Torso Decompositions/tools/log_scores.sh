@@ -9,8 +9,9 @@ CSV=campaign_scores.csv
 [ -f "$CSV" ] || echo "timestamp,host,problem,best20,gap,envelope_residual" > "$CSV"
 for p in small-graph medium-graph large-graph; do
   OUT=$(python3 tools/cap_submit.py --problem "$p" 2>/dev/null)
-  B=$(echo "$OUT" | grep -i "best-20" | tr -d ',' | grep -oE '[+-][0-9]+' | sed -n 1p)
-  G=$(echo "$OUT" | grep -i "best-20" | tr -d ',' | grep -oE '[+-][0-9]+' | sed -n 2p)
+  BL=$(echo "$OUT" | grep -i "best-20" | sed 's/[Bb]est-20//' | tr -d ',')
+  B=$(echo "$BL" | grep -oE '[+-][0-9]+' | sed -n 1p)
+  G=$(echo "$BL" | grep -oE '[+-][0-9]+' | sed -n 2p)
   R=$(echo "$OUT" | grep -i "residual" | tr -d ',' | grep -oE '[+-][0-9]+' | sed -n 1p)
   echo "$TS,$H,$p,${B:-},${G:-},${R:-}" >> "$CSV"
 done
