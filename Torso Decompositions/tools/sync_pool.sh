@@ -23,22 +23,32 @@ case "$CMD" in
   push)
     STAMP="$(hostname -s)_$(date +%Y%m%d_%H%M)"
     TGZ="/tmp/pool_${STAMP}.tgz"
+    LIST="/tmp/pool_list_$$.txt"
+    : > "$LIST"
     # top-level *.json only; skip peer copies (they came from the other machine),
-    # platform wrappers, and hidden state files
-    FILES=$(for p in $PROBLEMS; do
+    # platform wrappers, and hidden state files.  NOTE: no `case` inside $(...) --
+    # macOS ships bash 3.2, whose parser cannot handle that construct.
+    for p in $PROBLEMS; do
       for f in submissions/$p/*.json; do
+        [ -e "$f" ] || continue
         b=$(basename "$f")
-        case "$b" in srv_*|mac_*|peer_*|*_platform.json) continue;; esac
-        echo "$f"
+        case "$b" in
+          srv_*|mac_*|peer_*|*_platform.json) ;;
+          *) echo "$f" >> "$LIST" ;;
+        esac
       done
-    done)
-    # shellcheck disable=SC2086
-    tar czf "$TGZ" $FILES
-    echo "packed $(echo "$FILES" | wc -l | tr -d ' ') files -> $TGZ ($(du -h "$TGZ" | cut -f1))"
+    done
+    tar czf "$TGZ" -T "$LIST"
+    echo "packed $(wc -l < "$LIST" | tr -d ' ') files -> $TGZ ($(du -h "$TGZ" | cut -f1))"
+    rm -f "$LIST"
     URL=$(curl -sf -F "reqtype=fileupload" -F "time=24h" -F "fileToUpload=@$TGZ" \
           https://litterbox.catbox.moe/resources/internals/api.php) || \
     URL=$(curl -sf -F "reqtype=fileupload" -F "fileToUpload=@$TGZ" \
-          https://catbox.moe/user/api.php)
+          https://catbox.moe/user/api.php) || {
+      echo "both uploads failed; tarball kept at $TGZ -- move it manually and run:"
+      echo "  bash tools/sync_pool.sh pull /path/to/$(basename "$TGZ") <srv_|mac_>"
+      exit 1
+    }
     echo ""
     echo "PASTE ON THE OTHER MACHINE:"
     echo "  bash tools/sync_pool.sh pull $URL <srv_|mac_>"
