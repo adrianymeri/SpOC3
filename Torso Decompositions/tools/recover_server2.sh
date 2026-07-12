@@ -16,12 +16,14 @@ pkill -f run_gbdt.py 2>/dev/null; pkill -f run_capfocus.py 2>/dev/null
 pkill -f gbfcpp.py 2>/dev/null; pkill -f hri_lns.py 2>/dev/null
 pkill -f archive_evolve.py 2>/dev/null; sleep 2
 
-echo "== GPU arms (warm-start) =="
-FS=$(python3 tools/cap_submit.py --problem large-graph | awk -F'|' 'NF>=3 && $2+0>0 {gsub(/ /,"",$2); print $2}' | paste -sd, -)
-echo "   capfocus sizes: $FS"
+echo "== GPU arms: SMALL fresh-basin lottery (2026-07-12 pivot) =="
+# Rationale: small orderings are ALWAYS ESA-valid (maxdeg 7 << 500) and the
+# lottery is the only mechanism that ever moved small's wall (gap 6 -> 5,
+# torso 887 -> 888). The large GPU arms' raw dumps are 100% invalid (over-
+# width heads) and contributed nothing -- GPU compute belongs on small.
 cd ~/cuda-torso
-nohup python3 run_gbdt.py    --graph large-graph --batch_size 1024 --warmstart_pt "$HERE/large_warm.pt" --max_generations 100000000 > "$HERE/large_cuda_3.log" 2>&1 &
-nohup python3 run_capfocus.py --graph large-graph --batch_size 1024 --warmstart_pt "$HERE/large_warm.pt" --focus-sizes "$FS" --max_generations 100000000 > "$HERE/large_capfocus.log" 2>&1 &
+nohup python3 run_gbdt.py --graph small-graph --batch_size 1024 --max_generations 100000000 > "$HERE/small_gpu_lottery_gbdt.log" 2>&1 &
+nohup python3 run.py      --graph small-graph --batch_size 1024 --max_generations 100000000 > "$HERE/small_gpu_lottery2.log" 2>&1 &
 cd "$HERE"
 
 echo "== CPU arms =="

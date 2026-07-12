@@ -16,6 +16,17 @@ propagation" -- a candidate for an exact ILP/BB formulation on the quotient,
 not for a fixed ordering rule. The LNS arms discover these trade-offs
 incrementally, which is why they hold the envelope there.
 
+UPDATE (12 July, post-sanitization, two more attempts): (4) closure-in-head
+with cheapest-attachment evictions -- closure comps eliminated late wire the
+torso components into the glue (max step ~1500); (5) closure-first +
+cross-partner co-eviction -- the co-eviction CASCADES (E grows to ~2000,
+closure ~1000) and fill chains through the closure comps still poison the
+remainder. Five principled constructions, five distinct fill channels. This
+is strong empirical evidence that the planted instance's mid-band is
+construction-resistant by design: certificates close its top, incremental
+search (LNS/GBFC++) is the only thing that holds its middle. Reported as a
+structural-hardness result in THESIS 15.6/15.8 follow-up.
+
 Design derived from the coupling measurement (2026-07-11): the three glue
 cliques are only weakly coupled per-vertex (max ~24 direct + ~20 fill-partner
 edges into other cliques). Therefore build, for each target width w:
