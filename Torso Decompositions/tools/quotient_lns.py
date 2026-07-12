@@ -57,14 +57,17 @@ def normalize(perm, cid, ncls):
 
 
 def bank(arc, perm, df, n):
+    """returns (valid, archive_improved)"""
     if int(max(df)) > MAX_TW:
-        return False
+        return False, False
     r = 0
+    improved = False
     for t in range(n - 1, -1, -1):
         c = int(df[t]); r = c if c > r else r
         if r <= MAX_TW:
-            arc.try_add(r, t, perm)
-    return True
+            if arc.try_add(r, t, perm):
+                improved = True
+    return True, improved
 
 
 def main():
@@ -97,12 +100,13 @@ def main():
                     if sorted(p) != list(range(n)):
                         continue
                     df = ev.full(p)
-                    if not bank(arc, p, df, n):
+                    ok, _ = bank(arc, p, df, n)
+                    if not ok:
                         continue
                     q = normalize(p, cid, ncls)
                     p2 = expand(q, cls)
-                    df2 = ev.full(p2)
-                    if bank(arc, p2, df2, n):
+                    ok2, _ = bank(arc, p2, df2 := ev.full(p2), n)
+                    if ok2:
                         seeds.append(q)
         except Exception:
             pass
@@ -139,14 +143,19 @@ def main():
         else:
             s = rng.randrange(0, ncls - k)
             idxs = list(range(s + k - 1, s - 1, -1))
-        removed = [q.pop(i) for i in idxs]
+        removed = [(q.pop(i), i) for i in idxs]
         rng.shuffle(removed)
-        for sv in removed:                      # repair: random reinsertion
-            q.insert(rng.randrange(0, len(q) + 1), sv)
+        for sv, oi in removed:
+            if rng.random() < 0.7:              # balanced-ish: near original slot
+                pos = max(0, min(len(q), oi + rng.randint(-30, 30)))
+            else:                               # exploratory: anywhere
+                pos = rng.randrange(0, len(q) + 1)
+            q.insert(pos, sv)
         p = expand(q, cls)
         df = ev.full(p)
         before = best
-        if bank(arc, p, df, n):
+        ok, improved = bank(arc, p, df, n)
+        if ok and improved:                     # HSSP DP only when archive moved
             cur = cap20()
             if cur < before - 1e-9:
                 best = cur; accepts += 1
