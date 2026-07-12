@@ -157,6 +157,54 @@ leaderboard" reading was inflated by invalid points and is retracted); medium
 points at w = 299–499 are all VALID — §2–§3 stand unchanged. Zone/lever
 magnitudes (§4, §6b) must be re-derived from the clean envelope.
 
+## 6d. Medium update (2026-07-12 evening): the twin-quotient lane
+
+Medium is a twin blow-up: 882 true-twin supervertices (weights <= 4; quotient
+8,493 edges vs 13,799). The strong "twin normal form" exchange lemma does NOT
+hold under the threshold objective (measured: normalization is width-MIXED on
+12/12 pooled orderings — it wins at some widths, loses at others) — but MIXED
+means normalization generates new non-dominated points on every ordering
+tested. `tools/quotient_lns.py` exploits this: twin-normalized seeding alone
+gained +216 capped HV in one pass (medium −1,739,501 → −1,739,717, later
+−1,739,729), the largest single-day medium gain of the campaign; the
+quotient-restricted LNS then searches the 882!-space directly (v2:
+archive-gated exact HSSP acceptance, near-position repair). Reported as a
+novel heuristic reduction with a measured dominance profile, not as a
+lossless theorem.
+
+## 6e. P1-P3 first results (2026-07-12 evening; docs/RESEARCH_PROPOSALS.md)
+
+- **P1 CQS (set-space, quota-preserving moves): immediate breakout.** Server
+  arm at w=130: 21 accepts in 409 s (t 1093 -> 1071, each worth ~29 capped
+  HV); Mac arm accepting steadily at its width. Set-exchange moves reach
+  improvements permutation-space LNS was finding at ~1e-4 the rate. Large
+  best-20 moved +18,024 -> +16,392 within the day (all verified 0-capped).
+- **P2 bandit scheduler: live** on both machines; re-derives the open widths
+  every 30-min stint (the HSSP selection drifted twice today alone — static
+  width lists are obsolete).
+- **P3 family transfer v1: honest negative.** Cross-instance policy trained
+  on 12 generated family instances (7,268 vertices); noisy-argsort decode on
+  large: 0/300 valid orderings — position-regression labels from a synthetic
+  teacher do not transfer to a directly-decodable ordering (consistent with
+  the §15.6 boundary: GBDT-as-decoder fails where GBDT-as-policy succeeds).
+  Upgrade path if revisited: train on real solver corpora per instance, or
+  decode into CQS/LNS seeds rather than raw orderings.
+
+## 6f. The creator's fingerprint: attachment-overlap structure (2026-07-12, late)
+
+Measured bipartite attachment structure (external -> component vertices):
+K500's 125 externals carry 1,592 attachment slots (median 15, max 27; 953
+unique component vertices); K400's 298 externals carry only 244 slots (median
+0 — ~200 externals attachment-FREE); K300's 238 carry 108 (median 0). Greedy
+min-union eviction curves: K400/K300 quotas are sacrifice-free down to
+w ≈ 97 / 37; ALL mid-band sacrifice cost is K500's curve (U(25)=20,
+U(50)=124, U(75)=339). Consequences: (i) retro-explains the §15.6 heuristic
+boundary (out-degree eviction works while free externals last, collapses when
+K500's begin); (ii) the head-composition problem is a weighted min-union over
+K500 externals only — small enough for exact treatment; (iii) CQS's swap move
+now uses tournament selection on attachment counts (evict-heavy from head,
+rescue-light to head) — the creator-informed move bias.
+
 ## 7. Medium: same methodology, different structure (open)
 
 Medium's twin classes are K₆'s (bound trivial beyond w≈5) — the clique certificate does

@@ -110,6 +110,11 @@ def main():
     ev = IncEvalC(build_adj_bitsets(n, adj_l), n)
     target = LEADERBOARD_TARGETS[PROBLEM]
     Ks, twins, glue, who = structure(n, adj)
+    # creator-informed bias (2026-07-12 attachment-overlap measurement): the
+    # head should hold LOW-attachment externals (their torso attachments get
+    # clique-ified through the connected head glue); the torso should keep
+    # HIGH-attachment externals. Tournament selection below uses this.
+    attc = {v: len(adj[v] - glue) for v in glue}
 
     if a.width == "auto":
         st_fp = os.path.join(HERE, "submissions", PROBLEM, ".bandit_state.json")
@@ -149,7 +154,12 @@ def main():
             torsK = [v for v in Ks[ci] if pos[v] >= t]
             if not headK or not torsK:
                 continue
-            hsel = rng.choice(headK); tsel = rng.choice(torsK)
+            # tournament-3: evict-from-head the attachment-heavy, rescue-to-
+            # head the attachment-light (creator-informed; still stochastic)
+            hsel = max(rng.sample(headK, min(3, len(headK))),
+                       key=lambda v: attc[v])
+            tsel = min(rng.sample(torsK, min(3, len(torsK))),
+                       key=lambda v: attc[v])
             i, j = pos[hsel], pos[tsel]
             p2[i], p2[j] = p2[j], p2[i]
         elif m < 0.75:                     # rescue: head comp-vertex -> torso
