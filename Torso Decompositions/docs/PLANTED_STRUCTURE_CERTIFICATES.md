@@ -137,6 +137,26 @@ Everything below was measured after this document was first written.
   (destroy/repair across the head/tail seam of constructed orderings,
   w∈[130,220], exact capped-20 acceptance).
 
+## 6c. CORRECTION (2026-07-12): the validity incident
+
+`verify_submission` on the pooled cap20 caught 6/20 vectors scoring **501**:
+their heads contain steps > MAX_TW, which voids the whole decision vector
+under the official contract, while suffix-only banking (cap_submit and every
+arm) still credited their torso points. Source: **raw cuda-torso GPU batch
+dumps are wholesale invalid** (0/20 valid in every dump file inspected) and
+had contaminated arm checkpoints through pooling. Fixes: validity guard in
+cap_submit / archive_evolve(order_front, used by hri_lns) / gbfcpp (three
+sites) / boundary_lns / width_demote / consolidate_pool; new
+`tools/sanitize_pool.py` (re-evaluates every vector, rewrites files clean);
+GPU ingest now sanitizes. Large pool: 1,742 of 2,576 vectors dropped.
+
+**Corrected standings (verified end-to-end, 2026-07-12):** large −5,475,038
+(gap +18,024, envelope residual **+3,792** — the earlier "envelope beat the
+leaderboard" reading was inflated by invalid points and is retracted); medium
+−1,739,501 (+5,621); small −1,829,914 (+5, never contaminated). The certified
+points at w = 299–499 are all VALID — §2–§3 stand unchanged. Zone/lever
+magnitudes (§4, §6b) must be re-derived from the clean envelope.
+
 ## 7. Medium: same methodology, different structure (open)
 
 Medium's twin classes are K₆'s (bound trivial beyond w≈5) — the clique certificate does

@@ -38,8 +38,12 @@ from tools.fastwalk import IncEvalC
 
 
 def order_front(perm, ev, n):
-    """The (w, t) staircase points this ordering contributes (non-dominated)."""
+    """The (w, t) staircase points this ordering contributes (non-dominated).
+    2026-07-12 fix: an ordering with ANY step > MAX_TW (head included) is void
+    at ESA (evaluator returns 501) and contributes nothing."""
     d = ev.full(perm); r = 0; pts = []
+    if int(max(d)) > MAX_TW:
+        return []
     a = ParetoArchive()
     for t in range(n - 1, -1, -1):
         c = int(d[t]); r = c if c > r else r

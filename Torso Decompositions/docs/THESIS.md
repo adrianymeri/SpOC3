@@ -1905,10 +1905,12 @@ slope s over gap g), not a search problem.
 
 ### 15.4 The cap-cost decomposition: where the remaining gap lives
 
-At the 11 July snapshot (gap +16,423): the unlimited-point envelope residual is
-only **+1,263** — the leaderboard's 20 points are worth ≈ our 500-point
-envelope. The binding constraint is *front shape under the 20-point cap*
-(cap cost ≈ 15k), not torso quality. The certificate localises the recoverable
+*(Figures corrected 12 July after the validity incident of §15.8.)* At the
+clean 12 July snapshot (gap +18,024): the unlimited-point envelope residual is
+**+3,792** — the leaderboard's 20 points are worth slightly more than our
+entire ~500-point envelope. The dominant constraint is still *front shape
+under the 20-point cap* (cap cost ≈ 14k), with a genuine torso-quality
+residual of ~3.8k on top. The certificate localises the recoverable
 part in two levers: **Lever A** — attain the bound on w ∈ [180, 299), certified
 slack 15–90 head-vertices per width, worth **+6,311** capped HV if fully
 absorbed; **Lever B** — shift the mid-range unlock widths (the +487-torso step
@@ -1962,6 +1964,29 @@ ships the whole pool between machines in one URL. In GBDT-centric terms: the
 certificate deletes ≥ 40 % of the width range from the search space by proof,
 and every remaining GBDT cycle lands on a width where improvement is still
 mathematically possible.
+
+### 15.8 The validity incident: end-to-end verification as a first-class result
+
+On 12 July, running the standalone official re-evaluator on the pooled cap-20
+submission caught 6/20 vectors scoring 501: their *heads* contained steps
+wider than MAX_TW, voiding the whole decision vector under the official
+contract, while the suffix-only staircase banking used throughout the pooling
+pipeline (and, we believe, easy to reproduce in any team's tooling) still
+credited their torso points. The source was traced to **raw cuda-torso GPU
+batch dumps, which are wholesale invalid** (0/20 valid in every inspected dump
+of the reference engine we run) and had propagated into arm checkpoints via
+pooling. The remediation — a validity guard at every banking site, a pool
+sanitizer that re-evaluates every stored vector
+(`tools/sanitize_pool.py`; 1,742 of 2,576 large-graph vectors dropped), and
+sanitize-on-ingest for GPU dumps — restored a fully verified state: large
+−5,475,038 (gap +18,024), medium −1,739,501, small −1,829,914, each cap-20
+now passing the official re-evaluator with 20/20 valid vectors. Two lessons
+enter the thesis: (i) *the certified points survived* — every bound-meeting
+point at w ∈ {299,…,499} was CPU-arm-produced and valid, so §15.2–15.3 are
+untouched; (ii) leaderboard-adjacent claims mean nothing without an
+independent end-to-end verifier in the loop — the same discipline that caught
+the reference kernel's int32 overflow (§14.1) caught our own inflated
+envelope here.
 
 ---
 

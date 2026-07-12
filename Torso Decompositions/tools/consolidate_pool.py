@@ -43,6 +43,8 @@ def envelope_of_files(files, n, ev, verbose=True):
                 if sorted(perm) != list(range(n)):
                     continue
                 df = ev.full(perm); r = 0
+                if int(max(df)) > MAX_TW:   # dirty head => void at ESA
+                    continue
                 for t in range(n - 1, -1, -1):
                     c = int(df[t]); r = c if c > r else r
                     if r > MAX_TW:

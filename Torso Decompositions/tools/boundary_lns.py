@@ -37,6 +37,8 @@ PROBLEM = "large-graph"
 
 
 def staircase_add(arc, perm, df, n):
+    if int(max(df)) > MAX_TW:       # 2026-07-12: dirty head => void at ESA
+        return
     r = 0
     for t in range(n - 1, -1, -1):
         c = int(df[t]); r = c if c > r else r

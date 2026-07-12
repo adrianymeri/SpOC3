@@ -39,6 +39,12 @@ def build_envelope(here, problem, n, ev):
                 if isinstance(dv, list) and len(dv) == n + 1 and \
                         sorted(int(x) for x in dv[:-1]) == list(range(n)):
                     perm = [int(x) for x in dv[:-1]]; df = ev.full(perm); r = 0
+                    # OFFICIAL VALIDITY (2026-07-12 fix): any step > MAX_TW,
+                    # head or torso, voids the ordering for EVERY t (ESA
+                    # evaluator returns 501). Suffix-only banking admitted
+                    # dirty-head orderings and inflated the pooled score.
+                    if int(max(df)) > MAX_TW:
+                        continue
                     for t in range(n - 1, -1, -1):
                         c = int(df[t]); r = c if c > r else r
                         if r <= MAX_TW: arc.try_add(r, t, perm)

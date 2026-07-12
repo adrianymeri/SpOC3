@@ -5,10 +5,11 @@
 set -e
 cd "$(dirname "$0")/.."
 HERE="$(pwd)"
-W=99,104,122,133,153,175,195,219,244,274
+W=18,46,65,82,99,112,133,154,170,195,218,233,252,273
 
-echo "== ingest GPU dumps =="
+echo "== ingest GPU dumps (SANITIZED -- raw dumps have over-width heads) =="
 cp ~/cuda-torso/submissions/large-graph/*.json submissions/large-graph/ 2>/dev/null || true
+python3 tools/sanitize_pool.py --problem large-graph
 
 echo "== killing stragglers =="
 pkill -f run_gbdt.py 2>/dev/null; pkill -f run_capfocus.py 2>/dev/null

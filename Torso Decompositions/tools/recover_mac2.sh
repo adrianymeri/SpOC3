@@ -4,7 +4,7 @@
 # Usage: cd ~/Desktop/SpOC3/"Torso Decompositions" && bash tools/recover_mac2.sh
 set -e
 cd "$(dirname "$0")/.."
-W=99,104,122,133,153,175,195,219,244,274
+W=18,46,65,82,99,112,133,154,170,195,218,233,252,273
 
 echo "== killing stragglers =="
 pkill -f archive_evolve.py 2>/dev/null; pkill -f hri_lns.py 2>/dev/null

@@ -162,6 +162,8 @@ def ls_breakpoint(ev, perm0, Wpool, lo, hi, target_w, pred_pos, rng, budget,
     achievers = {tuple(cur[max(0, lo-20):]): list(cur)}
 
     def archive_improved(w_, p_):
+        if int(w_[0]) > MAX_TW:     # 2026-07-12: dirty head => void at ESA
+            return
         idxs = np.where(w_ < Wpool)[0]
         # archive only breakpoint rows (first t of each improved width)
         seen_w = set()
@@ -423,6 +425,8 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
     arch_all = ParetoArchive()
     for p in pool:
         w = staircase(ev.full(p))
+        if int(w[0]) > MAX_TW:      # 2026-07-12: dirty head => void at ESA
+            continue
         for wt, t in breakpoints(w, n):
             if wt <= MAX_TW:
                 arch_all.try_add(wt, t, list(p))
@@ -443,6 +447,8 @@ def run(problem, rounds, round_budget, seed, here, algo="gbfcpp", no_gbdt=False,
     arch = ParetoArchive()
     for p in pool:
         w = staircase(ev.full(p))
+        if int(w[0]) > MAX_TW:      # 2026-07-12: dirty head => void at ESA
+            continue
         for wt, t in breakpoints(w, n):
             if wt <= MAX_TW:
                 arch.try_add(wt, t, list(p))
