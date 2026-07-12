@@ -27,7 +27,8 @@ nohup python3 run.py      --graph small-graph --batch_size 1024 --max_generation
 cd "$HERE"
 
 echo "== CPU arms =="
-nohup python3 tools/gbfcpp.py --problem large-graph --algo gbfcpp_slack --cap20 --only-widths $W --rounds 1000 --round-budget 120 > large_gbfcpp_slack2.log 2>&1 &
+nohup python3 -u tools/bandit_widths.py --problem large-graph --stint 1800 > bandit_large.log 2>&1 &
+nohup python3 -u tools/cqs.py --width auto --iters 2000000 --seed $RANDOM > cqs.log 2>&1 &
 nohup python3 tools/hri_lns.py --problem large-graph --iters 2000000 --seed $RANDOM > hri_lns_large5.log 2>&1 &
 nohup python3 tools/archive_evolve.py --problem medium-graph --iters 2000000 --pool 40 --seed 11 --twins > ae_medium_tw11.log 2>&1 &
 nohup python3 tools/hri_lns.py --problem medium-graph --iters 2000000 --seed $RANDOM > hri_lns_medium_s5.log 2>&1 &
