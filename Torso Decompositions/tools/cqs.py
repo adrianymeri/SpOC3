@@ -97,9 +97,17 @@ def evaluate(perm, t, w, n, ev, arc):
     return (max(0, wt - w), t)          # lexicographic score, lower better
 
 
+DEFAULT_SWEEP = "47,130,274,252,195,232,175,111,82,216,159,99,112,18"
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--width", default="130")
+    ap.add_argument("--width", default="sweep",
+                    help="a width, 'auto' (bandit top), or 'sweep' (self-rotating)")
+    ap.add_argument("--widths", default=DEFAULT_SWEEP,
+                    help="sweep order (open widths, zone-value descending)")
+    ap.add_argument("--stall", type=int, default=50000,
+                    help="iters without accept before rotating (sweep mode)")
     ap.add_argument("--iters", type=int, default=200000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--algo", default="cqs")
@@ -116,7 +124,11 @@ def main():
     # HIGH-attachment externals. Tournament selection below uses this.
     attc = {v: len(adj[v] - glue) for v in glue}
 
-    if a.width == "auto":
+    if a.width == "sweep":
+        sweep = [int(x) for x in a.widths.split(",") if x]
+        w = sweep[0]
+    elif a.width == "auto":
+        sweep = None
         st_fp = os.path.join(HERE, "submissions", PROBLEM, ".bandit_state.json")
         w = 130
         if os.path.exists(st_fp):
@@ -126,6 +138,7 @@ def main():
             if arms:
                 w = int(arms[0][0])
     else:
+        sweep = None
         w = int(a.width)
 
     arc = ParetoArchive()
@@ -133,7 +146,8 @@ def main():
     if got is None:
         print(f"no valid achiever at width {w}; aborting"); return
     t, perm = got
-    print(f"CQS width {w}: warm start t={t} (torso {n-t})", flush=True)
+    print(f"CQS width {w}: warm start t={t} (torso {n-t})"
+          + (f" | sweep {sweep} stall={a.stall}" if sweep else ""), flush=True)
     cur = evaluate(perm, t, w, n, ev, arc)
     best = cur
     out = os.path.join(HERE, "submissions", PROBLEM, f"{a.algo}.json")
@@ -143,9 +157,32 @@ def main():
         write_submission([list(p) + [int(tt)] for (_, tt, p) in top], PROBLEM, out)
     save()
 
+    def achiever_from_arc(wtarget):
+        cand = None
+        for wt, tt, p in arc.entries():
+            if wt <= wtarget and (cand is None or tt < cand[0]):
+                cand = (tt, list(p))
+        return cand
+
     pos = {v: i for i, v in enumerate(perm)}
     accepts, t0 = 0, time.time()
+    last_accept_it, sweep_i = 0, 0
     for it in range(1, a.iters + 1):
+        if sweep and (it - last_accept_it) >= a.stall:
+            sweep_i = (sweep_i + 1) % len(sweep)
+            w = sweep[sweep_i]
+            got = achiever_from_arc(w)
+            if got is None:
+                last_accept_it = it
+                continue
+            t, perm = got
+            pos = {v: i for i, v in enumerate(perm)}
+            cur = evaluate(perm, t, w, n, ev, arc)
+            best = cur
+            last_accept_it = it
+            print(f"  --- rotate -> w={w} (warm t={t}, torso {n-t}) ---",
+                  flush=True)
+            continue
         p2 = list(perm); t2 = t
         m = rng.random()
         if m < 0.45:                       # swap-ext / swap-twin within a clique
@@ -185,8 +222,9 @@ def main():
             pos = {v: i for i, v in enumerate(perm)}
             if sc < best:
                 best = sc; accepts += 1
+                last_accept_it = it
                 save()
-                print(f"  *** it {it}: excess={sc[0]} t={sc[1]} "
+                print(f"  *** it {it}: w={w} excess={sc[0]} t={sc[1]} "
                       f"(torso {n-sc[1]}) ***", flush=True)
         if it % 2000 == 0:
             print(f"  [it {it}/{a.iters} w={w} best excess={best[0]} t={best[1]} "

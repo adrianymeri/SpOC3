@@ -12,7 +12,7 @@ pkill -f gbfcpp.py 2>/dev/null; pkill -f boundary_lns.py 2>/dev/null; sleep 2
 
 echo "== relaunching 6 arms =="
 caffeinate -i nohup python3 -u tools/bandit_widths.py --problem large-graph --stint 1800 > bandit_large.log 2>&1 &
-caffeinate -i nohup python3 -u tools/cqs.py --width auto --iters 2000000 --seed $RANDOM > cqs.log 2>&1 &
+caffeinate -i nohup python3 -u tools/cqs.py --width sweep --iters 5000000 --seed $RANDOM > cqs.log 2>&1 &
 caffeinate -i nohup python3 tools/hri_lns.py --problem large-graph --iters 2000000 --seed $RANDOM > hri_lns_large4.log 2>&1 &
 caffeinate -i nohup python3 tools/archive_evolve.py --problem large-graph --iters 2000000 --pool 40 --seed 1 --twins > ae_large1.log 2>&1 &
 caffeinate -i nohup python3 tools/gbfcpp.py --problem medium-graph --algo gbfcpp_capm --cap20 --rounds 1000 --round-budget 120 > medium_gbfcpp.log 2>&1 &
