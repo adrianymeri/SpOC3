@@ -171,7 +171,14 @@ def main():
         if sweep and (it - last_accept_it) >= a.stall:
             sweep_i = (sweep_i + 1) % len(sweep)
             w = sweep[sweep_i]
-            got = achiever_from_arc(w)
+            # 2026-07-13 fix: warm-start each rotation from the LIVE POOL (it
+            # grows under us all day), not from this arm's own archive -- the
+            # own-archive variant warm-started later widths from inferior
+            # basins (observed: w=195 from t=1496 vs pool t~700).
+            got = best_achiever(n, ev, w)
+            own = achiever_from_arc(w)
+            if own is not None and (got is None or own[0] < got[0]):
+                got = own
             if got is None:
                 last_accept_it = it
                 continue
