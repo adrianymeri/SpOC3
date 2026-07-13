@@ -112,7 +112,12 @@ def main():
                "--problem", a.problem, "--algo", a.algo, "--cap20",
                "--only-widths", ",".join(map(str, picks)),
                "--rounds", "1000", "--round-budget", "120"]
-        child = subprocess.Popen(cmd, cwd=HERE)
+        # 2026-07-13 fix: give the child its own stdio -- inheriting the
+        # parent's fds dies with "init_sys_streams: Bad file descriptor"
+        # once the launching terminal session goes away.
+        stint_log = open(os.path.join(HERE, f"{a.algo}_stint.log"), "ab")
+        child = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL,
+                                 stdout=stint_log, stderr=subprocess.STDOUT)
         t0 = time.time()
         while time.time() - t0 < a.stint:
             if child.poll() is not None:
