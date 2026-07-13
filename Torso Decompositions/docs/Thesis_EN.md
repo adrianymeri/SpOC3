@@ -1856,9 +1856,13 @@ All figures are restated at thesis freeze.
 
 ## 15. The planted construction, disclosed and certified: clique-packing optimality proofs and the cap-cost decomposition
 
-*(11 July 2026. Companion document: `docs/PLANTED_STRUCTURE_CERTIFICATES.md`;
+*(11–12 July 2026. Companion document: `docs/PLANTED_STRUCTURE_CERTIFICATES.md`;
 tools: `tools/clique_prefix.py`, `tools/rank_externals.py`, `tools/unlock_diff.py`,
-`tools/consolidate_pool.py`.)*
+`tools/consolidate_pool.py`. Reporting convention: every in-text score is a
+dated snapshot verified end-to-end by `tools/verify_submission.py`; the live
+sources of truth are `campaign_scores.csv` (ledger) and the pooled cap-20
+re-verification, which supersede any figure quoted here. Certificates and
+structural claims are timeless; campaign magnitudes are not.)*
 
 ### 15.1 The designer's disclosure, and full recovery of the instance
 
@@ -1916,18 +1920,26 @@ slack 15–90 head-vertices per width, worth **+6,311** capped HV if fully
 absorbed; **Lever B** — shift the mid-range unlock widths (the +487-torso step
 at w=99, +179 at w=82, +113/129 at 130/174) left, worth **+18,259** for a
 15-width shift. A+B recomputed under exact HSSP selection beats the leaderboard
-top by ≈ 6,700. Figure `docs/figures/fig15_certificates.png` shows the envelope
+top by ≈ 6,700. (Lever magnitudes were quantified on the 11-July pool; the
+12-July sanitisation, §15.8, voided some contributing points — the
+decomposition's *direction* was re-confirmed on the valid pool, and the
+subsequent certificate-guided campaign recovered the difference within a day.) Figure `docs/figures/fig15_certificates.png` shows the envelope
 hugging the bound over the certified region, the Lever-A slack arrows, and the
 Lever-B unlock band.
 
 ### 15.5 Lever-B structure (`tools/unlock_diff.py`)
 
 Diffing achiever heads shows the unlocks are *whole planted components*
-entering the torso: the w 82→99 jump admits five components (≈464 of the 508
-moved vertices); 99→122 admits three more (comp6, comp4, comp3). At w=122 the
-head still carries **253 more glue vertices than the certificate requires**,
-and two components (comp16, n=46; comp14, n=21) never enter the torso at any
-mid-range width — the sharpest open targets the analysis produces.
+entering the torso. Re-measured on the post-sanitisation pool (12 July, all
+orderings verifier-valid): the w 82→99 jump admits five components — comp8,
+comp1, comp7, comp10, comp5, jointly 480 of the 525 moved vertices — with the
+w=99 achiever produced by the set-space search of §15.7b (t = 1373). The
+11-July analysis (pre-sanitisation, same qualitative picture on since-voided
+orderings) additionally located the 99→122 unlock at comp6/comp4/comp3, a
+~250-vertex glue surplus over the certificate quota at w=122, and two
+components (n=46, n=21) that never enter the torso mid-range; these
+finer-grained figures are indicative and are re-derived from the live valid
+envelope by the companion tooling.
 
 ### 15.6 The GBDT boundary, sharpened: head-admission ranking is not learnable from static features
 
@@ -1964,6 +1976,31 @@ ships the whole pool between machines in one URL. In GBDT-centric terms: the
 certificate deletes ≥ 40 % of the width range from the search space by proof,
 and every remaining GBDT cycle lands on a width where improvement is still
 mathematically possible.
+
+### 15.7b Set-space harvesting and bandit allocation: the certificate made algorithmic (12 July)
+
+Two methods convert §15's analysis into search operators, both introduced here.
+**CQS (certificate-quota set-space search, `tools/cqs.py`).** Since fill from
+eliminating a vertex *set* is order-independent, torso width is a set
+function, and the packing certificate pins the per-clique head quotas at every
+open width; CQS therefore searches quota-preserving SET exchanges (external ↔
+external within a clique; component sacrifice/rescue), exactly evaluated,
+warm-started per width from the pooled achiever, with move selection biased by
+the measured attachment-overlap structure (companion doc §6f: K400/K300
+externals are predominantly attachment-free; K500's 125 externals carry
+1,592 of the ~1,700 attachment slots). Empirically CQS behaves as a per-width
+*harvester*: 21 accepts in 409 s at w=130 on first contact, then saturation
+and rotation — automated as a self-rotating sweep over the open widths. First
+day of deployment (12 July, all points verifier-valid): large best-20
++18,024 → +14,334. **Bandit width portfolio (`tools/bandit_widths.py`).**
+With six points certified, the capped objective decomposes into ~14
+independent max-torso problems with exact marginal values (HSSP zone widths);
+compute is allocated across them by UCB1 (Auer et al., 2002) on measured
+capped-HV reward, replacing static width lists on both instances that admit
+them. A third transfer experiment (family-trained GBDT ordering policy,
+`tools/family_transfer.py`) decodes to 0/300 valid orderings on large — a
+negative consistent with §15.6's boundary: GBDT transfers as an in-search
+policy, not as a direct decoder.
 
 ### 15.8 The validity incident: end-to-end verification as a first-class result
 
@@ -2218,6 +2255,15 @@ better — §"Final verified results".)
   1305–1317.
 - Yannakakis, M. (1981). Computing the minimum fill-in is NP-complete.
   *SIAM Journal on Algebraic and Discrete Methods*, 2(1), 77–79.
+- Parter, S. (1961). The use of linear graphs in Gauss elimination.
+  *SIAM Review*, 3(2), 119–130. (The elimination game underlying §1.)
+- Kuhn, T., Fonseca, C. M., Paquete, L., Ruzika, S., Duarte, M. M., &
+  Figueira, J. R. (2016). Hypervolume subset selection in two dimensions:
+  formulations and algorithms. *Evolutionary Computation*, 24(3), 411–425.
+  (Exact 2-D HSSP; basis of the capped-20 selection, §13.8a, §15.)
+- Auer, P., Cesa-Bianchi, N., & Fischer, P. (2002). Finite-time analysis of
+  the multiarmed bandit problem. *Machine Learning*, 47, 235–256. (UCB1;
+  basis of the width-portfolio compute scheduler, §15.7.)
 - Tamaki, H. (2019). Positive-instance driven dynamic programming for treewidth.
   *Journal of Experimental Algorithmics*, 24, 1–36. (PACE-2017 champion; the
   exact engine of §13.6.)
@@ -2234,6 +2280,16 @@ better — §"Final verified results".)
   *SIAM Journal on Numerical Analysis*, 10(2), 345–363.
 - Fiedler, M. (1973). Algebraic connectivity of graphs. *Czechoslovak
   Mathematical Journal*, 23(2), 298–305.
+- Markowitz, H. M. (1957). The elimination form of the inverse and its
+  application to linear programming. *Management Science*, 3(3), 255–269.
+  (Origin of the minimum-degree pivoting rule; ancestor of every warm start
+  used in this thesis.)
+- George, A., & Liu, J. W. H. (1989). The evolution of the minimum degree
+  ordering algorithm. *SIAM Review*, 31(1), 1–19. (The sparse-matrix lineage
+  of the min-degree heuristic, §2.)
+- Heggernes, P. (2006). Minimal triangulations of graphs: a survey.
+  *Discrete Mathematics*, 306(3), 297–317. (Survey grounding for the min-fill
+  and minimal-triangulation machinery used throughout.)
 - Rose, D. J., Tarjan, R. E., & Lueker, G. S. (1976). Algorithmic aspects of
   vertex elimination on graphs. *SIAM Journal on Computing*, 5(2), 266–283.
 - Tarjan, R. E., & Yannakakis, M. (1984). Simple linear-time algorithms to test
