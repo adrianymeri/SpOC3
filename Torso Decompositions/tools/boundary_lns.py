@@ -48,6 +48,8 @@ def staircase_add(arc, perm, df, n):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--problem", default=PROBLEM,
+                    choices=list(LEADERBOARD_TARGETS))
     ap.add_argument("--iters", type=int, default=500000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--wmin", type=int, default=130)
@@ -56,15 +58,16 @@ def main():
     ap.add_argument("--algo", default="boundary_lns")
     a = ap.parse_args()
     rng = random.Random(a.seed)
+    prob = a.problem
 
-    n, adj_l = load_graph(graph_path(HERE, PROBLEM))
+    n, adj_l = load_graph(graph_path(HERE, prob))
     adj = {v: set(adj_l[v]) for v in range(n)}
     ev = IncEvalC(build_adj_bitsets(n, adj_l), n)
-    target = LEADERBOARD_TARGETS[PROBLEM]
+    target = LEADERBOARD_TARGETS[prob]
 
     # pool everything (resume-safe union)
     arc = ParetoArchive()
-    for fp in glob.glob(os.path.join(HERE, "submissions", PROBLEM, "*.json")):
+    for fp in glob.glob(os.path.join(HERE, "submissions", prob, "*.json")):
         if fp.endswith("_platform.json"):
             continue
         try:
@@ -82,14 +85,14 @@ def main():
         return -hypervolume_2d([(w, t) for w, t, _ in top], n)
 
     best = cap20()
-    out = os.path.join(HERE, "submissions", PROBLEM, f"{a.algo}.json")
+    out = os.path.join(HERE, "submissions", prob, f"{a.algo}.json")
 
     def save():
         top = arc.top_k_by_hv_contribution(60, n)
-        write_submission([list(p) + [int(t)] for (_, t, p) in top], PROBLEM, out)
+        write_submission([list(p) + [int(t)] for (_, t, p) in top], prob, out)
 
     save()
-    print(f"=== boundary-LNS {PROBLEM} | pooled capped-20 {best:,.0f} "
+    print(f"=== boundary-LNS {prob} | pooled capped-20 {best:,.0f} "
           f"gap {best - target:+,.0f} | seam widths [{a.wmin},{a.wmax}) ===", flush=True)
 
     # per-width achievers inside the attack band
