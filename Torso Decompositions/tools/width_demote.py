@@ -76,6 +76,25 @@ def demote(a, b, t0, perm0, n, ev, arc, rule, budget_t, max_evals=100000):
             return (a, t), evals
         if t + len(viol) >= budget_t + 40:      # hopeless-by-margin cutoff
             return None, evals
+        if rule == "greedy":
+            # lookahead-1: try up to 8 candidate evictions, commit the one
+            # that minimises (remaining violators, worst violating width) --
+            # buys compression instead of blind +1-per-violator cascades
+            cands = sorted(viol, key=lambda p: -int(df[p]))[:8]
+            best_c = None
+            for p in cands:
+                p2 = list(perm); v = p2.pop(p); p2.insert(t, v)
+                df2 = ev.full(p2); evals += 1
+                if int(max(df2)) > MAX_TW:
+                    continue
+                v2 = [q for q in range(t + 1, n) if int(df2[q]) > a]
+                key = (len(v2), max((int(df2[q]) for q in v2), default=0))
+                if best_c is None or key < best_c[0]:
+                    best_c = (key, p2)
+            if best_c is None:
+                return None, evals
+            perm = best_c[1]; t += 1
+            continue
         if rule == "widest":
             p = max(viol, key=lambda p: int(df[p]))
         else:                                    # "first": earliest offender
