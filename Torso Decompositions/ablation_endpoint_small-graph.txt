@@ -1,0 +1,16 @@
+RESULT problem=small-graph mode=gbdt seed=1 start_width=15 best_width=15 best_bottleneck=27 evals=40000 fits=25 ranker_r=-0.1208
+RESULT problem=small-graph mode=random seed=1 start_width=15 best_width=15 best_bottleneck=26 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=2 start_width=15 best_width=15 best_bottleneck=29 evals=40000 fits=25 ranker_r=-0.1596
+RESULT problem=small-graph mode=random seed=2 start_width=15 best_width=15 best_bottleneck=21 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=3 start_width=15 best_width=15 best_bottleneck=26 evals=40000 fits=25 ranker_r=-0.1463
+RESULT problem=small-graph mode=random seed=3 start_width=15 best_width=15 best_bottleneck=26 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=4 start_width=15 best_width=15 best_bottleneck=26 evals=40000 fits=25 ranker_r=-0.1676
+RESULT problem=small-graph mode=random seed=4 start_width=15 best_width=15 best_bottleneck=18 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=5 start_width=15 best_width=15 best_bottleneck=28 evals=40000 fits=25 ranker_r=-0.1181
+RESULT problem=small-graph mode=random seed=5 start_width=15 best_width=15 best_bottleneck=13 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=6 start_width=15 best_width=15 best_bottleneck=16 evals=40000 fits=25 ranker_r=-0.1819
+RESULT problem=small-graph mode=random seed=6 start_width=15 best_width=15 best_bottleneck=17 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=7 start_width=15 best_width=15 best_bottleneck=31 evals=40000 fits=25 ranker_r=-0.1465
+RESULT problem=small-graph mode=random seed=7 start_width=15 best_width=15 best_bottleneck=27 evals=40000 fits=0 ranker_r=na
+RESULT problem=small-graph mode=gbdt seed=8 start_width=15 best_width=15 best_bottleneck=29 evals=40000 fits=25 ranker_r=-0.1435
+RESULT problem=small-graph mode=random seed=8 start_width=15 best_width=15 best_bottleneck=13 evals=40000 fits=0 ranker_r=na

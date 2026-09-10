@@ -1,0 +1,16 @@
+RESULT problem=medium-graph mode=gbdt seed=1 start_width=228 best_width=228 best_bottleneck=31 evals=60000 fits=39 ranker_r=-0.1444
+RESULT problem=medium-graph mode=random seed=1 start_width=228 best_width=228 best_bottleneck=25 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=2 start_width=228 best_width=228 best_bottleneck=31 evals=60000 fits=39 ranker_r=-0.1133
+RESULT problem=medium-graph mode=random seed=2 start_width=228 best_width=228 best_bottleneck=23 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=3 start_width=228 best_width=228 best_bottleneck=33 evals=60000 fits=39 ranker_r=-0.0725
+RESULT problem=medium-graph mode=random seed=3 start_width=228 best_width=228 best_bottleneck=24 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=4 start_width=228 best_width=228 best_bottleneck=22 evals=60000 fits=39 ranker_r=-0.0457
+RESULT problem=medium-graph mode=random seed=4 start_width=228 best_width=228 best_bottleneck=23 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=5 start_width=228 best_width=228 best_bottleneck=31 evals=60000 fits=39 ranker_r=-0.0314
+RESULT problem=medium-graph mode=random seed=5 start_width=228 best_width=228 best_bottleneck=29 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=6 start_width=228 best_width=228 best_bottleneck=24 evals=60000 fits=39 ranker_r=-0.1209
+RESULT problem=medium-graph mode=random seed=6 start_width=228 best_width=228 best_bottleneck=27 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=7 start_width=228 best_width=228 best_bottleneck=26 evals=60000 fits=39 ranker_r=-0.0891
+RESULT problem=medium-graph mode=random seed=7 start_width=228 best_width=228 best_bottleneck=21 evals=60000 fits=0 ranker_r=na
+RESULT problem=medium-graph mode=gbdt seed=8 start_width=228 best_width=228 best_bottleneck=30 evals=60000 fits=39 ranker_r=-0.0544
+RESULT problem=medium-graph mode=random seed=8 start_width=228 best_width=228 best_bottleneck=28 evals=60000 fits=0 ranker_r=na

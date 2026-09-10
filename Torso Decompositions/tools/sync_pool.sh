@@ -44,7 +44,8 @@ case "$CMD" in
     URL=$(curl -sf -F "reqtype=fileupload" -F "time=24h" -F "fileToUpload=@$TGZ" \
           https://litterbox.catbox.moe/resources/internals/api.php) || \
     URL=$(curl -sf -F "reqtype=fileupload" -F "fileToUpload=@$TGZ" \
-          https://catbox.moe/user/api.php) || {
+          https://catbox.moe/user/api.php) || \
+    URL=$(curl -sf -F "file=@$TGZ" https://0x0.st) || {
       echo "both uploads failed; tarball kept at $TGZ -- move it manually and run:"
       echo "  bash tools/sync_pool.sh pull /path/to/$(basename "$TGZ") <srv_|mac_>"
       exit 1

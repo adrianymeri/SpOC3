@@ -1,4 +1,4 @@
-# Pemët e Vendimit me Përforcim Gradienti për Dekompozimin Shumëobjektiv të Torsit: Konstruktim i Mësuar, Kërkim i Ndërgjegjshëm ndaj Kufirit, dhe një Karakterizim i Afër-Optimalitetit
+# Pemët e Vendimit me Përforcim Gradienti për Dekompozimin Shumëobjektiv të Torsit: Konstruktim i Mësuar, Kërkim i Ndërgjegjshëm ndaj Kufirit, dhe një Reduktim i Pikës-Fund që Tejkalon Rezultatin Më të Mirë të Njohur
 
 **Adrian Ymeri** · Universiteti i Prishtinës · SpOC-3 Dekompozimet e Torsit (Torso Decompositions)
 
@@ -12,7 +12,7 @@ Së fundi, kontributi kryesor i ri i tezës është **GBFC — Konstruktimi i Fr
 
 Teza mbyllet me një metodë të dytë të re dhe një analizë të mbyllur në formë të cilat së bashku e çojnë graf-in e vogël në buzë të më të mirës globale. **Fshirja-e-torsit (Torso-deletion)** (§13) e ndryshon *hapësirën* e kërkimit: duke shfrytëzuar pavarësinë nga renditja (order-independence) të operacionit të torsit (eliminimi i një bashkësie kulmesh në çfarëdo rendi jep të njëjtën mbushje mes të tjerëve), fronti i Paretos dekompozohet në 16 probleme *të pavarura* të torsit me pema-gjerësi maksimale të kufizuar, dhe një ngjitje-në-kodër mbi bashkësinë e fshirjes nën një kontroll të saktë gjerësie i lëviz pikat e ndërprerjes që kërkimi i permutacioneve në mënyrë të provueshme nuk mundet — duke e ngritur graf-in e vogël nga hendeku 22 në **hendekun 6 (−1,829,913, 99.99967 % të majës së tabelës)**, afrimi më i afërt në tezë. Vërtetoj një identitet të saktë të hipervolumit, HV = Σ_w torso_size(w) + (n−16)·n (që përputhet me vlerësuesin zyrtar deri në njësi), dhe e kufizoj mbetjen *nga të dyja anët* — degëzim-dhe-kufizim (branch-and-bound) i saktë i pema-gjerësisë që vërteton ngurtësinë njëkulmëshe mbi brezat 0–7, tkurrje lakmitare nga lart, dhe shterim në hapësirë-duale (~2.4 M ristrukturime të sakta në hapësirë-bashkësie dhe 6.5 M lëvizje të sakta në hapësirë-renditjeje) mbi brezat 8–14 — kështu që 6 HV-të e mbetura janë një afër-optimum *i karakterizuar* dhe jo një pikë ndalimi. Kjo riverifikohet kundrejt vetë UDP-së së ESA-s (instancë byte-identike, vlerësues që përputhet saktësisht me referencën e tyre, HV zyrtar deri në njësi) dhe qëndron mbi një instancë që **mund zgjidhësin ekzakt të nivelit më të lartë: kampioni PID i PACE-2017 i Tamakit nuk përfundon brenda 10.8 orëve.** Një test i drejtpërdrejtë përfaqësimi (renditjet tona të konstruktuara përshtaten me krkesë (ridge-fit) ndaj një dekodimi politik në gjerësinë 17, jo 9) shpjegon pse as kërkimi i konstruktuar dhe as një kërkim politik me të njëjtën llogaritje nuk e mbyll: fraksioni i fundit i një përqindjeje është një rezultat i kërkimit politik në shkallë-llogaritjeje, jo një ide që mungon. Dy risitë janë plotësuese — GBDT-si-përforcim-fronti (GBFC/GAPS) për *mësim*, kërkimi në hapësirë-bashkësie (fshirja-e-torsit) për *kërkim* — dhe të dyja argumentohet se transferohen te familja më e gjerë e renditjeve të eliminimit (pema-gjerësia, mbushja minimale).
 
-Tri kontribute të mëtejshme e plotësojnë tezën. Së pari, GBDT si një *mjet diagnostik*: një sondë e peizazhit (§13.7–13.8) që stërvit modele të përforcuara për të *shpjeguar* frontin optimal në vend që ta gjenerojnë atë, duke zbuluar një dorëzim veçorish lokal→global saktësisht në brezat ku qëndron muri i graf-it të vogël, dhe një peizazh plotësisht të përcaktuar spektralisht mbi graf-in e mesëm. Së dyti, **optimizimi i ndërgjegjshëm ndaj kufirit (cap-aware optimisation)** (§13.8a, §14–14.1): gara vlerëson vetëm 20 pikat më të mira, megjithatë çdo motor — përfshirë atë të fituesit të tabelës — optimizon frontin e plotë dhe e cungon në dorëzim. E zgjidh saktësisht përzgjedhjen e 20 pikave (program dinamik 2-D HSSP), vërtetoj përmes vlerësimit të zarfit të pacunguar se hendeku i mbetur i mesëm/i madh është *cilësi torsi* dhe jo paketim, dhe e bart kufirin brenda vetë kërkimit (`--cap20` kërkim me pika-ndërprerjeje, evolucion i arkivit të kufizuar) dhe së fundi te gjeneratori referencë: një rregullim i tejmbushjes int32 që i lejon motorit fitues ta xhirojë instancën e madhe në paketë 1024 për herë të parë (siç është publikuar ai rrëzohet mbi paketën 364), dhe riprodhim i fokusuar-në-kufi që e përqendron presionin e vet të përzgjedhjes — 0.8 % e të cilit bie mbi madhësitë e vlerësueshme nën kampionimin uniform të publikuar — në 90 % mbi 20 madhësitë që dorëzimi mban. Së treti, një kufi negativ i sinqertë (§14): forma më e fortë vetë-përmirësuese e politikës së përforcuar nuk e kalon në kërkim korpusin e bashkuar, duke e lokalizuar saktësisht se ku ndihmon dekodimi i mësuar dhe ku vëllimi i papërpunuar i kërkimit është i pazëvendësueshëm. Që nga 8 korrik 2026 renditjet e vlefshme të kufizuara-në-20 janë: i vogël **−1,829,914** (hendek 5; muri lokal-operator i hendekut-6 ra nga një tërheqje pellgu nga e para, §14.4), i mesëm **−1,738,901** (99.64 %), dhe i madh **−5,475,645** (99.68 %, fushata aktive).
+Tri kontribute të mëtejshme e plotësojnë tezën. Së pari, GBDT si një *mjet diagnostik*: një sondë e peizazhit (§13.7–13.8) që stërvit modele të përforcuara për të *shpjeguar* frontin optimal në vend që ta gjenerojnë atë, duke zbuluar një dorëzim veçorish lokal→global saktësisht në brezat ku qëndron muri i graf-it të vogël, dhe një peizazh plotësisht të përcaktuar spektralisht mbi graf-in e mesëm. Së dyti, **optimizimi i ndërgjegjshëm ndaj kufirit (cap-aware optimisation)** (§13.8a, §14–14.1): gara vlerëson vetëm 20 pikat më të mira, megjithatë çdo motor — përfshirë atë të fituesit të tabelës — optimizon frontin e plotë dhe e cungon në dorëzim. E zgjidh saktësisht përzgjedhjen e 20 pikave (program dinamik 2-D HSSP), vërtetoj përmes vlerësimit të zarfit të pacunguar se hendeku i mbetur i mesëm/i madh është *cilësi torsi* dhe jo paketim, dhe e bart kufirin brenda vetë kërkimit (`--cap20` kërkim me pika-ndërprerjeje, evolucion i arkivit të kufizuar) dhe së fundi te gjeneratori referencë: një rregullim i tejmbushjes int32 që i lejon motorit fitues ta xhirojë instancën e madhe në paketë 1024 për herë të parë (siç është publikuar ai rrëzohet mbi paketën 364), dhe riprodhim i fokusuar-në-kufi që e përqendron presionin e vet të përzgjedhjes — 0.8 % e të cilit bie mbi madhësitë e vlerësueshme nën kampionimin uniform të publikuar — në 90 % mbi 20 madhësitë që dorëzimi mban. Së treti, një kufi negativ i sinqertë (§14): forma më e fortë vetë-përmirësuese e politikës së përforcuar nuk e kalon në kërkim korpusin e bashkuar, duke e lokalizuar saktësisht se ku ndihmon dekodimi i mësuar dhe ku vëllimi i papërpunuar i kërkimit është i pazëvendësueshëm. Së katërti, dhe rezultati që e mbyll fushatën (§16): njohja se hipervëllimi i kufizuar dominohet nga **pika-fund** (endpoint) — pika me prag zero, gjerësia e së cilës është gjerësia e eliminimit (elimination width) e graf-it — e redukton mbetjen në një nën-problem gjerësie-peme (treewidth). Një kërkim lokal i synuar-në-fyt-e-ngushtë (bottleneck-targeted), i nisur nga renditja e bashkuar, e çoi pikën-fund të graf-it të mesëm 234 → 228 dhe e kaloi instancën **përtej objektivit të tabelës**. Që nga 31 gusht 2026 renditjet e vlefshme të kufizuara-në-20 janë: i vogël **−1,829,917** (hendek 2), i mesëm **−1,746,936** — **1,814 HV përtej majës së tabelës**, i ri-verifikuar në mënyrë të pavarur në dy makina — dhe i madh **−5,485,240** (99.86 %, fushata aktive, 6/20 pika të provuara optimale).
 
 ---
 
@@ -455,7 +455,7 @@ Së bashku me certifikatat e sakta të bishtit, xhirimin e sheshtë GPU, dhe fit
 
 Seksionet 4–12 kërkojnë në hapësirën e *renditjeve* — drejtpërdrejt, me një politikë të vazhdueshme, ose me udhëheqje prej peme-të-përforcuar. Ky seksion e ndryshon vetë hapësirën e kërkimit, dhe duke e bërë këtë e çon instancën e vogël te **−1,829,913, gjashtë njësi hipervolumi (0.0003 %) nga maja e tabelës** — afrimi më i afërt që bën ndonjë metodë në këtë tezë te më e mira globale, dhe rezultati i parë mbi këtë problem që vjen me një llogari *me formë-të-mbyllur* të saktësisht sa hapësirë mbetet dhe një provë të saktë, të kontrollueshme-nga-makina të sa i ngurtë është ai mbetës.
 
-**13.1 Shfrytëzimi i pavarësisë-nga-renditja të torsit për këtë dyobjektiv.** Që torsi (mbushja mes kulmeve të mbetura nga eliminimi i një bashkësie) varet vetëm nga *bashkësia* X, jo nga rendi i eliminimit, është një veti klasike e eliminimit të kulmeve dhe minorëve të grafit (është mirë-përcaktueshmëria standarde e torsit / mbushjes nga eliminimi i një ndarësi). Kontributi këtu nuk është ajo veti por *shfrytëzimi i saj për dyobjektivin SpOC*: e përdor për ta rihedhur frontin si një familje problemesh të pavarura bashkësie për-gjerësi dhe për të derivuar identitetin HV me formë-të-mbyllur të §13.2. Konkretisht, eliminimi i një bashkësie kulmesh X (në *çfarëdo* rendi) prodhon, mes kulmeve të mbetura $S = V \setminus X$, saktësisht skajet e *torsit*: u–v sa herë që u, v ∈ S janë të bashkuar me një shteg brendia e të cilit qëndron në X. Dy pasoja pasojnë që metodat në hapësirë-permutacionesh nuk mund t'i shohin:
+**13.1 Shfrytëzimi i pavarësisë-nga-renditja të torsit për këtë dyobjektiv.** Që torsi (mbushja mes kulmeve të mbetura nga eliminimi i një bashkësie) varet vetëm nga *bashkësia* X, jo nga rendi i eliminimit, është një veti klasike e eliminimit të kulmeve dhe minorëve të grafit (është mirë-përcaktueshmëria standarde e torsit / mbushjes nga eliminimi i një ndarësi). Kontributi këtu nuk është ajo veti por *shfrytëzimi i saj për dyobjektivin SpOC*: e përdor për ta rihedhur frontin si një familje problemesh të pavarura bashkësie për-gjerësi dhe për të derivuar identitetin HV me formë-të-mbyllur të §13.2. Konkretisht, eliminimi i një bashkësie kulmesh X (në *çfarëdo* rendi) prodhon, mes kulmeve të mbetura $S = V \backslash X$, saktësisht skajet e *torsit*: u–v sa herë që u, v ∈ S janë të bashkuar me një shteg brendia e të cilit qëndron në X. Dy pasoja pasojnë që metodat në hapësirë-permutacionesh nuk mund t'i shohin:
 
 > (i) gjerësia më e mirë e arritshme në pragun t për një bashkësi-prapashtese S është *gjerësia e eliminimit e torso(S)* — një funksion i **bashkësisë** S të vetme; dhe
 > (ii) fronti Pareto prandaj dekompozohet në 16 probleme *të pavarura* maksimizimi, një për gjerësi: maksimizo |S| me kusht që elim-width(torso(S)) ≤ w.
@@ -516,7 +516,7 @@ Metoda që heq të dy kufijtë është një **pemë vendimi me përforcim gradie
 
 Kontributi që shton kjo punë është ta bëjë atë politikë **të ndërgjegjshme-ndaj-kufirit** (`--cap-aware`, §13.8a). Gara vlerëson vetëm 20 pikat më të mira (HSSP-ja e saktë 2-D), kështu që objektivi i politikës dhe vetë-përmirësimi i saj DAgger drejtohen te **hipervolumi i kufizuar-në-20** dhe rifreskohen nga renditjet që *zotërojnë* 20 pikat optimale — çdo hap i mësimit i synuar te një brez që tabela faktikisht e vlerëson, jo te ~90 % e brezave të cunguar në dorëzim. Sipas njohurive tona asnjë punë e mëparshme tors / renditje-eliminimi nuk stërvit një politikë sekuenciale, renditëse, vetë-përmirësuese të përforcuar kundrejt objektivit të kufizuar të garës; ai kombinim është risia kryesore.
 
-**Ku ndihmon vërtet GBDT (pretendimi i provuar).** Vlera e përforcimit me gradient mbi këtë problem vendoset nga makineria e ablacionit të kontrolluar të kësaj teze, jo nga një fitore në tabelë: politika adaptive e mësuar dhe konstruktorët e frontit të përforcuar e mundin rregullat klasike shkalla-minimale / mbushja-minimale dhe bazën statike-`argsort`, me kontributin e izoluar nga kontrollet GBDT-ndezur/fikur (+24,766 HV mbi të madhin, §10; +688/+734/+329 HV nëpër instanca, §11; +1,816 HV në nivel-motori, §6b). *Ai* është pretendimi i mbrojtshëm, i riprodhueshëm kryesor — "përforcimi i mësuar në mënyrë të matshme e kalon dekoduesit klasikë dhe statikë" — dhe qëndron mbi ablacion, standardi i artë, e jo mbi mundjen e një hyrjeje të errët të tabelës.
+**Ku ndihmon vërtet GBDT (pretendimi i provuar).** Vlera e përforcimit me gradient mbi këtë problem vendoset nga makineria e ablacionit të kontrolluar të kësaj teze, jo nga një fitore në tabelë: politika adaptive e mësuar dhe konstruktorët e frontit të përforcuar e mundin rregullat klasike shkalla-minimale / mbushja-minimale dhe bazën statike-`argsort`, me kontributin e izoluar nga kontrollet GBDT-ndezur/fikur (+24,766 HV mbi të madhin, §10; +688/+734/+329 HV nëpër instanca, §11; +2,524 HV në nivel-motori, §6b). *Ai* është pretendimi i mbrojtshëm, i riprodhueshëm kryesor — "përforcimi i mësuar në mënyrë të matshme e kalon dekoduesit klasikë dhe statikë" — dhe qëndron mbi ablacion, standardi i artë, e jo mbi mundjen e një hyrjeje të errët të tabelës.
 
 **Kufiri i sinqertë i politikës vetë-përmirësuese (një rezultat negativ).** Pastaj testova formën më të fortë të politikës — të ndërgjegjshme-ndaj-kufirit, listore-renditëse, DAgger vetë-përmirësuese — kundrejt pyetjes më të vështirë: a mund të *kalojë në kërkim korpusin e bashkuar të tabelës* mbi të mesmin? Nuk mundet. Përgjatë një fushate ~12-orëshe me ristërvitje të përsëritur DAgger (~12 raunde) dhe >13,000 renditje të konstruktuara, objektivi i kufizuar-në-20 i politikës kurrë nuk u përmirësua përtej farës së vet dhe mbeti ≈ 2,600 HV nën korpusin e bashkuar. Ky është një rezultat negativ i pastër, informues, dhe është konsistent me provën e §13.8a: një *dekodim* i vetëm adaptiv — sado dendur i mbikëqyrur — nuk mund të zëvendësojë *vëllimin* e papërpunuar të kërkimit të neuro-evolucionit GPU që xhiron miliona vlerësime; hendeku i mbetur është cilësi torsi, dhe cilësia e torsit blihet me vëllim kërkimi, jo me një dekodues më të mirë me një-goditje. Recensuesve u detyrohet ky kufi, dhe ai e mpreh në vend që ta dobësojë tezën: lokalizon saktësisht ku ndihmon një dekodues i mësuar (duke mundur bazat klasike/statike në buxhet fiks, §6b/§10/§11) dhe ku jo (duke zëvendësuar kërkimin evolucionar në shkallë). Metoda e *evolucionit-të-arkivit* të ndërgjegjshëm-ndaj-kufirit (§14.1, `tools/archive_evolve.py`) — që rikombinon renditjet ekzistuese nën objektivin e saktë të kufizuar në vend që të gjenerojë të reja nga një politikë — është varianti që *e mbyll* hendekun e vlefshëm në praktikë, duke nënvizuar të njëjtin mësim: mbi këtë problem leva është në *kombinimin dhe përzgjedhjen* e renditjeve të mira kundrejt objektivit të vërtetë, jo në tejkalimin-në-gjenerim të një motori të pjekur kërkimi.
 
@@ -605,9 +605,9 @@ Rezultati më i mirë i verifikuar për instancë (ri-vlerësime zyrtare `tools/
 
 | Instanca | më e mira (−HV, e vlefshme ≤20-pika) | Maja e tabelës | % e majës | metoda |
 |---|---:|---:|---:|---|
-| i vogël  | **−1,829,914** | −1,829,919 | **99.99973 %** | fshirja-e-torsit + tërheqje pellgu nga-e-para (§13, §14.4; hendek **5**) |
-| i mesëm | **−1,739,519** | −1,745,122 | **99.68 %** | pool i ndërgjegjshëm-ndaj-kufirit: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
-| i madh  | **−5,476,639** | −5,493,062 | **99.70 %** | fushatë e udhëhequr-nga-certifikata (§14.1, §15; *aktive*, 11 korrik 2026; 6/20 pika të provuara optimale) |
+| i vogël  | **−1,829,917** | −1,829,919 | **99.99989 %** | hapësirë-bashkësie GBDT + ndërtim fronti (§13, §14.4, §16.4; hendek **2**) |
+| i mesëm | **−1,746,936** | −1,745,122 | **100.10 % — E MUND MAJËN** | reduktimi i pikës-fund: gjerësi eliminimi 234 → 228 (§16.1); hendek **−1,814** |
+| i madh  | **−5,485,240** | −5,493,062 | **99.86 %** | fushatë e udhëhequr-nga-certifikata (§14.1, §15, §16.4; *aktive*, 31 gusht 2026; 6/20 pika të provuara optimale) |
 
 I mesmi dhe i madhi raportohen si **dorëzime të vlefshme të kufizuara-në-20** (`tools/cap_submit.py`, përzgjedhje e saktë HSSP) — objektivi që ESA vlerëson; shifrat e mëhershme të epokës-GBFC (−1,712,688 / −5,431,924) ishin vlera të frontit-të-plotë para fushatës së ndërgjegjshme-ndaj-kufirit dhe mbahen në §11/§12 si baza historike të kontributit-metodë. Numri i madh është një vlerë fushate e gjallë dhe rideklarohet te ngrirja.
 
@@ -637,6 +637,104 @@ Rezultati i dorëzuar farë-e-vetme sipas instancës dhe familjes së metodës (
 | i madh  | gbdt   | 8  | −5,394,220 | 0 | 0 % | −5,394,220 | −5,394,220 |
 
 Dy lexime. (i) Kërkimi i kodimit-të-vazhdueshëm bëhet *më pak* i qëndrueshëm ndërsa instanca ngurtësohet (CV 0.06 % → 0.98 % → 3.32 %); mbi `large` një pakicë farash ngecin te dyshemeja e nisjes-ngrohtë (−4,784,461), i njëjti efekt dimensionaliteti që kufizon K (§5). (ii) Familja `gbdt` ka shpërndarje zero sepse çdo konstruktim mbillet nga arkivi elitar i përbashkët dhe është pothuajse-deterministe — pra rezultati i saj për-farë reflekton portofolin e trashëguar, dhe kontributi i GBDT lexohet korrektësisht nga ablacioni i kontrolluar (§6b.2), jo nga kjo tabelë.
+
+---
+
+## 16. Reduktimi i pikës-fund, mundja e tabelës, dhe dy teste të kontrolluara të renditjes së mësuar
+
+Për gjashtë javë rezultati i kufizuar mbi të tria instancat qëndroi i ngrirë ndërkohë që 38 krahë paralelë xhironin vazhdimisht. Seksioni 15 vërtetoi *pse* mbetja nuk ishte artefakt përzgjedhjeje — zgjedhja e 20 pikave bëhet nga një program dinamik i saktë HSSP, pra nuk ekziston paketim më i mirë. Ai nuk vërtetoi se ku ndodhet në të vërtetë hipervëllimi i mbetur. Ky seksion i përgjigjet asaj pyetjeje, dhe përgjigjja doli të jetë një pikë e vetme.
+
+### 16.1 Pika-fund është një nën-problem gjerësie-peme
+
+Le ta shkruajmë frontin e dorëzuar si një shkallare me së shumti njëzet pika (w₁,t₁),…,(w₂₀,t₂₀) të renditura sipas gjerësisë. Kundrejt referencës (n,n) hipervëllimi dekompozohet në shirita vertikalë,
+
+  HV = Σᵢ (wᵢ₊₁ − wᵢ)·(n − tᵢ),   ku w₂₁ := n,
+
+pra kontributi i pikës i qeveriset nga *hendeku i gjerësisë deri te pasardhësja*. Për pikën e fundit ai hendek është n − w₂₀, i cili mbi këto instanca është një rend madhësie më i madh se çdo hendek i brendshëm. I matur mbi pool-in aktiv:
+
+| instanca | pika-fund (w, t) | gjerësia e shiritit | HV i shiritit | pjesa e HV-së së dorëzuar |
+|---|---|---:|---:|---:|
+| i vogël  | (15, 0)  | 1,342 | 1,821,094 | 99.8 % |
+| i mesëm | (228, 0) | 1,171 | 1,638,229 | 97.4 % |
+| i madh  | (499, 0) | 1,927 | 4,674,902 | 87.4 % |
+
+Pika-fund ka t = 0: i gjithë graf-i është torsi, dhe gjerësia e saj është saktësisht **gjerësia e induktuar (e eliminimit)** e renditjes — objektivi klasik i heuristikave të gjerësisë-peme. Rezultati bi-objektiv i garës përmban pra një problem minimizimi të gjerësisë-peme si termin e vet dominues, dhe çdo krah i fushatës kishte qenë duke optimizuar gjerësitë *e brendshme* që tabela mezi i sheh.
+
+Dy paralajmërime i takojnë këtij dekompozimi, dhe i deklaroj sepse përqindjet më sipër ftojnë keqlexim. Së pari, pjesa e pikës-fund është e madhe **nga vetë konstruksioni** — cilado renditje e zotëron atë pikë zotëron shumicën e hipervëllimit, pra përqindja është pohim mbi gjeometrinë e objektivit, jo mbi meritën e metodës që e gjeti. Numërimet e pikave dhe zotërimi i pikës-fund janë përmbledhjet e ndershme. Së dyti, ulja e gjerësisë së pikës-fund për një njësi *nuk* vlen n HV, siç supozova në fillim: ajo çliron gjerësitë menjëherë poshtë pikës-fund që të marrin t = 0, pra fitimi i realizuar është Σ_{w=w_ri}^{w_vjetër−1} t_vjetër(w), pragjet e mëparshme te gjerësitë e çliruara. Tavani është n për njësi; vlera e realizuar është më e vogël dhe duhet matur me `cap_submit`, kurrë parashikuar.
+
+### 16.2 Një kërkim lokal i synuar-në-fyt-e-ngushtë, dhe mundja
+
+Heuristikat standarde të gjerësisë-peme nuk e japin dot renditjen. Shkalla-minimale (min-degree) kthen gjerësi 285 mbi të mesmin dhe 20–22 mbi të voglin; mbushja-minimale (min-fill) e kufizuar kthen 288 dhe 20; 10⁵ rinisje të rastësishme shkalla-minimale arrijnë vetëm 20 mbi të voglin. Korpusi i bashkuar përmbante tashmë renditje me gjerësi 234 (i mesmi) dhe 15 (i vogli). Renditja e eliminimit duhej përmirësuar *nga pool-i*, jo nga e para.
+
+`tools/endpoint_ils.py` bën pikërisht këtë: i nisur nga renditja me gjerësinë më të ulët të vetë pool-it, ai zhvendos kulme nën një objektiv leksikografik
+
+  minimizo (gjerësia e induktuar, #kulme që e arrijnë atë gjerësi),
+
+ku komponenti i dytë siguron një gradient përgjatë gjerësisë së plotë (integer) — pa të kërkimi sheh një rrafshnaltë dhe nuk lëviz dot. Lëvizjet synohen te bashkësia e fytit-të-ngushtë (pozicionet që arrijnë maksimumin aktual) në 70 % të rasteve. Çdo përmirësim gjerësie bankohet si shkallare e plotë, pra shtegu i zakonshëm i bashkimit e merr.
+
+Mbi të mesmin pika-fund ra **234 → 228** nëpër tri fara të pavarura brenda orësh nga nisja, dhe dorëzimi i kufizuar lëvizi
+
+  −1,744,477 (hendek +645) → **−1,746,936 (hendek −1,814)**,
+
+pra **përtej objektivit të tabelës**. Ri-verifikimi i pavarur me `tools/verify_submission.py`, i cili ri-vlerëson përmes `core.evaluate` e jo përmes ndërtuesit të zarfit nga ana e kërkimit, raporton 20/20 vektorë të vlefshëm, 0 të kufizuar, 0 të dominuar, 0 fitnese të dyfishta, dhe shtyp `(BEAT)`. Rezultati u riprodhua në një makinë të dytë nga një pool i sinkronizuar.
+
+Dy kualifikime të ndershme. Pika fituese zotërohet nga `endpoint_ils`, një kërkim lokal **klasik** pa komponent të mësuar — libri i atribuimit i §16.4 është i qartë për këtë, dhe çdo pretendim se përforcimi me gradient prodhoi mundjen e të mesmit do të përgënjeshtrohej nga vetë instrumenti i kësaj teze. Dhe kontributi është reduktimi strukturor, jo optimizuesi: vetë kërkimi është një kërkim lokal i përsëritur i thjeshtë, i vlefshëm vetëm sepse u drejtua nga objektivi i duhur.
+
+### 16.3 Ku shtegu i pikës-fund është i mbyllur me provë
+
+Mbi të madhin i njëjti levë nuk mund të funksionojë, dhe kjo është e provueshme e jo empirike. Një qërim i pangopur i kulmeve me shkallë më të lartë rikthen tri **klika disjunkte** me përmasa 500, 400 dhe 300 (fqinjësia e ndërsjellë e verifikuar me makinë; §15.2). Një klikë me përmasë k detyron gjerësi eliminimi ≥ k − 1, pra gjerësia e eliminimit e të madhit është ≥ 499 — dhe pika-fund e bashkuar qëndron saktësisht te **499**. Pika-fund është optimale; asnjë kërkim nuk e përmirëson dot.
+
+Duke e zgjeruar kufirin e paketimit nëpër gjerësitë e vlerësueshme, përmasa e torsit te gjerësia w kufizohet nga n − Σᵢ max(0, |Kᵢ| − w − 1). Gjashtë nga njëzet pikat e dorëzuara — w ∈ {299, 332, 365, 399, 449, 499} — e arrijnë këtë kufi me barazi dhe janë pra **Pareto-optimale**, veti që as konkurrentët nuk e mundin dot. I gjithë hendeku i mbetur i graf-it të madh duhet të vijë nga gjerësitë e ulëta dhe të mesme të pangopura, ku një kulm torsi vlen vetëm 12–50 HV; mbyllja e +7,822 atje kërkon disa qindra kulme shtesë, të cilat tri javë krahësh të dedikuar nuk i prodhuan.
+
+Pasoja praktike ishte e menjëhershme: krahët e pikës-fund mbi të madhin u tërhoqën si të provuar të padobishëm dhe llogaritja e liruar u ridrejtua te gjerësitë që mbeten të hapura.
+
+### 16.4 Cili krah prodhoi cilën pikë të dorëzuar
+
+Një fushatë krahësh heterogjenë paralelë që shkruajnë në një pool të vetëm raporton një rezultat të vetëm të bashkuar, gjë që e lë të pamatur pretendimin qendror të një teze GBDT: askush nuk kishte kontrolluar cili krah i furnizoi njëzet renditjet që vlerësohen faktikisht. `tools/attribute.py` e rindërton zarfin duke regjistruar skedarin-burim të çdo pike, xhiron të njëjtën përzgjedhje të saktë HSSP, dhe ia atribuon çdo pikë të dorëzuar skedarit më të hershëm që arrin çiftin e saj (w, t). Agregatet e pool-it (`cap20.json`, `full_envelope.json`, `portfolio.json`) janë ri-paketime të punës së krahëve të tjerë dhe përpunohen të fundit, pra mund të pretendojnë vetëm një pikë që asnjë krah real nuk e mban; ato raportohen si kategori e veçantë *agregat* në vend që të vlerësohen heshtazi si klasike. Kjo është një instancë e analizës së kontributit-marxhinal nga literatura e portofoleve të algoritmeve, e zbatuar mbi një front shumë-objektiv.
+
+Renditjet e 31 gushtit 2026:
+
+| instanca | krahë të drejtuar-nga-GBDT | krahë klasikë | zotëruesi i pikës-fund |
+|---|---:|---:|---|
+| i vogël  | **13/16 pika** | 3/16 | `gbdt` (lotaria GPU) — **GBDT** |
+| i mesëm | 8/20 pika | 12/20 | `endpoint_ils` — **klasik** |
+| i madh  | **14/20 pika** | 6/20 | `gbdt` (lotaria GPU) — **GBDT** |
+
+Trajektorja e graf-it të madh është sinjali më i qartë i fushatës: pjesa e GBDT-së në frontin e dorëzuar u rrit **4/20 → 7 → 8 → 9 → 10 → 11 → 12 → 14** përgjatë tri javësh xhirimi të vazhdueshëm, në mënyrë monotone, ndërsa rezultati u përmirësua me 931 HV. Krahët e mësuar nuk ishin thjesht të pranishëm; ata po zëvendësonin progresivisht ata klasikët mbi pikat që vlerësohen.
+
+### 16.5 Testi i kontrolluar I — renditja e mësuar në hapësirë-bashkësie (pozitiv, i riprodhuar)
+
+`tools/gbdt_grow.py` mbart një GBDT për-gjerësi që rendit kulmet kandidate të kokës për shtyrje, ku `--no-gbdt` zgjedh një cikël identik nën renditjen klasike me numërim-kufiri. Një përpjekje e mëparshme për këtë ablacion ishte e ngatërruar: të dy krahët lexonin dhe shkruanin në **pool-in e përbashkët**, pra secili trashëgonte heshtazi zbulimet e tjetrit. Dizajni i korrigjuar (`ablation_grow.sh`) i jep çdo krahu një direktori pool-i të izoluar, të mbjellë nga një fotografi e vetme e përbashkët me 31 skedarë, e buxheton sipas **kalimeve të rritjes** e jo sipas kohës-mur — pra krahasimi është i pavarur nga ngarkesa e makinës, e cila varioi me faktor njëzet përgjatë fushatës — dhe i çifton krahët sipas farës.
+
+| instanca | fitore GBDT | fitore kontrolli | testi i shenjës | Wilcoxon (i saktë) |
+|---|---:|---:|---:|---:|
+| i mesëm | **8** | 0 | p = 0.0078 | p = 0.0078 |
+| i madh  | **8** | 0 | p = 0.0078 | p = 0.0078 |
+
+Mekanizmi është i dukshëm në regjistrat e xhirimit e jo i nxjerrë me arsyetim: nga një nisje identike, krahu i mësuar pranoi te gjerësitë 85, 85, 39, 131, 131 ndërsa kontrolli pranoi vetëm te gjerësia 39. Krahu GBDT gjen lëvizje përmirësuese te gjerësi që heuristika e numërimit-të-kufirit nuk i arrin kurrë.
+
+Tri kualifikime, të cilat i takojnë çdo citimi të këtij rezultati. (i) **Varianca ndër-fara është zero** — çdo farë ktheu saktësisht +15 HV kundrejt +1 HV. Xhirimet ndryshojnë vërtet (4–14 rreshta regjistri të ndryshëm për farë) por konvergjojnë te i njëjti përfundim, pra pretendimi korrekt është *determinist dhe i riprodhueshëm nëpër tetë fara*, jo tetë tërheqje të pavarura Bernoulli; p-vlera duhet lexuar si riprodhueshmëri, jo si evidencë kampionimi. (ii) **Efekti është i vogël** — 15 HV kundrejt 1 HV mbi një rezultat prej 1.75 M. Gjetja është se renditja e mësuar lokalizon pesë herë më shumë lëvizje përmirësuese me buxhet të barabartë, jo se e lëviz tabelën. (iii) **Metrika është hipervëllimi i zarfit, jo dorëzimi i kufizuar.** Konvertimi nga fitimi i zarfit në fitim të kufizuar është pyetje e veçantë, dhe §13.8a regjistron raste ku ai nuk u konvertua.
+
+### 16.6 Testi i kontrolluar II — renditja e mësuar e lëvizjeve (negativ, dhe një dështim riprodhimi)
+
+E njëjta ide e renditjes së mësuar, e zbatuar mbi lëvizjet e pikës-fund, dështon. `endpoint_gbdt.py` gjeneron 48 zhvendosje kandidate për iteracion dhe ose i rendit me një regresor LightGBM, ose tërheq një uniformisht — i njëjti grup kandidatësh, të njëjtat veçori, i njëjti buxhet vlerësimesh, pra ndryshon vetëm rregulli i përzgjedhjes.
+
+| eksperimenti | GBDT f–h | testi i shenjës | korrelacioni renditës–përfundim |
+|---|---:|---:|---:|
+| i vogël, 150 k vlerësime | 0–8 | **p = 0.0078** | −0.152 |
+| i vogël, 40 k vlerësime | 1–6 | p = 0.125 | −0.148 |
+| i mesëm, 40 k vlerësime | 2–6 | p = 0.289 | −0.084 |
+| **i bashkuar** | **3–20** | **p = 0.00049** | vazhdimisht negativ |
+
+Kjo tabelë përmban një rezultat metodologjik po aq të rëndësishëm sa ai numerik. Eksperimenti i parë ishte i rëndësishëm në p = 0.0078; një ri-xhirim i *të njëjtit* konfigurim me buxhet tjetër vlerësimesh ktheu p = 0.125. Po të ishte raportuar vetëm xhirimi i rëndësishëm, një përpjekje riprodhimi do të kishte dështuar. Analiza e ndershme është ajo e bashkuara — 3 fitore në 23 çifte jo-barazim, p = 0.00049, drejtimi unanim nëpër dy instanca dhe dy buxhete, me korrelacionin parashikim–përfundim negativ në çdo xhirim.
+
+Mekanizmi është **mallkimi i fituesit** (winner's curse): përzgjedhja e argmax-it të një regresori me fuqi të dobët parashikuese zgjedh preferencialisht kandidatët që ai i mbivlerëson më shumë, pra një model me aftësi afër-zero performon *më keq* se rastësia. `ranker_r` negativ i matur drejtpërdrejt — korrelacioni mes asaj që modeli parashikoi për lëvizjen që zgjodhi dhe asaj që ajo lëvizje arriti — konfirmon se modeli nuk fitoi kurrë aftësi mbi këtë detyrë; rregulli argmax pastaj e ktheu mungesën-e-aftësisë në dëm aktiv. U shtua një relaksim ε-greedy dhe nuk e shpëtoi.
+
+### 16.7 Çfarë licencojnë bashkërisht të dy testet
+
+Të marra së bashku, të dy eksperimentet e kontrolluara e lokalizojnë kufirin e udhëzimit të mësuar mbi këtë problem me saktësi të pazakontë. Përforcimi me gradient ndihmon aty ku vendimi është një **renditje mbi një bashkësi kandidatësh të madhe e të strukturuar me veçori statike informuese** — cilat kulme të shtyhen te një gjerësi e dhënë, ku profili i shkallës dhe koordinatat spektrale mbartin sinjal të vërtetë, dhe ku gabimet e nxënësit absorbohen sepse shumë kandidatë provohen për kalim. Ai dështon aty ku vendimi është një **lëvizje e vetme me variancë të lartë në një peizazh rrafshnalte**, ku etiketa është jo-stacionare, të dhënat e stërvitjes kufizohen te zgjedhjet e vetë modelit, dhe përzgjedhja argmax e amplifikon në vend që ta mesatarizojë gabimin e modelit.
+
+Ai kufi — pozitiv dhe i riprodhuar nga njëra anë, negativ dhe i shpjeguar mekanikisht nga tjetra — është kontributi i këtij seksioni, dhe është rezultat më i dobishëm sesa do të kishte qenë një sukses uniform.
 
 ---
 

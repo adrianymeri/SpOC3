@@ -14,7 +14,8 @@ python3 tools/sanitize_pool.py --problem large-graph
 echo "== killing stragglers =="
 pkill -f run_gbdt.py 2>/dev/null; pkill -f run_capfocus.py 2>/dev/null
 pkill -f gbfcpp.py 2>/dev/null; pkill -f hri_lns.py 2>/dev/null
-pkill -f archive_evolve.py 2>/dev/null; sleep 2
+pkill -f archive_evolve.py 2>/dev/null; pkill -f cqs.py 2>/dev/null
+pkill -f boundary_lns.py 2>/dev/null; pkill -f bandit_widths.py 2>/dev/null; sleep 2
 
 echo "== GPU arms: SMALL fresh-basin lottery (2026-07-12 pivot) =="
 # Rationale: small orderings are ALWAYS ESA-valid (maxdeg 7 << 500) and the
@@ -28,7 +29,8 @@ cd "$HERE"
 
 echo "== CPU arms =="
 nohup python3 -u tools/bandit_widths.py --problem large-graph --stint 1800 > bandit_large.log 2>&1 &
-nohup python3 -u tools/cqs.py --width sweep --iters 5000000 --seed $RANDOM > cqs.log 2>&1 &
+nohup python3 -u tools/cqs.py --width sweep --iters 500000000 --seed $RANDOM > cqs.log 2>&1 &
+nohup python3 -u tools/boundary_lns.py --iters 100000000 --seed $RANDOM > boundary_lns2.log 2>&1 &
 nohup python3 tools/hri_lns.py --problem large-graph --iters 2000000 --seed $RANDOM > hri_lns_large5.log 2>&1 &
 nohup python3 tools/archive_evolve.py --problem medium-graph --iters 2000000 --pool 40 --seed 11 --twins > ae_medium_tw11.log 2>&1 &
 nohup python3 tools/hri_lns.py --problem medium-graph --iters 2000000 --seed $RANDOM > hri_lns_medium_s5.log 2>&1 &

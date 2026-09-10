@@ -148,10 +148,16 @@ def make_gbdt(backend, seed, rank=False, device="cpu"):
     The GPU only accelerates tree *training*; it does not change the learned
     orderings or the hypervolume — see THESIS.md s9."""
     gpu = str(device).lower() in ("gpu", "cuda")
-    # GBDT_NJOBS caps the library's thread pool (default -1 = all cores).
-    # Parallel drivers (gbfcpp_swarm, diversify) set GBDT_NJOBS=1: with N
-    # workers, n_jobs=-1 spawns N x cores threads and crushes the host.
-    njobs = int(_os.environ.get("GBDT_NJOBS", "-1"))
+    # GBDT_NJOBS caps the library's thread pool.  DEFAULT IS NOW 1.
+    # It used to default to -1 (all cores), which contradicted the warning
+    # below and was the real cause of the 64-core server sitting at load 274
+    # with two gbfcpp arms at ~1500% CPU each: LightGBM's n_jobs calls
+    # omp_set_num_threads() and therefore OVERRIDES OMP_NUM_THREADS, so
+    # pinning the environment alone silently did nothing.
+    # Every campaign run is a fleet of concurrent arms, so 1 thread per arm is
+    # the right default; export GBDT_NJOBS=-1 for a single-arm run that should
+    # use the whole machine.
+    njobs = int(_os.environ.get("GBDT_NJOBS", "1"))
     order = {"auto": ["lightgbm", "xgboost", "hist", "numpy", "ridge"]}.get(backend, [backend])
     for b in order:
         try:

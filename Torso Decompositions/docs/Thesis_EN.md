@@ -1,4 +1,4 @@
-# Gradient-Boosted Decision Trees for Multi-Objective Torso Decomposition: Learned Construction, Cap-Aware Search, and a Near-Optimality Characterisation
+# Gradient-Boosted Decision Trees for Multi-Objective Torso Decomposition: Learned Construction, Cap-Aware Search, and an Endpoint Reduction Surpassing the Best Known Score
 
 **Adrian Ymeri** · University of Prishtina · SpOC-3 Torso Decompositions
 
@@ -128,9 +128,16 @@ of which falls on scoring sizes under the published uniform sampling — to 90 %
 on the 20 sizes the submission keeps. Third, an honest negative boundary (§14):
 the strongest self-improving form of the boosted policy does not out-search the
 pooled corpus, locating precisely where learned decoding helps and where raw
-search volume is irreplaceable. As of 8 July 2026 the valid capped-20 standings
-are small **−1,829,914** (gap 5; the gap-6 local-operator wall fell to a from-scratch basin draw, §14.4), medium
-**−1,738,901** (99.64 %), and large **−5,475,645** (99.68 %, campaign active).
+search volume is irreplaceable. Fourth, and the result that closes the campaign
+(§16): recognising that the capped hypervolume is dominated by its **endpoint**
+— the threshold-zero point, whose width is the graph's elimination width —
+reduces the residual to a treewidth sub-problem. A bottleneck-targeted local
+search seeded from the pooled ordering drove medium's endpoint 234 → 228 and
+took the instance **past the leaderboard target**. As of 31 August 2026 the
+valid capped-20 standings are small **−1,829,917** (gap 2), medium
+**−1,746,936** — **1,814 HV beyond the leaderboard top**, independently
+re-verified on two machines — and large **−5,485,240** (99.86 %, campaign
+active, 6/20 points proven optimal).
 
 ---
 
@@ -1381,7 +1388,7 @@ eliminating a separator). The contribution here is not that property but its
 *exploitation for the SpOC bi-objective*: I use it to recast the front as a family
 of independent per-width set problems and to derive the closed-form HV identity of
 §13.2. Concretely, eliminating a vertex set X (in *any* order) produces, among the
-remaining vertices $S = V \setminus X$, exactly the *torso* edges: u–v whenever
+remaining vertices $S = V \backslash X$, exactly the *torso* edges: u–v whenever
 u, v ∈ S are joined by a path whose interior lies in X. Two consequences follow
 that the permutation-space methods cannot see:
 
@@ -1662,7 +1669,7 @@ on this problem is established by the controlled ablation machinery of this thes
 not by a leaderboard win: the learned adaptive policy and the boosted front
 constructors beat the classical min-degree / min-fill rules and the static-`argsort`
 baseline, with the contribution isolated by GBDT-on/off controls (+24,766 HV on
-large, §10; +688/+734/+329 HV across instances, §11; +1,816 HV engine-level, §6b).
+large, §10; +688/+734/+329 HV across instances, §11; +2,524 HV engine-level, §6b).
 *That* is the defensible, reproducible headline claim — "learned boosting measurably
 outperforms the classical and static decoders" — and it stands on ablation, the
 gold standard, rather than on beating an opaque leaderboard entry.
@@ -1696,9 +1703,13 @@ submitted score cannot be improved by smarter *selection*. The question is wheth
 it could be improved by submitting *more* points — i.e. whether the cap itself is
 the binding constraint. `tools/cap_submit.py` answers it: pooling the entire medium
 corpus into its full **249-point** envelope and scoring it *with no cap at all*
-yields ≈ −1,733,000 — still **≈ +12,100 HV short of the −1,745,122 target.** Since
-even an unlimited submission cannot reach the target from our corpus, the residual
-is provably **not** a packing or selection artefact and **not** the 20-point cap
+yielded ≈ −1,733,000 — at that date still **≈ +12,100 HV short of the −1,745,122
+target.** (This snapshot is of 12 July 2026 and is superseded: the endpoint
+reduction of §16 later carried medium's envelope to −1,751,810 and its capped
+submission to −1,746,936, past the target. The diagnostic *reasoning* below is
+what matters and remains valid; the numeral is historical.) Since at that time
+even an unlimited submission could not reach the target from our corpus, the residual
+was provably **not** a packing or selection artefact and **not** the 20-point cap
 (which costs a further ≈ 3,600 HV on top): it is *torso quality* — the leaderboard
 fronts simply contain **larger torsos at the decisive widths** (their 20 points
 dominate our 249). This converts the earlier "compute, not representation"
@@ -1846,7 +1857,11 @@ epistemological point is sharper than the point itself: the §13 wall is a
 *local-operator* wall — exhaustion over every known move family certifies a
 deep basin, not global optimality — and the escape came from initialisation
 diversity, the same mechanism that plausibly produced the leaderboard top. The
-remaining gap-5 characterisation inherits this caveat explicitly.
+remaining gap-5 characterisation inherits this caveat explicitly. (Gap 5 was
+itself later reduced to **gap 2** by GBDT front-construction arms — width 11
+reached 889 and width 14 reached 1,239 under `gbdt_grow`, width 7 reached 490
+under `gbfcpp`; see §16.4. Small has since been static for a week under three
+dedicated arms, consistent with a second wall of the same character.)
 
 *Campaign status at time of writing:* large-graph valid capped-20 gap
 +28,574 -> +16,423 (43 % closed); medium +15,900 -> +5,603 (65 % closed).
@@ -2027,6 +2042,223 @@ envelope here.
 
 ---
 
+## 16. The endpoint reduction, the leaderboard beat, and two controlled tests of learned ranking
+
+For six weeks the capped score on all three instances was frozen while 38
+concurrent arms ran continuously. Section 15 established *why* the residual was
+not a selection artefact — the 20-point choice is made by an exact HSSP dynamic
+program, so no smarter packing exists. What it did not establish is where the
+remaining hypervolume actually lives. This section answers that, and the answer
+turned out to be a single point.
+
+### 16.1 The endpoint is a treewidth sub-problem
+
+Write the submitted front as a staircase of at most twenty points
+(w₁,t₁),…,(w₂₀,t₂₀) ordered by width. Against the reference (n,n) the
+hypervolume decomposes into vertical strips,
+
+  HV = Σᵢ (wᵢ₊₁ − wᵢ)·(n − tᵢ),   with w₂₁ := n,
+
+so the contribution of point i is governed by the *width gap to its successor*.
+For the final point that gap is n − w₂₀, which on these instances is an order of
+magnitude larger than any interior gap. Measured on the live pool:
+
+| instance | endpoint (w, t) | strip width | strip HV | share of submitted HV |
+|---|---|---:|---:|---:|
+| small  | (15, 0)  | 1,342 | 1,821,094 | 99.8 % |
+| medium | (228, 0) | 1,171 | 1,638,229 | 97.4 % |
+| large  | (499, 0) | 1,927 | 4,674,902 | 87.4 % |
+
+The endpoint has t = 0: the whole graph is the torso, and its width is exactly
+the **induced (elimination) width of the ordering** — the classical treewidth
+heuristic objective. The bi-objective competition score therefore contains a
+treewidth minimisation problem as its dominant term, and every arm in the
+campaign had been optimising the *interior* widths that the leaderboard barely
+sees.
+
+Two caveats belong with this decomposition, and I state them because the
+percentages above invite misreading. First, the endpoint's share is large **by
+construction** — whichever ordering owns that point owns most of the
+hypervolume, so the share is a statement about the geometry of the objective,
+not about the merit of the method that found it. Point counts and endpoint
+ownership are the honest summaries. Second, reducing the endpoint width by one
+unit is *not* worth n HV, as I first assumed: it frees the widths just below the
+endpoint to take t = 0, so the realised gain is Σ_{w=w_new}^{w_old−1} t_old(w),
+the previous thresholds at the freed widths. The ceiling is n per unit; the
+realised value is smaller and must be measured with `cap_submit`, never
+predicted.
+
+### 16.2 A bottleneck-targeted local search, and the beat
+
+Standard treewidth heuristics cannot supply the ordering. Min-degree returns
+width 285 on medium and 20–22 on small; bounded min-fill returns 288 and 20;
+10⁵ randomised min-degree restarts reach only 20 on small. The pooled corpus
+already contained orderings of width 234 (medium) and 15 (small). The
+elimination ordering had to be improved *from the pool*, not from scratch.
+
+`tools/endpoint_ils.py` does exactly that: seeded from the pool's own lowest-width
+ordering, it relocates vertices under a lexicographic objective
+
+  minimise (induced width, #vertices attaining that width),
+
+where the second component supplies a gradient across the flat integer width —
+without it the search sees a plateau and cannot move. Moves are targeted at the
+bottleneck set (the positions attaining the current maximum) 70 % of the time.
+Every width improvement is banked as a full staircase, so the ordinary pooling
+path picks it up.
+
+On medium the endpoint fell **234 → 228** across three independent seeds within
+hours of launch, and the capped submission moved
+
+  −1,744,477 (gap +645) → **−1,746,936 (gap −1,814)**,
+
+i.e. **past the leaderboard target**. Independent re-verification with
+`tools/verify_submission.py`, which re-evaluates through `core.evaluate` rather
+than the search-side envelope builder, reports 20/20 valid vectors, 0 capped, 0
+dominated, 0 duplicate fitnesses, and prints `(BEAT)`. The result was reproduced
+on a second machine from a synced pool.
+
+Two honest qualifications. The winning point is owned by `endpoint_ils`, a
+**classical** local search with no learned component — the attribution ledger of
+§16.4 is explicit about this, and any claim that gradient boosting produced
+medium's beat would be refuted by this thesis's own instrument. And the
+structural reduction, not the optimiser, is the contribution: the search itself
+is a plain iterated local search, valuable only because it was pointed at the
+right objective.
+
+### 16.3 Where the endpoint route is provably closed
+
+On large the same lever cannot work, and this is provable rather than empirical.
+A greedy peel of the highest-degree vertices recovers three **disjoint cliques**
+of sizes 500, 400 and 300 (mutual adjacency machine-verified; §15.2). A clique
+of size k forces elimination width ≥ k − 1, so large's elimination width is
+≥ 499 — and the pooled endpoint sits at exactly **499**. The endpoint is
+optimal; no search can improve it.
+
+Extending the packing bound across the scoring widths, torso size at width w is
+bounded by n − Σᵢ max(0, |Kᵢ| − w − 1). Six of the twenty submitted points —
+w ∈ {299, 332, 365, 399, 449, 499} — meet this bound with equality and are
+therefore **Pareto-optimal**, a property no competitor can beat either. The
+entire remaining large-graph gap must come from the unsaturated low and middle
+widths, where a torso vertex is worth only 12–50 HV; closing +7,822 there
+requires several hundred additional vertices, which three weeks of dedicated
+arms did not produce.
+
+The practical consequence was immediate: endpoint arms on large were retired as
+provably useless and the freed compute redirected to the widths that remain open.
+
+### 16.4 Which arm produced which submitted point
+
+A campaign of concurrent heterogeneous arms writing into one pool reports a
+single pooled score, which makes the central claim of a GBDT thesis unmeasured:
+nobody had checked which arm supplied the twenty orderings that are actually
+scored. `tools/attribute.py` rebuilds the envelope while recording the source
+file of every point, runs the same exact HSSP selection, and credits each
+submitted point to the earliest file achieving its (w, t) pair. Pool aggregates
+(`cap20.json`, `full_envelope.json`, `portfolio.json`) are re-packagings of other
+arms' work and are processed last, so they can only claim a point no real arm
+holds; they are reported as a separate *aggregate* category rather than silently
+scored as classical. This is an instance of marginal-contribution analysis from
+the algorithm-portfolio literature, applied to a multi-objective front.
+
+Standings of 31 August 2026:
+
+| instance | GBDT-driven arms | classical arms | endpoint owner |
+|---|---:|---:|---|
+| small  | **13/16 points** | 3/16 | `gbdt` (GPU lottery) — **GBDT** |
+| medium | 8/20 points | 12/20 | `endpoint_ils` — **classical** |
+| large  | **14/20 points** | 6/20 | `gbdt` (GPU lottery) — **GBDT** |
+
+The large-graph trajectory is the clearest signal in the campaign: GBDT's share
+of the submitted front rose **4/20 → 7 → 8 → 9 → 10 → 11 → 12 → 14** over three
+weeks of continuous operation, monotonically, while the score improved by 931 HV.
+The learned arms were not merely present; they were progressively displacing the
+classical ones on the points that score.
+
+### 16.5 Controlled test I — learned set-space ranking (positive, replicated)
+
+`tools/gbdt_grow.py` carries a per-width GBDT that ranks candidate head vertices
+for deferral, with `--no-gbdt` selecting an identical loop under classical
+boundary-count ranking. An earlier attempt at this ablation was confounded: both
+arms read and wrote the **shared pool**, so each silently inherited the other's
+discoveries. The corrected design (`ablation_grow.sh`) gives every arm an
+isolated pool directory seeded from one common 31-file snapshot, budgets by
+**growth passes** rather than wall-clock — so the comparison is independent of
+machine load, which varied by a factor of twenty across the campaign — and pairs
+arms by seed.
+
+| instance | GBDT wins | control wins | sign test | Wilcoxon (exact) |
+|---|---:|---:|---:|---:|
+| medium | **8** | 0 | p = 0.0078 | p = 0.0078 |
+| large  | **8** | 0 | p = 0.0078 | p = 0.0078 |
+
+The mechanism is visible in the logs rather than inferred: from an identical
+start, the learned arm accepted at widths 85, 85, 39, 131, 131 while the control
+accepted only at width 39. The GBDT arm finds improving moves at widths the
+boundary-count heuristic never reaches.
+
+Three qualifications, all of which belong in any citation of this result.
+(i) **Between-seed variance is zero** — every seed returned exactly +15 HV
+against +1 HV. The runs genuinely differ (4–14 differing log lines per seed) but
+converge to the same outcome, so the correct claim is *deterministic and
+reproducible across eight seeds*, not eight independent Bernoulli draws; the
+p-value should be read as reproducibility, not sampling evidence.
+(ii) **The effect is small** — 15 HV against 1 HV on a score of 1.75 M. The
+finding is that learned ranking locates five times as many improving moves at
+equal budget, not that it moves the leaderboard.
+(iii) **The metric is envelope hypervolume, not the capped submission.**
+Conversion from envelope gain to capped gain is a separate question, and §13.8a
+records instances where it did not convert.
+
+### 16.6 Controlled test II — learned move ranking (negative, and a replication failure)
+
+The same learned-ranking idea applied to endpoint moves fails. `endpoint_gbdt.py`
+generates 48 candidate relocations per iteration and either ranks them with a
+LightGBM regressor or draws one uniformly — same candidate pool, same features,
+same evaluation budget, so only the selection rule differs.
+
+| experiment | GBDT w–l | sign test | ranker–outcome correlation |
+|---|---:|---:|---:|
+| small, 150 k evals | 0–8 | **p = 0.0078** | −0.152 |
+| small, 40 k evals | 1–6 | p = 0.125 | −0.148 |
+| medium, 40 k evals | 2–6 | p = 0.289 | −0.084 |
+| **pooled** | **3–20** | **p = 0.00049** | consistently negative |
+
+This table contains a methodological result as important as the numerical one.
+The first experiment was significant at p = 0.0078; a rerun of the *same*
+configuration at a different evaluation budget returned p = 0.125. Had the
+significant run been reported alone, a replication attempt would have failed.
+The honest analysis is the pooled one — 3 wins in 23 non-tied pairs,
+p = 0.00049, direction unanimous across two instances and two budgets, with the
+prediction–outcome correlation negative in every run.
+
+The mechanism is the **winner's curse**: selecting the argmax of a weakly
+predictive regressor preferentially selects the candidates it most over-predicts,
+so a model with near-zero skill performs *worse* than random. The negative
+`ranker_r` measured directly — the correlation between what the model predicted
+for the move it chose and what that move achieved — confirms the model never
+acquired skill on this task; the argmax rule then converted no-skill into
+active harm. An ε-greedy relaxation was added and did not rescue it.
+
+### 16.7 What the two tests jointly license
+
+Taken together the two controlled experiments locate the boundary of learned
+guidance on this problem with unusual precision. Gradient boosting helps where
+the decision is a **ranking over a large, structured candidate set with
+informative static features** — which vertices to defer at a given width, where
+degree profile and spectral coordinates genuinely carry signal, and where the
+learner's errors are absorbed because many candidates are tried per pass. It
+fails where the decision is a **single high-variance move in a plateaued
+landscape**, where the label is non-stationary, training data is confined to the
+model's own choices, and argmax selection amplifies rather than averages the
+model's error.
+
+That boundary — positive and replicated on one side, negative and mechanistically
+explained on the other — is the contribution of this section, and it is a more
+useful result than uniform success would have been.
+
+---
+
 ### Reproducibility
 
 - Continuous encoding: `algorithms/continuous/cmaes_torso.py`; sweep
@@ -2038,6 +2270,27 @@ envelope here.
   `python3 tools/ablation_gbdt.py` (prints WITH / WITHOUT / contribution per
   instance; large-graph = +2,524 HV).
 - Threshold harvest: `tools/refine_thresholds.py`. Figures: `tools/make_figures.py`.
+- **Endpoint reduction and the beat (§16.1–16.3):** `tools/endpoint_ils.py`
+  (bottleneck-targeted iterated local search on the t = 0 elimination width,
+  seeded from the pooled ordering; banks every width improvement as a full
+  staircase). Medium: endpoint 234 → 228, capped score −1,744,477 → **−1,746,936
+  (gap −1,814, BEAT)**, re-verified with `tools/verify_submission.py` on two
+  machines (20/20 valid, 0 capped, 0 dominated). Large: endpoint 499 = the K500
+  clique bound, provably optimal — endpoint arms retired there by proof.
+- **Per-point attribution (§16.4):** `tools/attribute.py --problem <p> [--by-file]`
+  rebuilds the envelope carrying each point's source file, runs the same exact
+  HSSP selection, and reports GBDT / classical / aggregate shares plus the
+  endpoint owner. Pool aggregates are processed last so they cannot claim a point
+  a real arm holds.
+- **Controlled ablations (§16.5–16.6):** set-space `bash ablation_grow.sh
+  <problem> <passes> <seeds> <jobs>` (isolated pool per arm via
+  `gbdt_grow.py --pool-dir`, equal `--max-passes` budget; medium and large both
+  8–0, p = 0.0078); move-ranking `bash ablation_endpoint.sh <problem> <evals>
+  <seeds>` (`endpoint_gbdt.py --algo-mode gbdt|random`, equal `--max-evals`
+  budget; pooled 3–20, p = 0.00049 **against**). Shared readout
+  `tools/paired_stats.py <results.txt> --metric delta_hv|endpoint` prints the
+  paired table with an exact sign test **and** an exact Wilcoxon signed-rank test
+  (enumerated, no normal approximation).
 - **Certificates & planted structure (§15):** constructor `tools/clique_prefix.py`;
   ranker + ablation `tools/rank_externals.py --mode gen|train|construct`
   (table: `rank_ablation_v2.txt`); unlock analysis `tools/unlock_diff.py`
@@ -2139,9 +2392,9 @@ the GBFC contribution (§11) over the pre-GBFC banked best:
 
 | Instance | best (−HV, valid ≤20-point) | Leaderboard top | % of top | method |
 |---|---:|---:|---:|---|
-| small  | **−1,829,914** | −1,829,919 | **99.99973 %** | torso-deletion + from-scratch basin draw (§13, §14.4; gap **5**) |
-| medium | **−1,739,519** | −1,745,122 | **99.68 %** | cap-aware pool: gbfcpp `--cap20` + archive-evolve (§14–14.1) |
-| large  | **−5,476,639** | −5,493,062 | **99.70 %** | certificate-guided cap-aware campaign (§14.1, §15; *active*, 11 July 2026; 6/20 points proven optimal) |
+| small  | **−1,829,917** | −1,829,919 | **99.99989 %** | GBDT set-space + front construction (§13, §14.4, §16.4; gap **2**) |
+| medium | **−1,746,936** | −1,745,122 | **100.10 % — BEATS TOP** | endpoint reduction: elimination width 234 → 228 (§16.1); gap **−1,814** |
+| large  | **−5,485,240** | −5,493,062 | **99.86 %** | certificate-guided cap-aware campaign (§14.1, §15, §16.4; *active*, 31 August 2026; 6/20 points proven optimal) |
 
 Medium and large are reported as **valid capped-20 submissions** (`tools/cap_submit.py`,
 exact HSSP selection) — the objective ESA scores; earlier GBFC-era figures

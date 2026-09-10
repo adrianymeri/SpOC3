@@ -1,0 +1,16 @@
+RESULT problem=large-graph mode=gbdt seed=1 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=gbdt seed=3 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=gbdt seed=2 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=nogbdt seed=1 start_hv=-5501071 final_hv=-5501089 delta_hv=18 accepts=13 passes=120
+RESULT problem=large-graph mode=nogbdt seed=3 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120
+RESULT problem=large-graph mode=nogbdt seed=2 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120
+RESULT problem=large-graph mode=gbdt seed=5 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=gbdt seed=4 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=gbdt seed=6 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=nogbdt seed=4 start_hv=-5501071 final_hv=-5501089 delta_hv=18 accepts=13 passes=120
+RESULT problem=large-graph mode=nogbdt seed=5 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120
+RESULT problem=large-graph mode=nogbdt seed=6 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120
+RESULT problem=large-graph mode=gbdt seed=7 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=gbdt seed=8 start_hv=-5501071 final_hv=-5501113 delta_hv=42 accepts=29 passes=120
+RESULT problem=large-graph mode=nogbdt seed=7 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120
+RESULT problem=large-graph mode=nogbdt seed=8 start_hv=-5501071 final_hv=-5501088 delta_hv=17 accepts=12 passes=120

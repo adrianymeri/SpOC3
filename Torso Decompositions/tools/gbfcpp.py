@@ -41,6 +41,11 @@ relocation (same budget, same seeds) -- isolates the GBDT contribution.
 from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# single-threaded BLAS/OpenMP (see tools/gbdt_grow.py) -- must precede numpy
+# and lightgbm, otherwise each arm grabs a thread per core
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 import argparse, json, math, random, time
 import numpy as np
 from core import (load_graph, build_adj_bitsets, graph_path, repo_root, ParetoArchive,

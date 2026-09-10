@@ -6,3 +6,15 @@ leaderboard_reference/fast-cma-es-master.zip
 *.log
 *.pt
 small_warmstart.pt
+
+# --- ablation scratch (added 31 Aug 2026) ---
+# ablation_grow.sh gives each paired arm an ISOLATED pool directory so the
+# treatment and control cannot inherit each other's finds. That scratch grows
+# to ~1.1 GB and is pure intermediate state: the scientific record is the
+# RESULT lines already captured in ablation_grow_*.txt. Never commit it, and
+# it is safe to delete once an ablation has finished.
+abl_grow_pools/
+*.lock
+
+# stray file created by a shell redirect typo
+=

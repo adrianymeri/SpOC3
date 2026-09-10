@@ -1,0 +1,46 @@
+dataset: 7525 rows from /Users/adrianymeri/Desktop/SpOC3/Torso Decompositions/.feature_cache/rank_externals.jsonl
+  w | quota-t | rand | outdeg | GBDT   (achieved width; lower=better, ==w is the bound)
+  130 |   807 | None | 227 | None
+  134 |   795 | None | 227 | None
+  138 |   783 | None | 227 | None
+  142 |   771 | None | 227 | None
+  146 |   759 | None | 227 | None
+  150 |   747 | None | 227 | None
+  154 |   735 | None | 228 | None
+  158 |   723 | None | 229 | None
+  162 |   711 | None | 233 | None
+  166 |   699 | None | 237 | None
+  170 |   687 | None | 240 | None
+  174 |   675 | None | 242 | None
+  178 |   663 | None | 245 | None
+  182 |   651 | None | 248 | None
+  186 |   639 | None | 252 | None
+  190 |   627 | None | 254 | None
+  194 |   615 | None | 256 | None
+  198 |   603 | None | 257 | None
+  202 |   591 | None | 260 | None
+  206 |   579 | None | 264 | None
+  210 |   567 | None | 268 | None
+  214 |   555 | None | 269 | None
+  218 |   543 | None | 272 | None
+  222 |   531 | 392 | 275 | None
+  226 |   519 | 424 | 278 | None
+  230 |   507 | 360 | 280 | 406
+  234 |   495 | None | 281 | 416
+  238 |   483 | 419 | 283 | None
+  242 |   471 | 409 | 286 | None
+  246 |   459 | 466 | 286 | None
+  250 |   447 | 396 | 288 | 437
+  254 |   435 | 410 | 290 | 405
+  258 |   423 | 390 | 290 | 401
+  262 |   411 | 377 | 292 | 361
+  266 |   399 | 421 | 294 | 420
+  270 |   387 | 422 | 295 | 401
+  274 |   375 | 418 | 295 | 457
+  278 |   363 | 414 | 296 | 419
+  282 |   351 | 348 | 298 | 332
+  286 |   339 | 440 | 298 | 323
+  290 |   327 | 301 | 298 | 324
+  294 |   315 | 320 | 298 | 301
+  298 |   303 | 298 | 298 | 298
+banked GBDT constructions -> /Users/adrianymeri/Desktop/SpOC3/Torso Decompositions/submissions/large-graph/cp_gbdt.json

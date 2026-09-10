@@ -1,0 +1,48 @@
+A: (w=82, t=1900, torso=526)   B: (w=99, t=1397, torso=1029)
+
+head A ONLY (in torso at w=99 but not at w=82) (508 vertices):
+     117  comp8(n=124)
+     111  comp1(n=120)
+     102  comp7(n=104)
+      72  comp10(n=126)
+      62  comp5(n=65)
+      11  K500-ext
+      11  K400-ext
+       8  comp11(n=9)
+       6  comp9(n=161)
+       4  comp22(n=5)
+       2  K300-ext
+       1  comp18(n=35)
+       1  comp12(n=145)
+
+head B ONLY (5 vertices):
+       5  comp9(n=161)
+
+head shared (1392 vertices):
+     375  K500-twin
+     285  K400-ext
+     234  K300-ext
+     102  K400-twin
+      62  K300-twin
+      54  comp4(n=54)
+      50  comp6(n=50)
+      46  comp16(n=46)
+      45  K500-ext
+      40  comp12(n=145)
+      35  comp3(n=35)
+      21  comp14(n=21)
+       6  comp1(n=120)
+       6  comp23(n=6)
+       5  comp8(n=124)
+       5  comp24(n=5)
+       4  comp13(n=4)
+       3  comp5(n=65)
+       3  comp20(n=3)
+       3  comp10(n=126)
+       2  comp7(n=104)
+       1  comp11(n=9)
+       1  comp19(n=1)
+       1  comp21(n=1)
+       1  comp22(n=5)
+       1  comp25(n=1)
+       1  comp9(n=161)

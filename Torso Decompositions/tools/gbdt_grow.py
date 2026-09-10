@@ -27,6 +27,13 @@ import argparse, glob, json, os, sys, time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
+# Pin BLAS/OpenMP to one thread BEFORE numpy/lightgbm load.  Relying on the
+# launcher to export these is fragile (a login shell can drop them); doing it
+# here makes every arm single-threaded however it is started.  Un-pinned, each
+# arm spawned one thread per core and drove the server to load 300+.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 import numpy as np
 from core import (load_graph, build_adj_bitsets, graph_path, ParetoArchive,
                   hypervolume_2d, MAX_TW, LEADERBOARD_TARGETS, write_submission)
@@ -57,9 +64,9 @@ def add_staircase(perm, ab, n, arc):
     return True
 
 
-def load_pool(problem, n, ab, arc):
+def load_pool(pool_dir, n, ab, arc):
     pool = []
-    for fp in sorted(glob.glob(os.path.join(HERE, "submissions", problem, "*.json"))):
+    for fp in sorted(glob.glob(os.path.join(pool_dir, "*.json"))):
         try:
             d = json.load(open(fp)); e = d[0] if isinstance(d, list) else d
             dvs = e["decisionVector"]
@@ -108,7 +115,8 @@ def make_model():
     try:
         import lightgbm as lgb
         return "lightgbm", lgb.LGBMRegressor(
-            n_estimators=200, num_leaves=31, learning_rate=0.08, verbose=-1)
+            n_estimators=200, num_leaves=31, learning_rate=0.08, verbose=-1,
+            n_jobs=1)
     except Exception:
         return None, None
 
@@ -133,14 +141,21 @@ def membership_labels(w, pool, ab, n):
 
 # ---------- main growth loop ----------
 
-def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
+def run(problem, budget_s, algo, no_gbdt, max_cand, seed,
+        pool_dir="", max_passes=0):
     n, adj_l = load_graph(graph_path(HERE, problem))
     ab = build_adj_bitsets(n, adj_l)
     target = LEADERBOARD_TARGETS.get(problem)
     rng = np.random.default_rng(seed)
 
+    # --pool-dir isolates an ablation arm: it reads AND writes only inside that
+    # directory, so the treatment and control arms cannot inherit each other's
+    # finds through the shared pool.  Without this the two arms silently share
+    # every discovery and the comparison is meaningless (this is exactly what
+    # confounded the earlier gbdt_grow ablation).
+    subdir = pool_dir or os.path.join(HERE, "submissions", problem)
     arc = ParetoArchive()
-    pool = load_pool(problem, n, ab, arc)
+    pool = load_pool(subdir, n, ab, arc)
     base = -hypervolume_2d(arc.points(), n)
     print(f"=== gbdt_grow -- {problem} (n={n}) | pool {len(pool)} | "
           f"HV {base:,.0f}" + (f" gap {base-target:+,.0f}" if target else "") +
@@ -164,7 +179,7 @@ def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
                 bw[w] = (t, p)
         return bw
 
-    out = os.path.join(HERE, "submissions", problem, f"{algo}.json")
+    out = os.path.join(subdir, f"{algo}.json")
     def save():
         top = arc.top_k_by_hv_contribution(60, n)
         write_submission([list(p) + [int(t)] for (_, t, p) in top], problem, out)
@@ -173,6 +188,8 @@ def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
     t0 = time.time(); accepts = 0; passes = 0
     rank_cache = {}
     while time.time() - t0 < budget_s:
+        if max_passes and passes >= max_passes:
+            break
         bw = best_by_w()
         cand_w = []
         ws = sorted(bw)
@@ -182,10 +199,23 @@ def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
             room = t_w - nxt
             if room <= 0 or t_w == 0:
                 continue
-            cand_w.append((room * (0.5 ** fails.get(w, 0)), w))
+            # CRASH FIX (2026-08-11): the decay was 0.5**fails with fails
+            # unbounded.  On a long run every width accumulates failures, and
+            # past ~1075 the term underflows to exactly 0.0 in float64; once
+            # ALL widths hit that, wts.sum() == 0, the normalisation divides by
+            # zero, and rng.choice raised "Probabilities contain NaN" -- which
+            # is what repeatedly killed this arm.  Clamping the exponent keeps
+            # every weight strictly positive and preserves the intended
+            # ordering (a width tried 40 times is still deprioritised).
+            cand_w.append((room * (0.5 ** min(fails.get(w, 0), 32)), w))
         if not cand_w:
             print("no addressable scoring widths; stopping"); break
-        wts = np.array([c[0] for c in cand_w]); wts /= wts.sum()
+        wts = np.array([c[0] for c in cand_w], dtype=float)
+        s = float(wts.sum())
+        if not np.isfinite(s) or s <= 0.0:
+            wts = np.ones(len(cand_w), dtype=float)   # all stale -> uniform
+            s = float(wts.sum())
+        wts /= s
         w = int(cand_w[int(rng.choice(len(cand_w), p=wts))][1])
         t_star, perm = bw[w]
         X, S = perm[:t_star], perm[t_star:]
@@ -199,7 +229,7 @@ def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
                 y = membership_labels(w, pool[:40], ab, n)
                 import lightgbm as lgb
                 m = lgb.LGBMRegressor(n_estimators=200, num_leaves=31,
-                                      learning_rate=0.08, verbose=-1)
+                                      learning_rate=0.08, verbose=-1, n_jobs=1)
                 m.fit(F, y)
                 rank_cache[w] = (len(pool), m.predict(F))
             score = rank_cache[w][1]
@@ -244,6 +274,11 @@ def run(problem, budget_s, algo, no_gbdt, max_cand, seed):
     print(f"final: {accepts} accepts | HV {final:,.0f}"
           + (f" gap {final-target:+,.0f}" if target else ""), flush=True)
     save()
+    # machine-readable line for the paired ablation readout
+    print(f"RESULT problem={problem} mode={'nogbdt' if no_gbdt else 'gbdt'} "
+          f"seed={seed} start_hv={base:.0f} final_hv={final:.0f} "
+          f"delta_hv={base-final:.0f} accepts={accepts} passes={passes}",
+          flush=True)
 
 
 def main():
@@ -257,8 +292,16 @@ def main():
                     help="ablation control: boundary-count ranking")
     ap.add_argument("--max-cand", type=int, default=48)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--pool-dir", default="",
+                    help="isolated pool directory for a controlled ablation "
+                         "arm (reads and writes only here)")
+    ap.add_argument("--max-passes", type=int, default=0,
+                    help="stop after N growth passes; 0 = unlimited. Equal-pass "
+                         "budgeting is the correct ablation control (wall-clock "
+                         "would hand the arms unequal work under varying load)")
     a = ap.parse_args()
-    run(a.problem, a.budget, a.algo, a.no_gbdt, a.max_cand, a.seed)
+    run(a.problem, a.budget, a.algo, a.no_gbdt, a.max_cand, a.seed,
+        a.pool_dir, a.max_passes)
 
 
 if __name__ == "__main__":
