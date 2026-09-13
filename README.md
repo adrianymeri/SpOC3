@@ -18,7 +18,12 @@ data/                the three competition graphs + a 12-vertex toy
 
 Read this file top to bottom and you will know: what the problem is, how an
 answer is written down, how to solve a small instance **by hand**, how the
-score is computed, how the algorithm works, and how to run it.
+score is computed, how everything is stored in the code, why the problem is
+hard, how the algorithm works, and how to run it.
+
+A word on ambition: this branch is deliberately **primitive**. Plain hill
+climbing, plain data structures, no cleverness. It is meant to be read and
+understood, and to serve as the honest baseline — not to be competitive.
 
 ---
 
@@ -347,22 +352,176 @@ Two more rules:
 
 ---
 
-# Part 4 — Why this is hard
+# Part 4 — How things are stored in the code
 
-The number of orderings is `n!`. For the toy that is 479 million; for
-`small-graph` (n = 1357) it is a number with over 3,600 digits. You cannot
-try them all, and there is no known formula for the best one.
+Part 1 described the problem on paper. This part is the bridge to what you
+see on screen: how each idea is actually held in memory.
 
-Worse, the objective is **not smooth**: swapping two vertices can change the
-fill-in cascade for every later step, so a tiny change to the input can
-cause a large, unpredictable change to the output.
+## 4.1 The map from idea to code
 
-This is why we use a **heuristic** — a method that finds good answers
-without proving they are the best.
+| idea from Part 1 | lives in | as |
+|---|---|---|
+| the graph | `Graph.adj` | list of sets — `adj[v]` is `v`'s neighbours |
+| the graph, again | `Graph.bits` | list of ints used as bitsets (see 4.3) |
+| elimination order `perm` | `Solution.perm` | a plain Python list |
+| the `deg[]` table of Part 2 | `Solution.degrees()` | list of ints, computed once and cached |
+| the staircase of Part 2.1 | `Solution.staircase()` | list of `(width, t)` pairs |
+| threshold `t` | *not stored* | see 4.4 |
+| the trade-off curve | `Front.points` | dict `width -> (t, perm)` |
+| the score of Part 3 | `Front.score()` | one negative integer |
+| a decision vector | `Front.decision_vectors()` | list `perm + [t]` |
+
+## 4.2 The graph: a list of sets
+
+The obvious way, and the one to read:
+
+```python
+adj = [set() for _ in range(n)]
+for u, v in edges:
+    adj[u].add(v)
+    adj[v].add(u)
+```
+
+For the toy instance `adj[0]` is `{1, 2, 11}`. Undirected means every edge is
+stored twice — once at each end. Sets make the two questions we ask
+constantly both fast and readable: *is `u` a neighbour of `v`?* is
+`u in adj[v]`, and *join these vertices together* is `adj[u] |= others`.
+
+## 4.3 The graph again: integers as bitsets
+
+The same graph is also stored as a list of **integers**. A Python integer has
+unlimited precision, so it can act as a set of bits of any size: bit number
+`u` is `1` exactly when `u` is a neighbour.
+
+```
+vertex 0's neighbours are {1, 2, 11}
+
+bit position :  11 10  9  8  7  6  5  4  3  2  1  0
+value        :   1  0  0  0  0  0  0  0  0  1  1  0   =  2054
+```
+
+That single integer `2054` *is* the set `{1, 2, 11}`. And now set operations
+become arithmetic that Python runs in C rather than in a loop:
+
+| set operation | bitset version |
+|---|---|
+| intersection `A & B` | `a & b` |
+| union `A ∪ B` | `a \| b` |
+| size `len(A)` | `a.bit_count()` |
+| membership `u in A` | `a >> u & 1` |
+
+This is the *only* performance trick in the project, and it buys a lot —
+one evaluation of `large-graph` drops from 35 seconds to 0.6. Both versions
+of the evaluation are kept side by side in `torso.py` (`degrees_slow` with
+sets, `degrees` with bitsets) and `test_correctness.py` proves they always
+agree, so the trick never has to be taken on faith.
+
+## 4.4 Why `Solution` does not store `t`
+
+This surprises people reading the code. A `Solution` holds only a
+permutation — no threshold. That is deliberate, and it follows directly from
+Part 2.1: one permutation already answers the question for *every* `t` at
+once. Storing a particular `t` inside the solution would throw away all the
+other answers it contains for free.
+
+So `t` appears only at the moment we *report* a result:
+`staircase()` returns every `(width, t)` pair, and `decision_vectors()`
+writes the chosen `t` onto the end of the permutation.
+
+## 4.5 What `Front` accumulates
+
+`Front` is a dict keyed by width, holding the best `t` seen at that width and
+the permutation that achieved it:
+
+```
+points = {
+     0: (11, [7, 1, 8, ...]),
+     1: (10, [7, 1, 8, ...]),
+     2: ( 2, [7, 1, 8, ...]),
+     3: ( 0, [7, 1, 8, ...]),
+}
+```
+
+Keying by width makes the update rule trivial — a new point at width `w`
+replaces the old one only if its `t` is smaller. Every permutation the
+climber evaluates is offered to the front, so good points are kept even when
+the move that produced them was rejected.
+
+`pareto()` then drops dominated entries, `best_k(20)` chooses which 20 to
+submit, and `score()` grades them.
 
 ---
 
-# Part 5 — The algorithm: hill climbing
+# Part 5 — Why this is hard
+
+## 5.1 There are too many orderings to try
+
+| instance | n | number of orderings (`n!`) |
+|---|---:|---|
+| toy | 12 | 479,001,600 |
+| small-graph | 1357 | a number with 3,600+ digits |
+| large-graph | 2426 | a number with 7,000+ digits |
+
+For the toy you could brute-force it in a few minutes. For anything real,
+the number of orderings exceeds the number of atoms in the observable
+universe by thousands of orders of magnitude. There is no formula for the
+best one either — the underlying problem (finding an elimination order of
+minimum width) is **NP-hard**, so nobody has an efficient exact method and
+almost certainly nobody will.
+
+## 5.2 One small change can cascade
+
+The objective is not smooth. Swapping two vertices does not nudge the answer
+slightly; it can change the fill-in produced at that step, which changes
+which vertices are adjacent later, which changes the fill-in *there*, and so
+on to the end of the ordering.
+
+We saw this in Part 2 at step 1: eliminating `5` created the edge `4–6`, so
+by the time `4` was eliminated it had a neighbour it never originally had.
+Move `5` elsewhere in the order and that edge is created at a different
+moment — or not at all — and every later step can differ.
+
+This is what "rugged landscape" means, and it is why you cannot reason your
+way to a good ordering. You have to search.
+
+## 5.3 The 500 cap makes cliffs
+
+Most optimisation problems degrade gracefully: a slightly worse answer
+scores slightly worse. Not here. One elimination step at width 501 makes the
+**entire** answer void, no matter how good the other 2,425 steps were.
+
+So the search space has cliffs in it. A single swap can take a perfectly
+good ordering and make it worth nothing. This is also why a random starting
+order is useless on the big instances — it lands off the cliff immediately,
+every neighbouring order is also off the cliff, and hill climbing has no
+signal to follow.
+
+## 5.4 Two objectives, not one
+
+Hill climbing compares two things and keeps the better. That only works when
+"better" is a single number. Here there are two, and they conflict — so
+there is no single best answer to climb towards, only a curve of compromises
+(Part 1.5).
+
+Part 6.1 explains the trick we use to get around this without adding any
+machinery.
+
+## 5.5 And it plateaus
+
+Even with all that, the most common thing the climber runs into is simply
+**nothing happening**. The width is an integer, and usually a `max` over
+thousands of steps. Most single swaps do not change that maximum at all, so
+most candidate moves score exactly the same as the current one, are not
+strictly better, and get thrown away.
+
+You can watch this in the output: the climber does hundreds of thousands of
+evaluations and accepts perhaps a dozen. That is not a bug — it is what
+plain hill climbing on a rugged plateau looks like, and it is the honest
+baseline that more sophisticated methods have to beat.
+
+---
+
+# Part 6 — The algorithm: hill climbing
 
 Hill climbing is the simplest local search that exists:
 
@@ -381,7 +540,7 @@ taking small steps, and only ever stepping *upward*. You will certainly
 reach a hilltop. It might not be the highest hill — that is the known
 weakness of the method, and it is honest to say so.
 
-## 5.1 Handling two objectives with a single-objective method
+## 6.1 Handling two objectives with a single-objective method
 
 Hill climbing compares two things and keeps the better one. But our problem
 has *two* numbers, and we want a whole curve of answers. We resolve this in
@@ -398,7 +557,7 @@ contains a point at *every* width. So each climb donates its whole staircase
 to the shared front, even for the candidates it rejects. Choosing a target
 width only decides which number is being pushed down.
 
-## 5.2 The four moves
+## 6.2 The four moves
 
 From `Operators` in `hill_climbing.py`. Each takes a permutation and returns
 a new one — never modifying the original, because a rejected change must be
@@ -411,16 +570,23 @@ discarded cleanly.
 | `move_vertex` | remove one vertex and reinsert it elsewhere |
 | `reverse_segment` | reverse a short run of positions |
 
-## 5.3 Where it starts
+## 6.3 Where it starts
 
 A random order is a terrible start: on the bigger graphs it blows past the
-500 cap immediately, so every candidate is void and the climber has nothing
-to compare. The default is therefore **min-degree**: repeatedly eliminate
-whichever vertex currently has the fewest surviving neighbours. It is the
-classic textbook heuristic for orderings like this and gives the climber a
-legal, decent starting point.
+500 cap immediately (Part 5.3), so every candidate is void and the climber
+has nothing to compare. The default is therefore **min-degree**: repeatedly
+eliminate whichever vertex currently has the fewest surviving neighbours. It
+is the classic textbook heuristic for orderings like this and gives the
+climber a legal, decent starting point.
 
-## 5.4 What the climber actually finds
+It is written with plain sets, exactly as you would say it out loud. The one
+concession to speed is keeping a `degree` table and updating only the
+vertices that changed, rather than recounting every vertex from scratch each
+step — the difference between O(n²) and O(n³). Measured: toy 0.00 s,
+small 0.09 s, medium 0.72 s, large **5.25 s**. Slow, but it runs once per
+climb and it stays readable.
+
+## 6.4 What the climber actually finds
 
 Here is the payoff, and the clearest single illustration of what the search
 is *for*. Our hand-made answer from Part 2 scored `−114`. Run the climber
@@ -451,7 +617,7 @@ steps happen early, then set the threshold just past them.*
 
 ---
 
-# Part 6 — The files
+# Part 7 — The files
 
 ### `torso.py` — the problem
 
@@ -484,7 +650,7 @@ steps happen early, then set the threshold just past them.*
 ### `validate.py` — the referee
 
 Re-implements the evaluation **from scratch**, deliberately sharing no code
-with the search. See Part 8 for exactly what it is and is not.
+with the search. See Part 9 for exactly what it is and is not.
 
 ### `test_correctness.py` — the proof
 
@@ -494,7 +660,7 @@ trusted.
 
 ---
 
-# Part 7 — Running it
+# Part 8 — Running it
 
 ```bash
 # prove the code is correct before trusting any of it
@@ -532,9 +698,9 @@ to climb at), `--seed` (reproducibility), `--start random|min_degree`,
 
 ---
 
-# Part 8 — Why you can trust the numbers
+# Part 9 — Why you can trust the numbers
 
-## 8.1 What the validator is, and what it is not
+## 9.1 What the validator is, and what it is not
 
 **It is not ESA's code.** The organisers' official evaluator
 (`graph_torso_udp`) is not included in this repository. `validate.py` is an
@@ -556,7 +722,7 @@ What it does **not** do is guarantee ESA would return the same number. For
 that you would run the official evaluator. Treat this as a strong
 self-consistency check, not as the competition's own verdict.
 
-## 8.2 The fast evaluator is checked against the obvious one
+## 9.2 The fast evaluator is checked against the obvious one
 
 `torso.py` contains the evaluation twice: `degrees_slow()` with plain sets —
 the version you should read — and `degrees()` with bitsets.
@@ -575,7 +741,7 @@ Hill climbing needs thousands of evaluations, so the readable version simply
 cannot run the big instances — but it can prove the fast one honest on the
 small ones.
 
-## 8.3 What `test_correctness.py` checks
+## 9.3 What `test_correctness.py` checks
 
 | # | check | ground truth used |
 |---|---|---|
@@ -589,7 +755,7 @@ All 22 pass.
 
 ---
 
-# Part 9 — What to expect
+# Part 10 — What to expect
 
 Indicative runs on a laptop, seconds to a minute each:
 
