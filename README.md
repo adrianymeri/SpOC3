@@ -4,20 +4,21 @@ This branch contains the **simplest possible** working solution to the ESA
 SpOC-3 "Torso Decompositions" problem, written so that someone who has never
 seen the problem can read it in one sitting and understand all of it.
 
-Four files, **pure Python standard library** — no numpy, no packages, no
+Five files, **pure Python standard library** — no numpy, no packages, no
 build step. If you have `python3`, everything here runs.
 
 ```
-torso.py           the problem: graph, solution, evaluation, scoring
-hill_climbing.py   the search: four operators, one accept rule
-generate.py        make instances: toy, random, planted
-validate.py        check an answer is legal and re-score it
-data/              the three competition graphs + a 12-vertex toy
+torso.py             the problem: graph, solution, evaluation, scoring
+hill_climbing.py     the search: four operators, one accept rule
+generate.py          make instances: toy, random, planted
+validate.py          check an answer is legal and re-score it
+test_correctness.py  22 checks proving the above is right
+data/                the three competition graphs + a 12-vertex toy
 ```
 
-Read this file top to bottom and you will know: what the problem is, how to
-solve a small instance **by hand**, how the score is computed, how the
-algorithm works, and how to run it.
+Read this file top to bottom and you will know: what the problem is, how an
+answer is written down, how to solve a small instance **by hand**, how the
+score is computed, how the algorithm works, and how to run it.
 
 ---
 
@@ -106,20 +107,77 @@ Your answer to the problem is two things:
 | **`perm`** | an **order** in which to eliminate the vertices — a permutation of `0 … n-1` |
 | **`t`** | a **threshold**: how many vertices at the front of `perm` are eliminated *before we start measuring* |
 
-That is the entire decision. An answer is just a list of `n` numbers plus
-one extra number, e.g. for the toy instance:
-
-```
-[5, 4, 11, 10, 0, 1, 2, 3, 9, 6, 7, 8]  and  t = 9
- └──────────────────┬──────────┘  └──┬──┘
-   eliminated first            the "torso"
-   (not measured)             (measured)
-```
-
 The vertices from position `t` onwards are called the **torso**. Its size is
 `n − t`.
 
-## 1.4 The two objectives
+```
+[5, 4, 11, 10, 0, 1, 2, 3, 9, 6, 7, 8]   with t = 9
+ └──────────────────┬──────────┘  └──┬──┘
+   eliminated first            the "torso"
+   (not measured for width)     (measured)
+```
+
+## 1.4 How an answer is written down — the decision vector
+
+That has to be stored in a form a program can read. The competition's
+format is deliberately plain: **one flat list of integers**, called a
+**decision vector**.
+
+```
+decision vector = [ perm[0], perm[1], ..., perm[n-1],  t ]
+                   └──────────── n numbers ─────────┘  └┬┘
+                     the elimination order            threshold
+```
+
+Its length is always `n + 1`: the permutation, then one extra number on the
+end. For the toy instance (`n = 12`) a decision vector is 13 numbers:
+
+```
+[5, 4, 11, 10, 0, 1, 2, 3, 9, 6, 7, 8, 9]
+ └───────────── perm (12 numbers) ─────┘ └┬┘
+                                       t = 9
+```
+
+Read it as: *eliminate 5 first, then 4, then 11, … and start measuring from
+position 9.*
+
+A decision vector is **legal** only if all of these hold — `validate.py`
+checks every one:
+
+| rule | why |
+|---|---|
+| length is exactly `n + 1` | one slot per vertex, plus the threshold |
+| the first `n` entries are a permutation of `0 … n-1` | every vertex eliminated exactly once, none twice, none missing |
+| `0 ≤ t < n` | the threshold must point at a real position |
+| no elimination step exceeds width 500 | the organisers' hard cap (see 1.6) |
+
+**One decision vector gives exactly one point** `(width, t)` on the
+trade-off curve. To describe a whole curve you need several, so a
+**submission** is a *list* of decision vectors — at most **20**:
+
+```json
+{
+  "instance": "toy.gr",
+  "n": 12,
+  "score": -121,
+  "decisionVector": [
+    [7, 1, 8, 2, 9, 5, 0, 3, 10, 6, 11, 4, 11],
+    [7, 1, 8, 2, 9, 5, 0, 3, 10, 6, 11, 4, 10],
+    [7, 1, 8, 2, 9, 5, 0, 3, 10, 6, 11, 4,  2],
+    [7, 1, 8, 2, 9, 5, 0, 3, 10, 6, 11, 4,  0]
+  ]
+}
+```
+
+Notice that all four vectors here share the **same permutation** and differ
+only in their last number. That is the staircase of Part 2.1 written out:
+one good ordering, read at four different thresholds, giving four different
+trade-off points. Different vectors *may* use different permutations — on
+the real instances they usually do — but they do not have to.
+
+`hill_climbing.py` writes exactly this file; `validate.py` reads it.
+
+## 1.5 The two objectives
 
 Eliminate the vertices in order. At each step `i`, write down:
 
@@ -150,7 +208,7 @@ These two goals **fight each other**:
 So there is no single best answer. There is a **trade-off curve**, and your
 job is to map it out.
 
-## 1.5 The one hard rule
+## 1.6 The one hard rule
 
 If `deg[i] > 500` at **any** step — including the eliminated head, before
 `t` — the whole answer is **void**. Not penalised: void. The code marks this
@@ -225,7 +283,8 @@ points, for free:
 
 **One evaluation of one permutation yields a whole staircase of answers.**
 This is `Solution.staircase()` in `torso.py`, and it is why the search code
-is so short.
+is so short. It is also why the four decision vectors in Part 1.4 could
+share a permutation.
 
 ---
 
@@ -280,8 +339,8 @@ So **more negative is better**. A score of `−121` beats `−114`.
 
 Two more rules:
 
-- **At most 20 points** may be submitted. On big graphs you will find
-  hundreds of trade-off points and must choose the best 20.
+- **At most 20 decision vectors** may be submitted. On the big graphs you
+  will find hundreds of trade-off points and must choose the best 20.
 - **Dominated points are wasted.** If point A has both a width no larger and
   a `t` no larger than point B, then B contributes nothing. `validate.py`
   warns about these.
@@ -415,25 +474,32 @@ steps happen early, then set the threshold just past them.*
 - `toy` — the 12-vertex graph used throughout this document.
 - `random` — Erdős–Rényi: every possible edge present with probability `p`.
   No structure; a neutral baseline.
-- `planted` — mirrors the real competition instances: several low-width
-  components glued by one dense core. The glue is what forces the width up,
-  so you know in advance where the difficulty lives. Writes a `.meta.json`
-  recording the structure it planted.
+- `planted` — mirrors the *shape* of the real competition instances: several
+  low-width components glued by one dense core. The glue is what forces the
+  width up, so you know in advance where the difficulty lives. Writes a
+  `.meta.json` recording the structure it planted. This is our own
+  generator, not the organisers' — it reproduces the published description
+  of how the instances are built, not their exact code.
 
 ### `validate.py` — the referee
 
 Re-implements the evaluation **from scratch**, deliberately sharing no code
-with the search. A validator built on the search's own evaluator would
-happily confirm the search's bugs. It checks each answer is a genuine
-permutation with an in-range threshold and no step over the cap, that there
-are at most 20 points with no duplicates or dominated entries, and
-recomputes the score from the graph. Exit code `0` means everything passed.
+with the search. See Part 8 for exactly what it is and is not.
+
+### `test_correctness.py` — the proof
+
+22 checks that pin the evaluator and the scoring against independent ground
+truth. Run it first; if it passes, the numbers everything else prints can be
+trusted.
 
 ---
 
 # Part 7 — Running it
 
 ```bash
+# prove the code is correct before trusting any of it
+python3 test_correctness.py
+
 # make the toy instance
 python3 generate.py --kind toy --out data/toy.gr
 
@@ -468,10 +534,34 @@ to climb at), `--seed` (reproducibility), `--start random|min_degree`,
 
 # Part 8 — Why you can trust the numbers
 
-**The fast evaluator is checked against the obvious one.** `torso.py`
-contains the evaluation twice: `degrees_slow()` with plain sets — the version
-you should read — and `degrees()` with bitsets. `Solution.check()` asserts
-they produce identical output, and `--self-check` runs it before searching.
+## 8.1 What the validator is, and what it is not
+
+**It is not ESA's code.** The organisers' official evaluator
+(`graph_torso_udp`) is not included in this repository. `validate.py` is an
+independent implementation of the **published rules** — the four legality
+conditions in Part 1.4, the 500 cap of Part 1.6, and the hypervolume of
+Part 3 — written from the specification rather than copied from anywhere.
+
+What that buys you is real but worth stating precisely:
+
+- it shares **no code with the search**, so a bug in `hill_climbing.py`
+  cannot make the validator agree with it;
+- it was cross-checked against the evaluator used throughout the main
+  research project — **28 of 28** random `(perm, t)` pairs and **120 of 120**
+  random hypervolume fronts agreed exactly;
+- `test_correctness.py` pins it further against a hand-worked example and a
+  brute-force area count.
+
+What it does **not** do is guarantee ESA would return the same number. For
+that you would run the official evaluator. Treat this as a strong
+self-consistency check, not as the competition's own verdict.
+
+## 8.2 The fast evaluator is checked against the obvious one
+
+`torso.py` contains the evaluation twice: `degrees_slow()` with plain sets —
+the version you should read — and `degrees()` with bitsets.
+`Solution.check()` asserts they produce identical output, and `--self-check`
+runs it before searching.
 
 The bitsets are not decoration. Measured, one evaluation costs:
 
@@ -485,7 +575,17 @@ Hill climbing needs thousands of evaluations, so the readable version simply
 cannot run the big instances — but it can prove the fast one honest on the
 small ones.
 
-**The referee is independent.** See `validate.py` above.
+## 8.3 What `test_correctness.py` checks
+
+| # | check | ground truth used |
+|---|---|---|
+| 1 | the hand-worked toy example | the Part 2 table, typed in by hand |
+| 2 | fast evaluator vs slow evaluator | two independent implementations |
+| 3 | hypervolume formula | brute-force count of covered grid squares |
+| 4 | every staircase point | re-evaluated directly at that `t` |
+| 5 | validator rejects bad input | five kinds of malformed decision vector |
+
+All 22 pass.
 
 ---
 
@@ -525,6 +625,8 @@ provably optimal answer there.
 | **fill-in** | the new edges created by an elimination |
 | **elimination order** (`perm`) | the order in which vertices are eliminated |
 | **threshold** (`t`) | how many vertices at the front are removed before measuring |
+| **decision vector** | one answer, written as `perm + [t]` — a list of `n + 1` integers |
+| **submission** | a list of at most 20 decision vectors |
 | **torso** | the vertices from position `t` onwards; size `n − t` |
 | **width** | the largest `deg` among the torso steps — minimise |
 | **clique** | a set of vertices all joined to each other |
@@ -533,4 +635,3 @@ provably optimal answer there.
 | **hypervolume** | the area the points dominate, measured to the corner `(n, n)` |
 | **score** | negative hypervolume — more negative is better |
 | **heuristic** | a method that finds good answers without proving they are best |
-```
