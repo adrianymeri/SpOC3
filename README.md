@@ -1,117 +1,451 @@
-# Torso Decompositions — plain hill climbing
+# Torso Decompositions — the problem, explained from scratch
 
-A deliberately simple, self-contained implementation of the SpOC-3 Torso
-Decompositions problem and a plain hill climber for it.
+This branch contains the **simplest possible** working solution to the ESA
+SpOC-3 "Torso Decompositions" problem, written so that someone who has never
+seen the problem can read it in one sitting and understand all of it.
 
-Four files, about 1,100 lines including comments, **pure Python standard
-library** — no numpy, no external packages, no build step. If you have
-`python3` you can run everything here.
+Four files, **pure Python standard library** — no numpy, no packages, no
+build step. If you have `python3`, everything here runs.
 
 ```
 torso.py           the problem: graph, solution, evaluation, scoring
 hill_climbing.py   the search: four operators, one accept rule
 generate.py        make instances: toy, random, planted
-validate.py        check a submission is legal and rescore it
-data/              the three competition graphs, plus generated ones
+validate.py        check an answer is legal and re-score it
+data/              the three competition graphs + a 12-vertex toy
 ```
+
+Read this file top to bottom and you will know: what the problem is, how to
+solve a small instance **by hand**, how the score is computed, how the
+algorithm works, and how to run it.
 
 ---
 
-## The problem in one page
+# Part 1 — The problem
 
-You are given an undirected graph on `n` vertices. You choose:
+## 1.1 What you are given
 
-- **`perm`** — an elimination *order*: a permutation of `0 .. n-1`
-- **`t`** — a *threshold*: how many vertices at the front of `perm` are
-  eliminated before we start measuring
+An **undirected graph**: a set of vertices (numbered `0, 1, 2, …`) and edges
+joining pairs of them. Nothing else. No weights, no directions.
 
-**Eliminating** a vertex means removing it and joining all of its
-not-yet-eliminated neighbours into a clique. That added edge set is called
-*fill-in*, and it is why eliminating vertices keeps making the surviving
-graph denser.
+Here is the toy instance in `data/toy.gr`, 12 vertices and 16 edges:
 
-At each step `i` record `deg[i]` — how many not-yet-eliminated neighbours
-`perm[i]` had when it was eliminated. Then:
+```
+vertex : neighbours
+   0   : 1, 2, 11
+   1   : 0, 2, 3
+   2   : 0, 1, 3
+   3   : 1, 2, 4
+   4   : 3, 5
+   5   : 4, 6
+   6   : 5, 7, 8
+   7   : 6, 8, 9
+   8   : 6, 7, 9
+   9   : 7, 8, 10
+  10   : 9, 11
+  11   : 0, 10
+```
 
-| objective | meaning | direction |
+Its shape is a ring made of four parts:
+
+```
+   ┌─────────────┐        ┌─────────────┐
+   │  cluster A  │──4──5──│  cluster B  │──10──11──┐
+   │  {0,1,2,3}  │ bridge │  {6,7,8,9}  │   tail   │
+   └─────────────┘        └─────────────┘          │
+          ▲                                        │
+          └────────────────────────────────────────┘
+                     (edge 11–0 closes the ring)
+```
+
+Cluster A is a triangle `{0,1,2}` with vertex `3` hanging off `1` and `2`.
+Cluster B is the same shape: triangle `{6,7,8}` with `9` hanging off `7`
+and `8`. The clusters are the dense parts; everything else is a thin path.
+
+The `.gr` file format is one edge per line, two numbers:
+
+```
+0 1
+0 2
+0 11
+1 2
+...
+```
+
+## 1.2 Eliminating a vertex, and fill-in
+
+The whole problem revolves around one operation: **eliminating** a vertex.
+
+> To eliminate vertex `u`: delete `u` from the graph, then add edges so that
+> **all of `u`'s remaining neighbours become joined to each other** (they
+> form a clique).
+
+Those newly added edges are called **fill-in**. This is the crucial part:
+eliminating vertices does not simply shrink the graph, it also makes what
+remains **denser**.
+
+A three-line example. Suppose vertex `5` has neighbours `4` and `6`, and
+`4–6` is not an edge:
+
+```
+   before                  eliminate 5             after
+   4 ── 5 ── 6      →    remove 5, join      →    4 ──── 6
+                          its neighbours           (new edge: fill-in)
+```
+
+We started with 2 edges and ended with 1, but that edge `4–6` did not exist
+before. Do this a few hundred times and the surviving graph can become far
+denser than the one you started with.
+
+## 1.3 What you choose
+
+Your answer to the problem is two things:
+
+| you choose | what it is |
+|---|---|
+| **`perm`** | an **order** in which to eliminate the vertices — a permutation of `0 … n-1` |
+| **`t`** | a **threshold**: how many vertices at the front of `perm` are eliminated *before we start measuring* |
+
+That is the entire decision. An answer is just a list of `n` numbers plus
+one extra number, e.g. for the toy instance:
+
+```
+[5, 4, 11, 10, 0, 1, 2, 3, 9, 6, 7, 8]  and  t = 9
+ └──────────────────┬──────────┘  └──┬──┘
+   eliminated first            the "torso"
+   (not measured)             (measured)
+```
+
+The vertices from position `t` onwards are called the **torso**. Its size is
+`n − t`.
+
+## 1.4 The two objectives
+
+Eliminate the vertices in order. At each step `i`, write down:
+
+> `deg[i]` = how many of `perm[i]`'s neighbours were **still present** when
+> it was eliminated (counting fill-in edges added by earlier steps)
+
+Then the two numbers being judged are:
+
+| objective | formula | meaning |
 |---|---|---|
-| `width = max(deg[i] for i >= t)` | how wide the torso got | minimise |
-| `t` | how many vertices we had to remove | minimise |
+| **width** | `max(deg[i] for i ≥ t)` | the worst step in the torso |
+| **t** | `t` | how many vertices you had to remove first |
 
-Smaller `t` means we removed **fewer** vertices, so the surviving torso
-(`n - t` vertices) is **larger**. That is the trade-off: allow a larger
-width and you can keep more of the graph.
+**Both are minimised.** Lower width is better, and lower `t` is better.
 
-One hard rule: if `deg[i] > 500` at **any** step — including the eliminated
-head, before `t` — the solution is void.
+Why lower `t` is better is worth pausing on: `t` counts the vertices you
+*threw away*, so a smaller `t` means the surviving torso (`n − t` vertices)
+is **larger**. You are trying to keep as much of the graph as possible while
+keeping the width down.
 
-### The trick that keeps the code short
+These two goals **fight each other**:
 
-For one fixed `perm` you do **not** need a separate evaluation per `t`.
-Compute `deg[]` once, then for every `t`
+- Want a tiny width? Eliminate almost everything first — but then `t` is
+  huge and the torso is nearly empty.
+- Want `t = 0` (keep the whole graph)? Then the width is whatever the best
+  possible ordering of the entire graph gives — which may be large.
 
-```
-width(t) = max(deg[t], deg[t+1], ..., deg[n-1])
-```
+So there is no single best answer. There is a **trade-off curve**, and your
+job is to map it out.
 
-which is a running maximum from the back. So **one pass over one
-permutation yields a whole staircase of (width, t) points.** That is
-`Solution.staircase()`, and it is why the search can be as simple as it is.
+## 1.5 The one hard rule
 
-### Scoring
+If `deg[i] > 500` at **any** step — including the eliminated head, before
+`t` — the whole answer is **void**. Not penalised: void. The code marks this
+by returning a width of `501`.
 
-The competition keeps at most **20** of your points and measures the area
-they dominate relative to the corner `(n, n)`. The official score is the
-**negative** of that area, so **more negative is better**.
-
----
-
-## The algorithm
-
-Hill climbing, in full:
-
-1. start from some solution `S`
-2. make a small random change to a **copy** of it → `R`
-3. if `R` is better than `S`, keep `R`; otherwise throw it away
-4. repeat until out of time
-
-No population, no temperature, no memory, no learning. In
-`HillClimber.climb` this is six lines.
-
-**Handling two objectives.** We do the simplest thing that produces a real
-front: pick a target width `W` and hill-climb to minimise `t` at that
-width. Each climb is then an ordinary single-objective climb — one number
-going down. Run one climb per target width and collect the results.
-
-Because of the staircase trick, every permutation the climber looks at
-donates points at *every* width to the shared front, even the ones it
-rejects. Choosing a target width just decides which number is being pushed
-down.
-
-**Operators** (`Operators.ALL`): `swap_neighbours`, `swap_any`,
-`move_vertex`, `reverse_segment`.
-
-**Starting point** (`Starts`): `min_degree` (default) or `random`. On the
-larger graphs a random order breaks the 500 cap immediately and the climber
-has nothing to work with, so min-degree is the sensible default.
+This catches people out: it is tempting to think the head does not matter
+because it is not measured. It is not measured for *width*, but it still has
+to obey the cap.
 
 ---
 
-## Running it
+# Part 2 — Solving the toy instance by hand
+
+Let us do a complete example with no computer. Take this elimination order:
+
+```
+perm = [5, 4, 11, 10, 0, 1, 2, 3, 9, 6, 7, 8]
+```
+
+Eliminate them one at a time. At each step, look at which neighbours are
+**still present** (i.e. appear *later* in the order), count them, and add
+the fill-in edges.
+
+| step | vertex | neighbours still present | `deg` | fill-in added |
+|---:|---:|---|---:|---|
+| 0 | 5 | 4, 6 | **2** | 4–6 |
+| 1 | 4 | 3, 6 | **2** | 3–6 |
+| 2 | 11 | 0, 10 | **2** | 0–10 |
+| 3 | 10 | 0, 9 | **2** | 0–9 |
+| 4 | 0 | 1, 2, 9 | **3** | 1–9, 2–9 |
+| 5 | 1 | 2, 3, 9 | **3** | 3–9 |
+| 6 | 2 | 3, 9 | **2** | — |
+| 7 | 3 | 6, 9 | **2** | 6–9 |
+| 8 | 9 | 6, 7, 8 | **3** | — |
+| 9 | 6 | 7, 8 | **2** | — |
+| 10 | 7 | 8 | **1** | — |
+| 11 | 8 | — | **0** | — |
+
+Follow step 1 to see fill-in working: vertex `4`'s original neighbours were
+`3` and `5`. But `5` was already eliminated at step 0, and that step added
+the edge `4–6`. So when we eliminate `4`, its surviving neighbours are `3`
+and **`6`** — a vertex it was never originally connected to.
+
+So:
+
+```
+deg = [2, 2, 2, 2, 3, 3, 2, 2, 3, 2, 1, 0]
+```
+
+## 2.1 Reading every answer off one table
+
+Here is the fact that makes this problem tractable. The width is
+`max(deg[i] for i ≥ t)`. So to get the width for **every** `t`, sweep the
+`deg` array from the right, keeping a running maximum:
+
+| `t` | 11 | 10 | 9 | 8 | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `deg[t]` | 0 | 1 | 2 | 3 | 2 | 2 | 3 | 3 | 2 | 2 | 2 | 2 |
+| **width** | **0** | **1** | **2** | **3** | 3 | 3 | 3 | 3 | 3 | 3 | 3 | **3** |
+
+Each time the running maximum steps up, we have found the **smallest `t`**
+that achieves that width — and smaller `t` is better, so that is exactly the
+point we want. This one permutation therefore gives us four trade-off
+points, for free:
+
+| width | smallest `t` | torso size (`n − t`) |
+|---:|---:|---:|
+| 0 | 11 | 1 |
+| 1 | 10 | 2 |
+| 2 | 9 | 3 |
+| 3 | 0 | 12 |
+
+**One evaluation of one permutation yields a whole staircase of answers.**
+This is `Solution.staircase()` in `torso.py`, and it is why the search code
+is so short.
+
+---
+
+# Part 3 — How the score is computed
+
+We now have a set of `(width, t)` points. How good are they?
+
+The competition uses **hypervolume**: the area those points dominate,
+measured against the corner `(n, n)`.
+
+Think of it as a graph with width across and `t` up. Each point `(w, t)`
+"covers" the whole rectangle from itself out to the corner `(n, n)`. The
+score is the **area of the union** of all those rectangles. More area is
+better.
+
+```
+   t
+   12 ┤ ← corner (n,n) = (12,12)
+      │
+   11 ┤██ ● (0,11)
+      │████
+   10 ┤█████ ● (1,10)
+      │███████
+    9 ┤████████ ● (2,9)
+      │
+      │        (everything below and right of a point is covered)
+    0 ┤████████████████████ ● (3,0)
+      └┬───┬───┬───┬────────┬
+       0   1   2   3   ...  12   width
+```
+
+To compute it, sort the points by width and add up vertical strips. Each
+point owns the strip from its own width to the **next** point's width, and
+that strip is `n − t` tall:
+
+```
+point (0, 11):  strip width 1−0 = 1,   height 12−11 = 1    →   1 × 1  =   1
+point (1, 10):  strip width 2−1 = 1,   height 12−10 = 2    →   1 × 2  =   2
+point (2,  9):  strip width 3−2 = 1,   height 12− 9 = 3    →   1 × 3  =   3
+point (3,  0):  strip width 12−3 = 9,  height 12− 0 = 12   →   9 × 12 = 108
+                                                            ─────────────
+                                                     total area = 114
+```
+
+**The official score is the negative of the area:**
+
+```
+score = −114
+```
+
+So **more negative is better**. A score of `−121` beats `−114`.
+
+Two more rules:
+
+- **At most 20 points** may be submitted. On big graphs you will find
+  hundreds of trade-off points and must choose the best 20.
+- **Dominated points are wasted.** If point A has both a width no larger and
+  a `t` no larger than point B, then B contributes nothing. `validate.py`
+  warns about these.
+
+---
+
+# Part 4 — Why this is hard
+
+The number of orderings is `n!`. For the toy that is 479 million; for
+`small-graph` (n = 1357) it is a number with over 3,600 digits. You cannot
+try them all, and there is no known formula for the best one.
+
+Worse, the objective is **not smooth**: swapping two vertices can change the
+fill-in cascade for every later step, so a tiny change to the input can
+cause a large, unpredictable change to the output.
+
+This is why we use a **heuristic** — a method that finds good answers
+without proving they are the best.
+
+---
+
+# Part 5 — The algorithm: hill climbing
+
+Hill climbing is the simplest local search that exists:
+
+```
+1.  start from some solution S
+2.  make a small random change to a COPY of it   →  R
+3.  if R is better than S, keep R; otherwise throw R away
+4.  repeat until out of time
+```
+
+That is the entire algorithm. No population, no temperature, no memory, no
+machine learning. In `HillClimber.climb` it is six lines of code.
+
+The name comes from the picture: you are standing on a hillside in fog,
+taking small steps, and only ever stepping *upward*. You will certainly
+reach a hilltop. It might not be the highest hill — that is the known
+weakness of the method, and it is honest to say so.
+
+## 5.1 Handling two objectives with a single-objective method
+
+Hill climbing compares two things and keeps the better one. But our problem
+has *two* numbers, and we want a whole curve of answers. We resolve this in
+the simplest way that still works:
+
+> Pick a **target width `W`**. Hill-climb to **minimise `t`** at that width.
+
+Now each climb is an ordinary single-objective climb — one number going
+down — which is exactly what makes it easy to explain. Run one climb per
+target width, collect the results, and you have your trade-off curve.
+
+And remember Part 2.1: every permutation the climber looks at already
+contains a point at *every* width. So each climb donates its whole staircase
+to the shared front, even for the candidates it rejects. Choosing a target
+width only decides which number is being pushed down.
+
+## 5.2 The four moves
+
+From `Operators` in `hill_climbing.py`. Each takes a permutation and returns
+a new one — never modifying the original, because a rejected change must be
+discarded cleanly.
+
+| operator | what it does |
+|---|---|
+| `swap_neighbours` | swap two adjacent positions |
+| `swap_any` | swap two positions anywhere |
+| `move_vertex` | remove one vertex and reinsert it elsewhere |
+| `reverse_segment` | reverse a short run of positions |
+
+## 5.3 Where it starts
+
+A random order is a terrible start: on the bigger graphs it blows past the
+500 cap immediately, so every candidate is void and the climber has nothing
+to compare. The default is therefore **min-degree**: repeatedly eliminate
+whichever vertex currently has the fewest surviving neighbours. It is the
+classic textbook heuristic for orderings like this and gives the climber a
+legal, decent starting point.
+
+## 5.4 What the climber actually finds
+
+Here is the payoff, and the clearest single illustration of what the search
+is *for*. Our hand-made answer from Part 2 scored `−114`. Run the climber
+for three seconds and it finds `−121`. The difference is one point:
+
+| | width | `t` | torso size |
+|---|---:|---:|---:|
+| our hand answer | 2 | 9 | 3 |
+| climber's answer | 2 | **2** | **10** |
+
+Same width, but the torso holds 10 vertices instead of 3. The order it
+found:
+
+```
+perm = [7, 1, 8, 2, 9, 5, 0, 3, 10, 6, 11, 4]
+deg  = [3, 3, 2, 2, 2, 2, 2, 2,  2, 2,  1, 0]
+        └──┬──┘
+       the only two expensive steps
+```
+
+Look at where the two `deg = 3` steps are: **positions 0 and 1**. With
+`t = 2` they sit in the eliminated head, so they are **not counted** in the
+width — while still obeying the 500 cap. Everything from position 2 onward
+costs at most 2.
+
+That is the whole game in one line: *arrange the ordering so the expensive
+steps happen early, then set the threshold just past them.*
+
+---
+
+# Part 6 — The files
+
+### `torso.py` — the problem
+
+- **`Graph`** — loads a `.gr` file. Stores the graph twice: `adj` (a list of
+  sets, the readable form) and `bits` (Python integers used as bitsets, the
+  fast form). Both describe the same graph.
+- **`Solution`** — one permutation, and everything derived from it:
+  `degrees()`, `staircase()`, `best_t_for_width()`.
+- **`Front`** — the collection of points we will submit, plus `best_k(20)`
+  to choose which 20 and `score()` to grade them.
+- **`hypervolume()`** — the area calculation from Part 3.
+
+### `hill_climbing.py` — the search
+
+`Operators` (the four moves), `Starts` (random or min-degree), and
+`HillClimber` (steps 1–4).
+
+### `generate.py` — making instances
+
+- `toy` — the 12-vertex graph used throughout this document.
+- `random` — Erdős–Rényi: every possible edge present with probability `p`.
+  No structure; a neutral baseline.
+- `planted` — mirrors the real competition instances: several low-width
+  components glued by one dense core. The glue is what forces the width up,
+  so you know in advance where the difficulty lives. Writes a `.meta.json`
+  recording the structure it planted.
+
+### `validate.py` — the referee
+
+Re-implements the evaluation **from scratch**, deliberately sharing no code
+with the search. A validator built on the search's own evaluator would
+happily confirm the search's bugs. It checks each answer is a genuine
+permutation with an in-range threshold and no step over the cap, that there
+are at most 20 points with no duplicates or dominated entries, and
+recomputes the score from the graph. Exit code `0` means everything passed.
+
+---
+
+# Part 7 — Running it
 
 ```bash
-# 1. make a tiny instance you can check by hand
+# make the toy instance
 python3 generate.py --kind toy --out data/toy.gr
 
-# 2. climb, and prove the fast evaluator matches the obvious one
+# solve it, and verify the fast evaluator matches the obvious one
 python3 hill_climbing.py --instance data/toy.gr --seconds 5 \
         --self-check --out out/toy.json
 
-# 3. check the answer with code that shares nothing with the search
+# have the independent referee check the answer
 python3 validate.py --instance data/toy.gr --submission out/toy.json
 ```
 
-The three competition graphs are in `data/`:
+The three real competition graphs:
 
 ```bash
 python3 hill_climbing.py --instance data/small-graph.gr  --seconds 60  --out out/small.json
@@ -119,51 +453,45 @@ python3 hill_climbing.py --instance data/medium-graph.gr --seconds 300 --out out
 python3 hill_climbing.py --instance data/large-graph.gr  --seconds 600 --out out/large.json
 ```
 
-Generate your own:
+Make your own:
 
 ```bash
 python3 generate.py --kind random  --n 200 --p 0.05 --out data/rand200.gr
 python3 generate.py --kind planted --n 400 --components 5 --glue-size 40 --out data/planted400.gr
 ```
 
-`planted` mirrors the structure of the real competition instances — several
-low-width components glued by one dense core. The glue is what forces the
-width up, so you know in advance where the difficulty lives; the generator
-writes a `.meta.json` recording the structure it planted.
+Useful flags: `--seconds` (total budget), `--widths` (how many target widths
+to climb at), `--seed` (reproducibility), `--start random|min_degree`,
+`--self-check`.
 
 ---
 
-## Two things worth demonstrating
+# Part 8 — Why you can trust the numbers
 
-**The fast evaluator is honest.** `torso.py` contains the evaluation twice:
-`degrees_slow()` with plain sets (the obvious version — read this one) and
-`degrees()` with Python-int bitsets. `Solution.check()` asserts they agree,
-and `--self-check` runs it before the search starts.
+**The fast evaluator is checked against the obvious one.** `torso.py`
+contains the evaluation twice: `degrees_slow()` with plain sets — the version
+you should read — and `degrees()` with bitsets. `Solution.check()` asserts
+they produce identical output, and `--self-check` runs it before searching.
 
-Bitsets are not an optimisation for its own sake. Measured per evaluation:
+The bitsets are not decoration. Measured, one evaluation costs:
 
-| instance | sets | bitsets |
+| instance | with sets | with bitsets |
 |---|---:|---:|
-| small-graph (n=1357) | 0.04 s | 0.01 s |
-| medium-graph (n=1399) | 3.9 s | 0.15 s |
-| large-graph (n=2426) | 35.4 s | 0.63 s |
+| small-graph (n = 1357) | 0.04 s | 0.01 s |
+| medium-graph (n = 1399) | 3.9 s | 0.15 s |
+| large-graph (n = 2426) | 35.4 s | 0.63 s |
 
-Hill climbing needs thousands of evaluations, so the set version simply
-cannot run the big instances.
+Hill climbing needs thousands of evaluations, so the readable version simply
+cannot run the big instances — but it can prove the fast one honest on the
+small ones.
 
-**The validator is independent.** `validate.py` deliberately re-implements
-the evaluation from scratch with sets rather than importing anything from
-the search. A validator that shared the search's code would believe the
-search's bugs. It checks each vector is a genuine permutation with an
-in-range threshold and no step over the cap, checks the submission has at
-most 20 points with no duplicates or dominated entries, and recomputes the
-score from the graph. Exit code 0 means everything passed.
+**The referee is independent.** See `validate.py` above.
 
 ---
 
-## What to expect
+# Part 9 — What to expect
 
-Indicative runs on a laptop, a few seconds to a minute each:
+Indicative runs on a laptop, seconds to a minute each:
 
 | instance | n | budget | score |
 |---|---:|---:|---:|
@@ -172,13 +500,37 @@ Indicative runs on a laptop, a few seconds to a minute each:
 | medium-graph | 1399 | 22 s | −1,601,788 |
 | large-graph | 2426 | 25 s | −4,794,745 |
 
-These are honest hill-climbing numbers with tiny budgets, and they are
-meant as a **baseline** — the point of this branch is that the method is
-simple enough to read in one sitting, not that it is competitive. Longer
-budgets and more target widths improve all of them.
+These are honest plain-hill-climbing numbers with tiny budgets. The point of
+this branch is that the method is simple enough to read in one sitting — not
+that it is competitive. Longer budgets and more target widths improve all of
+them.
 
-One detail worth pointing at on `large-graph`: the climber reliably finds
-its widest point at **width 499 with `t = 0`** (the whole graph as torso).
-That is not luck. The graph contains a 500-vertex clique, and a clique of
-size `k` forces elimination width at least `k − 1`, so 499 is provably the
-best any method can do there.
+One detail worth pointing at on `large-graph`: the climber reliably finds its
+widest point at **width 499 with `t = 0`**, keeping the entire graph. That is
+not luck, and it cannot be improved on. The graph contains a **500-vertex
+clique** — 500 vertices all joined to each other. When you eliminate the
+first vertex of a clique of size `k`, its other `k − 1` members are all still
+present, so `deg ≥ k − 1` no matter what order you choose. With `k = 500`
+that forces a width of at least 499. The simple hill climber finds the
+provably optimal answer there.
+
+---
+
+# Glossary
+
+| term | meaning |
+|---|---|
+| **vertex / edge** | a node of the graph / a connection between two nodes |
+| **eliminate** | remove a vertex and join all its surviving neighbours |
+| **fill-in** | the new edges created by an elimination |
+| **elimination order** (`perm`) | the order in which vertices are eliminated |
+| **threshold** (`t`) | how many vertices at the front are removed before measuring |
+| **torso** | the vertices from position `t` onwards; size `n − t` |
+| **width** | the largest `deg` among the torso steps — minimise |
+| **clique** | a set of vertices all joined to each other |
+| **dominated** | point A dominates B if A is no worse on both objectives and better on at least one |
+| **Pareto front** | the set of points not dominated by any other — the trade-off curve |
+| **hypervolume** | the area the points dominate, measured to the corner `(n, n)` |
+| **score** | negative hypervolume — more negative is better |
+| **heuristic** | a method that finds good answers without proving they are best |
+```
