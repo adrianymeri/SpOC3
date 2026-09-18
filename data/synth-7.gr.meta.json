@@ -1,0 +1,15 @@
+{
+  "family": "large",
+  "template": "large-graph.gr",
+  "cliques_kept": [
+    500,
+    400,
+    300
+  ],
+  "vertices_relabelled": true,
+  "peripheral_edges_rewired": 89900,
+  "seed": 7,
+  "n": 2426,
+  "edges": 253895,
+  "min_degree_width": 499
+}

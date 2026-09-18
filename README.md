@@ -4,16 +4,18 @@ This branch contains the **simplest possible** working solution to the ESA
 SpOC-3 "Torso Decompositions" problem, written so that someone who has never
 seen the problem can read it in one sitting and understand all of it.
 
-Five files, **pure Python standard library** — no numpy, no packages, no
-build step. If you have `python3`, everything here runs.
+**Pure Python standard library** — no numpy, no packages, no build step. If
+you have `python3`, everything here runs.
 
 ```
-torso.py             the problem: graph, solution, evaluation, scoring
-hill_climbing.py     the search: four operators, one accept rule
-generate.py          make instances: toy, random, planted
-validate.py          check an answer is legal and re-score it
-test_correctness.py  22 checks proving the above is right
-data/                the three competition graphs + a 12-vertex toy
+esa_eval.py            the official scoring, ported from the main project
+torso.py               graphs, solutions, the front we submit
+hill_climbing.py       the search: four operators, one accept rule
+generate.py            make instances
+validate.py            check an answer is legal and re-score it
+test_correctness.py    22 checks proving the above is right
+data/                  3 competition graphs, 7 synthetic, a toy
+leaderboard-references/ the winning entry, and a CPU port of it
 ```
 
 Read this file top to bottom and you will know: what the problem is, how an
@@ -700,27 +702,29 @@ to climb at), `--seed` (reproducibility), `--start random|min_degree`,
 
 # Part 9 — Why you can trust the numbers
 
-## 9.1 What the validator is, and what it is not
+## 9.1 Where the scoring comes from
 
-**It is not ESA's code.** The organisers' official evaluator
-(`graph_torso_udp`) is not included in this repository. `validate.py` is an
-independent implementation of the **published rules** — the four legality
-conditions in Part 1.4, the 500 cap of Part 1.6, and the hypervolume of
-Part 3 — written from the specification rather than copied from anywhere.
+All scoring goes through `esa_eval.py`, which is a verbatim port of `core.py`
+from the main research project (`test/gbdt-novelty`). That file is documented
+as matching ESA's `graph_torso_udp._perm2fitness`, and it is the code every
+leaderboard-verified score in that project was computed with. Ported across:
+`MAX_TW = 500`, the bitset evaluator, `hypervolume_2d`, and
+`top_k_by_hv_contribution` — the exact dynamic program that picks the best 20
+points.
 
-What that buys you is real but worth stating precisely:
+The port was checked against the original, not assumed: identical `MAX_TW`,
+identical bitsets, and agreement on 34/34 random `(perm, t)` pairs, 160/160
+random hypervolumes, and 50/50 HSSP subsets.
 
-- it shares **no code with the search**, so a bug in `hill_climbing.py`
-  cannot make the validator agree with it;
-- it was cross-checked against the evaluator used throughout the main
-  research project — **28 of 28** random `(perm, t)` pairs and **120 of 120**
-  random hypervolume fronts agreed exactly;
-- `test_correctness.py` pins it further against a hand-worked example and a
-  brute-force area count.
+One caveat, stated plainly so it never becomes an overclaim: this is not
+literally ESA's own source file, which was never published with the challenge
+materials. It is the evaluator the main project validated against the live
+leaderboard over several hundred submissions. If the official file turns up,
+dropping it into `esa_eval.py` is the only change needed.
 
-What it does **not** do is guarantee ESA would return the same number. For
-that you would run the official evaluator. Treat this as a strong
-self-consistency check, not as the competition's own verdict.
+`validate.py` scores with `esa_eval.py` and *also* re-walks every vector with
+a plain set-based implementation written separately. If those two ever
+disagree it says so, rather than quietly trusting one.
 
 ## 9.2 The fast evaluator is checked against the obvious one
 
@@ -755,7 +759,113 @@ All 22 pass.
 
 ---
 
-# Part 10 — What to expect
+# Part 10 — The instances, and comparing against the winners
+
+## 10.1 The seven extra instances
+
+`data/` holds the three competition graphs plus seven synthetic ones,
+`synth-1` to `synth-7`: three in the small family, two medium, two large.
+They exist so a solver can be tested on something it was not tuned on.
+
+The obvious way to make them would be to keep the degree sequence and rewire
+the edges — a double edge swap preserves every vertex's degree exactly. That
+was the first attempt, and it does not work:
+
+| template | its width | after degree-preserving rewiring |
+|---|---:|---:|
+| small-graph | **20** | 274 |
+| medium-graph | **276** | 621 |
+| large-graph | 499 | 499 |
+
+small-graph and medium-graph are *structured* graphs that happen to have a
+particular degree sequence. Rewiring keeps the degrees and throws the
+structure away, leaving something an order of magnitude harder — a different
+problem wearing the same costume. Only large-graph survived, because its
+difficulty lives in three big cliques and those were frozen.
+
+So each family is generated the way its template is built, and checked
+against the template's measured width rather than its degree list:
+
+| family | construction | count |
+|---|---|---|
+| small | grid + pendant vertices — sparse, triangle-free, small separators | 3 |
+| medium | dense blocks joined by a controlled number of cross edges | 2 |
+| large | the template's cliques kept, vertices relabelled, periphery rewired | 2 |
+
+Large keeps its cliques deliberately. A K500 forces width ≥ 499 whatever you
+do, so an instance in that family without it would be a different problem.
+Relabelling gives the cliques fresh membership, so a twin is not the original
+with a few edges moved.
+
+## 10.2 Do they behave like the originals?
+
+| instance | family | n | edges | min-degree width | hill climbing, 12s |
+|---|---|---:|---:|---:|---:|
+| small-graph | — *template* | 1357 | 2280 | 20 | −1,814,527 |
+| **synth-1** | small | 1357 | 2282 | 18 | −1,818,560 |
+| **synth-2** | small | 1357 | 2282 | 18 | −1,817,317 |
+| **synth-3** | small | 1357 | 2282 | 16 | −1,819,889 |
+| medium-graph | — *template* | 1399 | 13799 | 276 | −1,607,564 |
+| **synth-4** | medium | 1399 | 14056 | 282 | −1,600,724 |
+| **synth-5** | medium | 1399 | 14055 | 328 | −1,608,658 |
+| large-graph | — *template* | 2426 | 253895 | 499 | −4,794,427 |
+| **synth-6** | large | 2426 | 253895 | 499 | −4,795,089 |
+| **synth-7** | large | 2426 | 253895 | 499 | −4,795,246 |
+
+Each `synth-N.gr` has a `synth-N.gr.meta.json` beside it recording which
+family it belongs to, the seed, and its measured width.
+
+Scores land within 0.4% of their templates on small and medium, and within
+0.02% on large. That is the property that matters: the extras are a fair
+test, not an easier or harder one.
+
+Make more with:
+
+```bash
+python3 generate.py --family small  --seed 11 --out data/synth-8.gr
+python3 generate.py --family medium --seed 12 --out data/synth-9.gr
+python3 generate.py --family large  --seed 13 --out data/synth-10.gr
+```
+
+## 10.3 Comparing against the leaderboard entries
+
+`leaderboard-references/` holds the winning entry and a CPU reimplementation
+of it. The original needs an NVIDIA GPU, a compiled CUDA kernel and PyTorch,
+and has the three official graph sizes hardcoded — so it cannot run here, and
+it is vendored for reference and attribution only. **It ships with no licence
+file**; see that folder's README before publishing this repository anywhere.
+
+Its method is worth understanding because it is so different from hill
+climbing. A candidate is not a permutation but a *weight vector over
+per-vertex features* — degree profile, Laplacian eigenvector coordinates,
+and polynomial combinations of those — and the ordering is read off by
+sorting `w · features`. Evolution searches the space of scoring rules rather
+than the space of orderings.
+
+`neuroevo_cpu.py` is that algorithm without the GPU, accepting any instance
+and scoring through the same `esa_eval.py`, so the numbers are comparable:
+
+```bash
+cd leaderboard-references
+python3 neuroevo_cpu.py --instance ../data/small-graph.gr --seconds 60
+```
+
+small-graph, ~30 s each on one laptop core:
+
+| solver | score |
+|---|---:|
+| `hill_climbing.py` | −1,814,521 |
+| `neuroevo_cpu.py` | −1,798,068 |
+
+Plain hill climbing wins at this budget. That is the expected result and not
+a claim about the original entry: the learned-scoring-rule approach needs a
+large population to pay off, and a large population is exactly what the GPU
+was for. Any comparison here is a statement about **the methods at equal CPU
+budget**.
+
+---
+
+# Part 11 — What to expect
 
 Indicative runs on a laptop, seconds to a minute each:
 

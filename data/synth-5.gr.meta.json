@@ -1,0 +1,17 @@
+{
+  "family": "medium",
+  "blocks": 5,
+  "block_sizes": [
+    279,
+    279,
+    279,
+    279,
+    283
+  ],
+  "p_inside": 0.0705,
+  "cross_edges": 360,
+  "seed": 5,
+  "n": 1399,
+  "edges": 14055,
+  "min_degree_width": 328
+}
