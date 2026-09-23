@@ -1,0 +1,11 @@
+instance,n,solver,seed,score,seconds,valid
+small-graph,1357,min_degree,1,-1813181,0.2,True
+medium-graph,1399,min_degree,1,-1598465,1.3,True
+large-graph,2426,min_degree,1,-4793652,8.1,True
+synth-1,1357,min_degree,1,-1818533,0.1,True
+synth-2,1357,min_degree,1,-1817194,0.1,True
+synth-3,1357,min_degree,1,-1817194,0.1,True
+synth-4,1399,min_degree,1,-1547570,1.8,True
+synth-5,1399,min_degree,1,-1550828,1.9,True
+synth-6,2426,min_degree,1,-4793652,8.0,True
+synth-7,2426,min_degree,1,-4793652,7.9,True

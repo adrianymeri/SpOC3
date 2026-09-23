@@ -1,4 +1,29 @@
 __pycache__/
-out/
 *.pyc
+
+# macOS and IDE cruft
 .DS_Store
+.idea/
+
+# Solver output while a benchmark is running. The finished CSVs in kaggle/
+# are committed; these are the live logs behind them.
+kaggle/logs/
+bench.log
+
+# Regenerable by zipping the repo -- no reason to version 6 MB of duplicated
+# instances and source.
+kaggle/*.zip
+
+# Editor duplicates
+*copy*.ipynb
+
+# data/v3 is the abandoned small-family experiment: pendants clustered onto
+# 35 hosts to reproduce small-graph's open-twin structure. It matched the
+# structure exactly and still did not make the instances discriminating, so
+# synth-1..3 kept the original generator. The reasoning is recorded in
+# generate_v2.py; the graphs themselves are not used by anything.
+data/v3/
+
+# Superseded by kaggle/benchmark-*.csv and kaggle/merged.csv
+/benchmark.csv
+/results-for-sheet.csv

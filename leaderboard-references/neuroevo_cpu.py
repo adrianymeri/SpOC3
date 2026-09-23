@@ -137,6 +137,67 @@ def order_from_weights(weights, features, n):
     return sorted(range(n), key=lambda v: scores[v])
 
 
+def solve(graph, seconds, pop_size=40, elite_size=8, mut_std=0.3,
+          mut_prob=0.5, cosyne=0.05, eigenvectors=8, seed=1, verbose=False):
+    """Run the search and return (front, generations, evaluations).
+
+    Used by ../benchmark.py so the comparison runs both solvers in-process
+    with the same budget.
+    """
+    rng = random.Random(seed)
+    n = graph.n
+    features, _ = build_features(graph, eigenvectors)
+    dim = features.shape[0] if np is not None else len(features[0])
+    front = Front(n)
+
+    def make_weights():
+        if np is not None:
+            return np.random.default_rng(rng.randrange(1 << 30)).normal(0, 1, dim)
+        return [rng.gauss(0, 1) for _ in range(dim)]
+
+    population = [make_weights() for _ in range(pop_size)]
+    elites = []
+    evaluations = generations = 0
+    deadline = time.time() + seconds
+
+    while time.time() < deadline:
+        generations += 1
+        scored = []
+        for w in population:
+            if time.time() >= deadline:
+                break
+            solution = Solution(graph, order_from_weights(w, features, n))
+            front.add_solution(solution)
+            evaluations += 1
+            stairs = solution.staircase()
+            scored.append((stairs[-1][1] if stairs else n, w))
+
+        elites = sorted(elites + scored, key=lambda e: e[0])[:elite_size]
+        if not elites:
+            break
+
+        population = []
+        for _ in range(pop_size):
+            base = elites[rng.randrange(len(elites))][1]
+            if np is not None:
+                child = base.copy()
+                mask = np.random.default_rng(
+                    rng.randrange(1 << 30)).random(dim) < mut_prob
+                child[mask] += np.random.default_rng(
+                    rng.randrange(1 << 30)).normal(0, mut_std, int(mask.sum()))
+            else:
+                child = [x + (rng.gauss(0, mut_std) if rng.random() < mut_prob
+                              else 0.0) for x in base]
+            population.append(child)
+
+        for _ in range(int(pop_size * dim * cosyne)):
+            a, b = rng.randrange(pop_size), rng.randrange(pop_size)
+            c = rng.randrange(dim)
+            population[a][c] = population[b][c]
+
+    return front, generations, evaluations
+
+
 def run(instance, seconds, pop_size, elite_size, mut_std, mut_prob,
         cosyne, eigenvectors, seed, out_path):
     rng = random.Random(seed)

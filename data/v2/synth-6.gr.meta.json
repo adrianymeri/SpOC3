@@ -1,0 +1,14 @@
+{
+  "source": "rewire_preserving",
+  "seed": 1,
+  "twin_classes": 1709,
+  "vertices_in_twins": 834,
+  "cliques": [
+    500,
+    400,
+    300
+  ],
+  "quotient_swaps": 83,
+  "template": "large-graph.gr",
+  "swaps_per_edge": 0.05
+}

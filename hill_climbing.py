@@ -146,13 +146,18 @@ class HillClimber:
         return current_cost
 
 
-def target_widths(graph, front, count):
+def target_widths(graph, front, count, start="min_degree"):
     """Spread targets over the widths this graph actually reaches.
 
-    A min-degree probe tells us the range; aiming outside it wastes budget
-    on widths that are either impossible or trivial.
+    A probe tells us the range; aiming outside it wastes budget on widths
+    that are either impossible or trivial. The probe uses whatever start
+    the climb itself will use -- probing with min-degree while claiming to
+    start from random would hand the front a free min-degree solution and
+    quietly make a from-scratch run look better than it is.
     """
-    probe = Solution(graph, Starts.min_degree(graph, random.Random(0)))
+    probe = Solution(graph, Starts.random_order(graph, random.Random(0))
+                     if start == "random"
+                     else Starts.min_degree(graph, random.Random(0)))
     front.add_solution(probe)
     stairs = probe.staircase()
 
@@ -165,6 +170,25 @@ def target_widths(graph, front, count):
         return [low]
     step = (high - low) / max(1, count - 1)
     return sorted({int(round(low + i * step)) for i in range(count)})
+
+
+def solve(graph, seconds, widths=8, seed=1, start="min_degree", verbose=False):
+    """Run the climber and return the front. Used by benchmark.py."""
+    rng = random.Random(seed)
+    front = Front(graph.n)
+    targets = target_widths(graph, front, widths, start)
+    climber = HillClimber(graph, front, rng, verbose=verbose)
+    per_width = seconds / len(targets)
+    for width in targets:
+        climber.climb(width, per_width, start=start)
+    return front, climber
+
+
+def min_degree_only(graph, seed=1):
+    """The starting heuristic with no search at all -- the baseline."""
+    front = Front(graph.n)
+    front.add_solution(Solution(graph, Starts.min_degree(graph, random.Random(seed))))
+    return front
 
 
 def run(instance, seconds, widths, seed, start, out_path, self_check):
@@ -181,7 +205,7 @@ def run(instance, seconds, widths, seed, start, out_path, self_check):
         print("evaluator self-check: bitsets and sets AGREE")
 
     front = Front(graph.n)
-    targets = target_widths(graph, front, widths)
+    targets = target_widths(graph, front, widths, start)
     per_width = seconds / len(targets)
     print(f"{len(targets)} target widths, {per_width:.1f}s each, "
           f"seed {seed}, start '{start}'")

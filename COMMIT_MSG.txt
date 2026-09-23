@@ -1,0 +1,49 @@
+Benchmark hill climbing against the three leaderboard entries
+
+Adds the comparison this branch was built to support: every solver run on
+all ten instances at equal budget, scored through the same esa_eval.py.
+
+Protocol
+  1200 s per instance per seed, 3 seeds, best of three. fast-cma-es,
+  Team HRI and hill climbing pinned to one CPU core each, matching hill
+  climbing's single-threaded Python. Spacekangaroos runs as the authors'
+  own cuda-torso on an NVIDIA T4. 130 runs, all re-validated.
+
+Result
+  Hill climbing ranks third or last on all seven instances where the
+  benchmark separates methods: 0.79% / 7.44% / 12.54% behind the ESA
+  leaderboard tops on small / medium / large. synth-1..3 are ties -- the
+  whole spread there is 0.17% of the score, inside the 2,470 HV noise
+  floor. The 0.79/7.44/12.54 figures reproduce docs/RESULTS.md's
+  documented 0.82/7.79/12.61 independently.
+
+Instances rebuilt (data/v2, generate_v2.py)
+  The first synthetics matched vertex count, edge count and degree
+  distribution and still could not tell two methods apart. The missing
+  structure was twin classes -- vertices with identical neighbourhoods,
+  which a good ordering eliminates together and min-degree cannot see.
+  medium-graph has 507 of them and synth-4/5 had none; large-graph has
+  117 and synth-6/7 had 38. Rewiring the official instances while holding
+  their twin partition fixed restored both, and moved synth-6's
+  discriminating power by 56x and synth-7's by 26x. synth-1..3 kept the
+  original constructive generator: small-graph has no twins, so the same
+  rewiring turned a width-21 grid into a width-277 random graph.
+
+Two bugs found in the reference implementations
+  cuda-torso/libeval.cu declares `int adj_offset = idx * N * N`, which
+  wraps past 2^31 at thread 365 of a 2426-vertex graph -- every n=2426
+  run died with an illegal memory access. Widened to size_t.
+
+  leaderboard-references/cmaes.py let CMA-ES stop on its own convergence
+  criterion, spending ~1 of its 20 minutes. Now restarts until the budget
+  is gone, which is also how fast-cma-es is meant to be used.
+
+Also
+  hill_climbing.target_widths() probed with min-degree regardless of the
+  requested start, quietly handing a from-scratch run a free warm start.
+  README gains 10.4 (starting points) and 10.5 (CPU cores), both of which
+  document confounds that changed the numbers once controlled for.
+
+Known bias: hill climbing averaged 1394 s against its 1200 s budget
+because its per-width construction sits outside the timed loop. That
+favours hill climbing over its competitors, not against.

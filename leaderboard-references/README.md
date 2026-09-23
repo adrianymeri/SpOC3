@@ -5,9 +5,15 @@ hill climbing can be compared against them on the same instances with the
 same scoring.
 
 ```
-cuda-torso/        the winning entry, vendored as published
-neuroevo_cpu.py    a CPU reimplementation of it that runs on any instance
+cuda-torso/        Spacekangaroos' winning entry, vendored as published
+neuroevo_cpu.py    CPU reimplementation of it  -> column "Spacekangaroos"
+hri_lns.py         Team HRI's LNS, from their paper  -> column "Team HRI"
+cmaes.py           the fast-cma-es approach  -> column "fast-cma-es"
 ```
+
+All three run on any instance, score through `../esa_eval.py`, and are
+driven together by `../benchmark.py`, which produces the comparison table
+one column per team.
 
 ---
 
@@ -102,17 +108,37 @@ large population is exactly what the GPU was for.
 
 ---
 
-## HRI — second place
+## hri_lns.py — Team HRI, second place
 
-The other published entry is from team HRI, described in
-`spoc_2023_team_hri.pdf` (kept with the project's other papers). Their
-method is a multi-objective Large Neighbourhood Search: destroy a vertex and
-its neighbourhood out of the ordering, then repair by reinserting each
-removed vertex at the **median position of its already-placed neighbours**
-(the balanced-repair rule of Biedl et al., *Discrete Applied Mathematics*
-148, 2005, §5). When progress stalls it switches to a smaller random
-destroy-and-repair and back again.
+Multi-objective Large Neighbourhood Search, written from their paper
+(`spoc_2023_team_hri.pdf`). Destroy-and-repair rather than mutate-and-test:
 
-No source code was published for it, so there is nothing to vendor. The
-method is straightforward to reimplement from the paper if you want a third
-point of comparison.
+- **neighbour destroy** — pull a seed vertex and its neighbours out of the
+  ordering, leaving a large structured hole
+- **balanced repair** — put each one back at the **median position of its
+  already-placed neighbours**, the balanced-insertion rule of Biedl et al.,
+  *Discrete Applied Mathematics* 148 (2005), §5. Median placement leaves
+  roughly as many neighbours before a vertex as after, which is what holds
+  the width down.
+- when that stalls, it swaps to a small random destroy-and-repair and back
+
+**No source was published**, so this column is a reimplementation from the
+paper, not their code.
+
+The paper starts it from a random ordering. `../benchmark.py` does not: it
+gives HRI the same min-degree start hill climbing gets, because a random
+start is not a handicap here so much as a disqualification — on six of the
+ten instances a random permutation busts the 500 cap at every prefix, so the
+LNS has no legal point to work from and scores 0. Equalising the start is
+what makes the column a comparison of *searches*. See `../README.md` §10.4
+for the measurements.
+
+---
+
+## cmaes.py — fast-cma-es
+
+Treats the problem as continuous optimisation. Same decode as
+Spacekangaroos — `perm = argsort(features @ x)` — but the optimiser is a
+separable CMA-ES, which adapts a diagonal covariance model of where good
+weight vectors live instead of mutating elites. Ported from the main
+project's implementation. Needs numpy.

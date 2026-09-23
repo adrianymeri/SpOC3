@@ -1,0 +1,11 @@
+{
+  "family": "small",
+  "rows": 10,
+  "cols": 115,
+  "pendants": 207,
+  "grid_edges_dropped": 100,
+  "seed": 1,
+  "n": 1357,
+  "edges": 2282,
+  "min_degree_width": 18
+}

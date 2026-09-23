@@ -863,6 +863,120 @@ large population to pay off, and a large population is exactly what the GPU
 was for. Any comparison here is a statement about **the methods at equal CPU
 budget**.
 
+## 10.4 Starting points, and why they decide the table
+
+Running four solvers for the same number of seconds is not yet a fair test.
+They also have to *start* in comparable places, and on this problem the
+starting point turns out to matter more than the search.
+
+The four split into two kinds:
+
+- **permutation-space** -- `hill_climbing.py` and `hri_lns.py` search
+  orderings directly, so they need an ordering to begin from
+- **weight-space** -- `neuroevo_cpu.py` and `cmaes.py` search weight vectors
+  and read the ordering off `argsort(w . features)`
+
+The obvious "fair" choice is to start everything from a random ordering. On
+these instances that does not work, and the reason is the `MAX_TW = 500`
+cap. Take one random permutation of each instance and count how many legal
+points its staircase yields:
+
+| instance | n | points from a random order | points from min-degree |
+|---|---:|---:|---:|
+| small-graph | 1357 | 117 | 22 |
+| medium-graph | 1399 | **0** | 285 |
+| large-graph | 2426 | **0** | 500 |
+| synth-1 | 1357 | 250 | 18 |
+| synth-2 | 1357 | 297 | 19 |
+| synth-3 | 1357 | 295 | 19 |
+| synth-4 | 1399 | **0** | 312 |
+| synth-5 | 1399 | **0** | 349 |
+| synth-6 | 2426 | **0** | 500 |
+| synth-7 | 2426 | **0** | 500 |
+
+On six of the ten, a random ordering scores **nothing at all** -- every
+prefix busts the 500 cap, so there is not one legal point to stand on. And
+a solver with no legal point has nothing to climb: every candidate costs
+`n`, no candidate is ever an improvement, and the search degenerates into a
+random walk. Measured on medium-graph, 25 s from a random start: Team HRI's
+LNS ran 193 iterations and accepted **zero** of them, final score **0**.
+
+The weight-space solvers never face this, because they never see a random
+ordering. Their *first* candidate is already sorted by a degree-and-spectral
+score, which is a constructive heuristic hiding inside the representation.
+So "everyone starts random" would not equalise anything -- it would zero out
+the two permutation solvers on six instances while the other two carried on
+unaffected.
+
+What the benchmark does instead: both permutation-space solvers start from
+**the same min-degree construction**, computed fresh from the graph inside
+each run. Nothing is carried over from a previous run, from another solver,
+or from a saved solution -- each run begins from the graph and nothing else.
+
+```bash
+python3 benchmark.py --start min_degree      # the default: same start for both
+python3 benchmark.py --start random          # literal random; void on 6 of 10
+```
+
+This matters enough to state plainly, because it is easy to fool yourself
+here. Earlier versions of `benchmark.py` had hill climbing warm-starting
+from min-degree while HRI started random, as HRI's paper specifies. On
+synth-1 at 8 s that read HRI -1,543,392 against hill climbing -1,818,617,
+which looks like a rout. Give HRI the same start and it reads -1,818,667
+against -1,819,901 -- the same result to within a rounding error. **Almost
+the whole apparent gap was the starting heuristic, not the search.**
+
+There was a subtler version of the same trap inside `hill_climbing.py`.
+`target_widths()` probes the graph to decide which widths to aim at, and
+that probe used min-degree *regardless of the requested start* -- and added
+it to the front. So `--start random` was quietly handing hill climbing a
+free min-degree solution and reporting -1,607,522 on medium-graph for a run
+that had accepted zero moves. The probe now follows whatever start it was
+asked for, and an honest from-scratch run on medium-graph reports what it
+actually earned, which is 0.
+
+The general lesson is worth more than the table: **when a comparison shows a
+large gap, check the starting conditions before believing the algorithm
+caused it.**
+
+## 10.5 One more confound: CPU cores
+
+Equal wall-clock is not equal computation. Watching the benchmark run, the
+process sat at **929% CPU** -- about nine cores busy. Hill climbing is pure
+Python and uses exactly one. So the competitors are not merely matched on
+time, they are being handed roughly nine times the processor.
+
+It is worth knowing which way that cuts, so both solvers were measured on
+small-graph at 30 s, once unrestricted and once pinned with
+`OMP_NUM_THREADS=1`:
+
+| solver | threads free | pinned to 1 core |
+|---|---:|---:|
+| Spacekangaroos | 1510 evals, -1,796,719 | **1997 evals, -1,800,321** |
+| fast-cma-es | **1687 evals, -1,801,407** | 1345 evals, -1,794,332 |
+| hill climbing | 9590 evals, -1,814,541 | 9778 evals, -1,814,542 |
+
+Three separate things show up here.
+
+**Hill climbing is unaffected**, as it must be -- pure Python, one thread
+either way. The 2% difference is seed noise.
+
+**fast-cma-es genuinely uses the cores.** Pinning it costs 20% of its
+evaluations. It is a package built for parallel optimisation and throttling
+it would misrepresent the method.
+
+**Spacekangaroos is *hurt* by them.** Pinning it *gains* 32% more
+evaluations and a better score. Its inner loop is a 104x1357 matrix-vector
+product -- far too small to parallelise -- so the BLAS threads spend their
+time spin-waiting instead of working. That is a configuration pathology, not
+a flaw in the method, and it means this column is a slight underestimate.
+
+The benchmark therefore lets every library thread as its authors intended
+and holds wall-clock equal. That is the standard protocol, and the important
+point for reading the table is the direction of the bias: **the handicap
+runs against hill climbing, not for it.** Where hill climbing wins a row, it
+wins it on one core against opponents using nine.
+
 ---
 
 # Part 11 — What to expect
