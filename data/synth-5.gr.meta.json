@@ -1,17 +1,11 @@
 {
-  "family": "medium",
-  "blocks": 5,
-  "block_sizes": [
-    279,
-    279,
-    279,
-    279,
-    283
-  ],
-  "p_inside": 0.0705,
-  "cross_edges": 360,
-  "seed": 5,
-  "n": 1399,
-  "edges": 14055,
-  "min_degree_width": 328
+  "source": "rewire_preserving",
+  "seed": 2,
+  "twin_classes": 507,
+  "vertices_in_twins": 1024,
+  "cliques": [],
+  "quotient_swaps": 101916,
+  "template": "medium-graph.gr",
+  "swaps_per_edge": 12,
+  "edge_overlap_with_template": 0.0149
 }
