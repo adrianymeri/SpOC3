@@ -1,15 +1,15 @@
 {
-  "family": "large",
-  "template": "large-graph.gr",
-  "cliques_kept": [
+  "source": "rewire_preserving",
+  "seed": 1,
+  "twin_classes": 117,
+  "vertices_in_twins": 834,
+  "cliques": [
     500,
     400,
     300
   ],
-  "vertices_relabelled": true,
-  "peripheral_edges_rewired": 89900,
-  "seed": 6,
-  "n": 2426,
-  "edges": 253895,
-  "min_degree_width": 499
+  "quotient_swaps": 83,
+  "template": "large-graph.gr",
+  "swaps_per_edge": 0.05,
+  "edge_overlap_with_template": 0.0938
 }

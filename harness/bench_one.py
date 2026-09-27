@@ -83,10 +83,8 @@ def main():
     ap.add_argument("--seconds", type=float, default=1200.0)
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--out", default="")
-    ap.add_argument("--data-dir", default="data/v2",
-                    help="instance folder, relative to the project root. "
-                         "data/v2 holds the twin-preserving synthetics; "
-                         "data holds the first (non-discriminating) set.")
+    ap.add_argument("--data-dir", default="data",
+                    help="instance folder, relative to the project root")
     ap.add_argument("--allow-threads", action="store_true",
                     help="skip the one-core check (results not comparable)")
     a = ap.parse_args()

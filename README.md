@@ -639,20 +639,45 @@ steps happen early, then set the threshold just past them.*
 
 ### `generate.py` — making instances
 
-- `toy` — the 12-vertex graph used throughout this document.
-- `random` — Erdős–Rényi: every possible edge present with probability `p`.
-  No structure; a neutral baseline.
-- `planted` — mirrors the *shape* of the real competition instances: several
-  low-width components glued by one dense core. The glue is what forces the
-  width up, so you know in advance where the difficulty lives. Writes a
-  `.meta.json` recording the structure it planted. This is our own
-  generator, not the organisers' — it reproduces the published description
-  of how the instances are built, not their exact code.
+`--all` rebuilds every generated file in `data/` byte for byte. The three
+official graphs are ESA's and are not generated.
+
+- **`make_toy`** — the 12-vertex graph used throughout this document.
+- **`make_small`** — a grid with pendant vertices. Makes synth-1…3.
+- **`rewire_preserving`** — rewires an official instance while holding its
+  **twin classes** fixed: relabel, collapse the twins into a quotient graph,
+  double-edge-swap the quotient with the planted cliques frozen, expand back.
+  Degrees, twins and cliques survive; the wiring between classes is new.
+  Makes synth-4…7.
+
+The module docstring is worth reading before you generate anything. It
+records the two approaches that failed first — plain degree-preserving
+swaps, and per-family constructive generators — with the measurements that
+condemned them. Both matched vertex count, edge count and degree
+distribution and still could not tell two solvers apart, because they
+destroyed the twin structure that separates a good ordering from a greedy
+one. It also explains why synth-1…3 keep the constructive route: small-graph
+has no closed twins, so the rewiring degrades into randomisation there.
 
 ### `validate.py` — the referee
 
 Re-implements the evaluation **from scratch**, deliberately sharing no code
 with the search. See Part 9 for exactly what it is and is not.
+
+### `benchmark.py` and `harness/` — two ways to run the comparison
+
+`benchmark.py` is the simple one: a single command that runs every solver on
+every instance, in one process, and prints a table. Read this one to
+understand what the comparison does.
+
+`harness/` is what actually produced the published numbers. `bench_one.py`
+runs **one** solver across all instances, pinned to a single core and
+resuming from its own CSV, so four of them launch side by side via
+`run_mac.sh` without contending; `status.sh` reports progress,
+`merge_results.py` combines the per-solver CSVs, and `make_report.py` builds
+the spreadsheet. `spoc3_benchmark.ipynb` runs Spacekangaroos' `cuda-torso`
+on a Kaggle GPU, since that entry needs one. The raw CSVs from the 130-run
+comparison are committed alongside them.
 
 ### `test_correctness.py` — the proof
 
@@ -812,20 +837,26 @@ with a few edges moved.
 | **synth-6** | large | 2426 | 253895 | 499 | −4,795,089 |
 | **synth-7** | large | 2426 | 253895 | 499 | −4,795,246 |
 
-Each `synth-N.gr` has a `synth-N.gr.meta.json` beside it recording which
-family it belongs to, the seed, and its measured width.
+Each `synth-N.gr` has a `synth-N.gr.meta.json` beside it recording how it
+was made: the seed, and for synth-4…7 the template, the swap rate, the twin
+classes preserved and the edge overlap with the original.
 
-Scores land within 0.4% of their templates on small and medium, and within
-0.02% on large. That is the property that matters: the extras are a fair
-test, not an easier or harder one.
+They match their templates on every structural measure that matters —
+synth-4 and synth-5 carry medium-graph's 507 twin classes, 13,799 edges and
+maximum degree 92; synth-6 and synth-7 carry large-graph's 117 classes, its
+253,895 edges and its three planted cliques — while sharing only 1.5% and
+~9% of its edges respectively. Different graphs, hard in the same way.
 
-Make more with:
+Rebuild the whole set, byte for byte:
 
 ```bash
-python3 generate.py --family small  --seed 11 --out data/synth-8.gr
-python3 generate.py --family medium --seed 12 --out data/synth-9.gr
-python3 generate.py --family large  --seed 13 --out data/synth-10.gr
+python3 generate.py --all
 ```
+
+Adding an eighth instance means adding a line to `PLAN` in `generate.py`.
+Pick a template and a seed; the swap rate is 12 for a medium-family instance
+and 0.05 for a large-family one, because large-graph's periphery is only
+~4,500 of its 253,895 edges and tolerates almost no perturbation.
 
 ## 10.3 Comparing against the leaderboard entries
 
