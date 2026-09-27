@@ -649,10 +649,48 @@ steps happen early, then set the threshold just past them.*
   generator, not the organisers' — it reproduces the published description
   of how the instances are built, not their exact code.
 
+### `generate_v2.py` — making instances that actually rank methods
+
+The first generator matched the official instances on vertex count, edge
+count and degree distribution, and produced graphs that could not tell two
+solvers apart. The missing ingredient was **twin classes** — vertices with
+identical neighbourhoods, which a good ordering eliminates together and
+min-degree cannot see. medium-graph has 507 of them; the first synth-4 and
+synth-5 had none.
+
+`rewire_preserving()` rewires an official instance while holding its twin
+partition fixed: relabel, collapse the twins into a quotient graph,
+double-edge-swap the quotient with the planted cliques frozen, expand back.
+Degrees, twins and cliques survive by construction; the wiring between
+classes is new. That produced synth-4…7 and raised synth-6's discriminating
+power by 56×.
+
+`make_small_v2()` is kept as a documented dead end: it reproduces
+small-graph's *open*-twin structure exactly (207 pendants on 35 hosts) and
+still did not help, because sparse low-treewidth instances are tight enough
+that greedy elimination is already near-optimal. synth-1…3 therefore use
+`generate.py`'s original constructive generator. The measurements behind all
+of this are in the module docstring.
+
 ### `validate.py` — the referee
 
 Re-implements the evaluation **from scratch**, deliberately sharing no code
 with the search. See Part 9 for exactly what it is and is not.
+
+### `benchmark.py` and `harness/` — two ways to run the comparison
+
+`benchmark.py` is the simple one: a single command that runs every solver on
+every instance, in one process, and prints a table. Read this one to
+understand what the comparison does.
+
+`harness/` is what actually produced the published numbers. `bench_one.py`
+runs **one** solver across all instances, pinned to a single core and
+resuming from its own CSV, so four of them launch side by side via
+`run_mac.sh` without contending; `status.sh` reports progress,
+`merge_results.py` combines the per-solver CSVs, and `make_report.py` builds
+the spreadsheet. `spoc3_benchmark.ipynb` runs Spacekangaroos' `cuda-torso`
+on a Kaggle GPU, since that entry needs one. The raw CSVs from the 130-run
+comparison are committed alongside them.
 
 ### `test_correctness.py` — the proof
 

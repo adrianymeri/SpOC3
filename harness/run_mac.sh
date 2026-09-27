@@ -15,7 +15,7 @@ set -euo pipefail
 
 SECONDS_PER_RUN="${1:-1200}"
 SEEDS="${2:-3}"
-DATA_DIR="${3:-data/v2}"      # twin-preserving instances
+DATA_DIR="${3:-data}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LOGS="$HERE/logs"
 mkdir -p "$LOGS"
