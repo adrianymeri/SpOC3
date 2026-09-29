@@ -36,10 +36,13 @@ from collections import defaultdict
 import openpyxl
 from openpyxl.styles import Font
 
-SOLVERS = ["fast_cma_es", "hri", "spacekangaroos", "hill_climbing"]
+SOLVERS = ["fast_cma_es", "hri", "spacekangaroos", "hill_climbing",
+           "simulated_annealing", "vns", "grasp"]
+COLUMNS = "FGHIJKL"                    # J/K/L are the sheet's spare columns
 LABEL = {"fast_cma_es": "fcmaes", "hri": "Team HRI",
          "spacekangaroos": "Spacekangaroos", "hill_climbing": "Hill Climbing",
-         "min_degree": "min-degree"}
+         "min_degree": "min-degree", "simulated_annealing": "Sim. Annealing",
+         "vns": "VNS", "grasp": "GRASP"}
 ROWS = (["small-graph", "medium-graph", "large-graph"]
         + [f"synth-{i}" for i in range(1, 8)])
 # published ESA SpOC-3 leaderboard tops; the synthetics are new, so they have none
@@ -104,8 +107,8 @@ def main():
             for r in range(2, ws.max_row + 1):
                 ws.cell(row=r, column=1).value = r - 1
 
-        ws["J1"] = "min-degree x8 (no search)"
-        ws["K1"] = "Significance"
+        for col, s in zip(COLUMNS, SOLVERS):
+            ws[f"{col}1"] = LABEL[s]
         last = 1
         for row in range(2, ws.max_row + 1):
             inst = ws.cell(row=row, column=2).value
@@ -114,7 +117,7 @@ def main():
             last = row
 
             vals = {s: cell_value(scores, inst, s) for s in SOLVERS}
-            for col, s in zip("FGHI", SOLVERS):
+            for col, s in zip(COLUMNS, SOLVERS):
                 c = ws[f"{col}{row}"]
                 c.value = "" if vals[s] is None else vals[s]
                 c.number_format = "#,##0"
@@ -125,8 +128,9 @@ def main():
             # 2,679 HV, which is most of its apparent margin. Match the
             # baseline to what the solver actually starts from.
             md = MD8.get(inst, cell_value(scores, inst, "min_degree"))
-            ws[f"J{row}"] = "" if md is None else md
-            ws[f"J{row}"].number_format = "#,##0"
+            ws["O1"] = "min-degree x8 (no search)"
+            ws[f"O{row}"] = "" if md is None else md
+            ws[f"O{row}"].number_format = "#,##0"
 
             numeric = {s: v for s, v in vals.items() if isinstance(v, int)}
             if numeric:
@@ -137,8 +141,9 @@ def main():
                     ws[f"E{row}"] = LABEL[order[0][0]] + " (this study)"
                 gap = (order[1][1] - order[0][1]) if len(order) > 1 else None
                 if gap is not None and gap < noise:
-                    ws[f"K{row}"] = f"tie (top two within {gap:,} HV)"
-                    ws[f"K{row}"].font = Font(name="Arial", size=10, italic=True)
+                    ws["P1"] = "Significance"
+                    ws[f"P{row}"] = f"tie (top two within {gap:,} HV)"
+                    ws[f"P{row}"].font = Font(name="Arial", size=10, italic=True)
 
             # percentage behind Best Known: uses our own best once column N is
             # filled, else the Hill Climbing column

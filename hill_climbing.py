@@ -59,6 +59,14 @@ class Operators:
 
     ALL = [swap_neighbours, swap_any, move_vertex, reverse_segment]
 
+    # Same order as ALL. The climber picks an operator *by name* so it can
+    # count accepts per operator, and so a run can be restricted to a subset.
+    # rng.choice consumes randomness based only on len(seq), so choosing from
+    # NAMES draws the identical stream that choosing from ALL did -- the
+    # four-operator runs already in the benchmark CSVs still reproduce.
+    NAMES = ["swap_neighbours", "swap_any", "move_vertex", "reverse_segment"]
+    BY_NAME = dict(zip(NAMES, ALL))
+
 
 class Starts:
     """Initial orderings."""
@@ -103,13 +111,24 @@ class Starts:
 
 
 class HillClimber:
-    def __init__(self, graph, front, rng, verbose=True):
+    def __init__(self, graph, front, rng, verbose=True, ops=None):
+        """ops: operator names to draw from. None means all four."""
         self.graph = graph
         self.front = front
         self.rng = rng
         self.verbose = verbose
         self.evaluations = 0
         self.accepts = 0
+
+        self.op_names = list(ops) if ops else list(Operators.NAMES)
+        unknown = [nm for nm in self.op_names if nm not in Operators.BY_NAME]
+        if unknown:
+            raise ValueError(f"unknown operator(s): {', '.join(unknown)}")
+        # Per-operator bookkeeping. With one operator this just records its
+        # accept rate; with all four it records which one actually earns the
+        # improvements when they compete.
+        self.tries_by_op = {nm: 0 for nm in self.op_names}
+        self.accepts_by_op = {nm: 0 for nm in self.op_names}
 
     def cost(self, solution, target_width):
         """Smallest t within target_width; n if the width is unreachable."""
@@ -131,7 +150,9 @@ class HillClimber:
             print(f"  width {target_width:>4}: {shown}", end="", flush=True)
 
         while time.time() < deadline:
-            operator = self.rng.choice(Operators.ALL)
+            name = self.rng.choice(self.op_names)
+            operator = Operators.BY_NAME[name]
+            self.tries_by_op[name] += 1
             candidate = Solution(self.graph, operator(current.perm, self.rng))
             candidate_cost = self.cost(candidate, target_width)
             self.front.add_solution(candidate)
@@ -139,6 +160,7 @@ class HillClimber:
             if candidate_cost < current_cost:
                 current, current_cost = candidate, candidate_cost
                 self.accepts += 1
+                self.accepts_by_op[name] += 1
 
         if self.verbose:
             shown = "unreachable" if current_cost >= self.graph.n else f"t={current_cost}"
@@ -172,12 +194,16 @@ def target_widths(graph, front, count, start="min_degree"):
     return sorted({int(round(low + i * step)) for i in range(count)})
 
 
-def solve(graph, seconds, widths=8, seed=1, start="min_degree", verbose=False):
-    """Run the climber and return the front. Used by benchmark.py."""
+def solve(graph, seconds, widths=8, seed=1, start="min_degree", verbose=False,
+          ops=None):
+    """Run the climber and return the front. Used by benchmark.py.
+
+    ops restricts the move pool to the named operators; None uses all four.
+    """
     rng = random.Random(seed)
     front = Front(graph.n)
     targets = target_widths(graph, front, widths, start)
-    climber = HillClimber(graph, front, rng, verbose=verbose)
+    climber = HillClimber(graph, front, rng, verbose=verbose, ops=ops)
     per_width = seconds / len(targets)
     for width in targets:
         climber.climb(width, per_width, start=start)
@@ -191,7 +217,7 @@ def min_degree_only(graph, seed=1):
     return front
 
 
-def run(instance, seconds, widths, seed, start, out_path, self_check):
+def run(instance, seconds, widths, seed, start, out_path, self_check, ops=None):
     rng = random.Random(seed)
     graph = Graph.load(instance)
 
@@ -211,7 +237,7 @@ def run(instance, seconds, widths, seed, start, out_path, self_check):
           f"seed {seed}, start '{start}'")
     print()
 
-    climber = HillClimber(graph, front, rng)
+    climber = HillClimber(graph, front, rng, ops=ops)
     started = time.time()
     for width in targets:
         climber.climb(width, per_width, start=start)
@@ -221,6 +247,11 @@ def run(instance, seconds, widths, seed, start, out_path, self_check):
     print()
     print(f"{climber.evaluations:,} evaluations, {climber.accepts:,} accepted, "
           f"{elapsed:.1f}s")
+    print("  operator            tried      accepted     rate")
+    for nm in climber.op_names:
+        tried, acc = climber.tries_by_op[nm], climber.accepts_by_op[nm]
+        rate = acc / tried if tried else 0.0
+        print(f"  {nm:<18} {tried:>9,}  {acc:>9,}  {rate:>7.3%}")
     print(f"front has {len(front.pareto())} points, submitting {len(points)}")
     print()
     print("  width |      t | torso")
@@ -251,8 +282,14 @@ def main():
     ap.add_argument("--out", default="")
     ap.add_argument("--self-check", action="store_true",
                     help="verify the two evaluators agree first (small instances)")
+    ap.add_argument("--operators", default="all",
+                    help="comma-separated subset of "
+                         + ",".join(Operators.NAMES) + " (default: all)")
     a = ap.parse_args()
-    run(a.instance, a.seconds, a.widths, a.seed, a.start, a.out, a.self_check)
+    ops = (None if a.operators.strip().lower() == "all"
+           else [s.strip() for s in a.operators.split(",") if s.strip()])
+    run(a.instance, a.seconds, a.widths, a.seed, a.start, a.out, a.self_check,
+        ops=ops)
 
 
 if __name__ == "__main__":

@@ -73,13 +73,24 @@ def solve(solver, graph, seconds, seed):
     if solver == "fast_cma_es":
         import cmaes
         return cmaes.solve(graph, seconds, seed=seed)[0]
+    if solver == "simulated_annealing":
+        import simulated_annealing
+        return simulated_annealing.solve(graph, seconds, seed=seed)[0]
+    if solver == "vns":
+        import vns
+        return vns.solve(graph, seconds, seed=seed)[0]
+    if solver == "grasp":
+        import grasp
+        return grasp.solve(graph, seconds, seed=seed)[0]
     raise ValueError(solver)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Run one solver on every instance.")
     ap.add_argument("--solver", required=True,
-                    choices=["hill_climbing", "hri", "fast_cma_es", "min_degree"])
+                    choices=["hill_climbing", "hri", "fast_cma_es",
+                             "min_degree", "simulated_annealing", "vns",
+                             "grasp"])
     ap.add_argument("--seconds", type=float, default=1200.0)
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--out", default="")
