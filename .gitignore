@@ -6,8 +6,9 @@ __pycache__/
 .idea/
 
 # Solver output while a benchmark is running. The finished CSVs in kaggle/
-# are committed; these are the live logs behind them.
+# and harness/ are committed; these are the live logs behind them.
 kaggle/logs/
+harness/logs/
 bench.log
 
 # Regenerable by zipping the repo -- no reason to version 6 MB of duplicated

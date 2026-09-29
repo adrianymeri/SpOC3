@@ -20,10 +20,12 @@ import statistics
 import sys
 from collections import defaultdict
 
-COLS = ["fast_cma_es", "hri", "spacekangaroos", "hill_climbing"]
+COLS = ["fast_cma_es", "hri", "spacekangaroos", "hill_climbing",
+        "simulated_annealing", "vns", "grasp"]
 LABEL = {"fast_cma_es": "fast-cma-es", "hri": "Team HRI",
          "spacekangaroos": "Spacekangaroos", "hill_climbing": "Hill Climbing",
-         "min_degree": "min-degree"}
+         "min_degree": "min-degree", "simulated_annealing": "Sim. Annealing",
+         "vns": "VNS", "grasp": "GRASP"}
 ROWS = (["small-graph", "medium-graph", "large-graph"]
         + [f"synth-{i}" for i in range(1, 8)])
 

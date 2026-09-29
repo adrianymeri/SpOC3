@@ -3,8 +3,8 @@
 #
 #     ./status.sh
 #
-# Expected when finished: hill_climbing 30, hri 30, fast_cma_es 30,
-# min_degree 10  (min_degree does one seed -- it has no randomness to average).
+# Expected when finished: 30 rows for each searching solver, 10 for
+# min_degree (one seed -- it has no randomness to average).
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NOW=$(date +%s)
@@ -15,7 +15,7 @@ echo "=============================================================="
 
 RUNNING=$(pgrep -f "bench_one.py" | wc -l | tr -d ' ')
 MD=$(( $( [ -f "$HERE/benchmark-min_degree.csv" ] && wc -l < "$HERE/benchmark-min_degree.csv" || echo 1 ) - 1 ))
-EXPECT=4; [ "$MD" -ge 10 ] && EXPECT=3      # min_degree finishes in minutes
+EXPECT=7; [ "$MD" -ge 10 ] && EXPECT=6      # min_degree finishes in minutes
 echo
 echo "processes alive: $RUNNING of $EXPECT"
 [ "$MD" -ge 10 ] && echo "  (min_degree already finished -- 3 is correct)"
@@ -26,7 +26,7 @@ fi
 echo
 echo "progress:"
 TOTAL=0
-for s in hill_climbing hri fast_cma_es min_degree; do
+for s in hill_climbing hri fast_cma_es simulated_annealing vns grasp min_degree; do
     f="$HERE/benchmark-$s.csv"
     want=30; [ "$s" = "min_degree" ] && want=10
     if [ -f "$f" ]; then
@@ -38,9 +38,9 @@ for s in hill_climbing hri fast_cma_es min_degree; do
         note=""
         [ "$n" -ge "$want" ] && note="  <- complete"
         [ "$bad" -gt 0 ] && note="$note  ** $bad INVALID **"
-        printf "  %-15s %3d/%-3d  last row %3d min ago%s\n" "$s" "$n" "$want" "$age" "$note"
+        printf "  %-20s %3d/%-3d  last row %3d min ago%s\n" "$s" "$n" "$want" "$age" "$note"
     else
-        printf "  %-15s   no CSV yet\n" "$s"
+        printf "  %-20s   no CSV yet\n" "$s"
     fi
 done
 echo "  ----------------------------------------"
@@ -56,13 +56,13 @@ fi
 
 echo
 echo "latest line per solver:"
-for s in hill_climbing hri fast_cma_es min_degree; do
+for s in hill_climbing hri fast_cma_es simulated_annealing vns grasp min_degree; do
     line=$(tail -n 1 "$HERE/logs/$s.log" 2>/dev/null)
     printf "  %s\n" "${line:-  ($s: no log yet)}"
 done
 
 echo
-if [ "$TOTAL" -ge 100 ]; then
+if [ "$TOTAL" -ge 190 ]; then
     echo "MAC SIDE COMPLETE. Once Kaggle finishes, drop"
     echo "benchmark-spacekangaroos.csv in this folder and run:"
     echo "    python3 $HERE/merge_results.py $HERE"
@@ -70,7 +70,7 @@ elif [ "$RUNNING" -eq 0 ]; then
     echo "NOTHING IS RUNNING and the run is incomplete."
     echo "Restart with ./run_mac.sh -- it skips whatever is already done."
 else
-    LEFT=$(( (100 - TOTAL) * 20 / (RUNNING > 0 ? RUNNING : 1) ))
+    LEFT=$(( (190 - TOTAL) * 20 / (RUNNING > 0 ? RUNNING : 1) ))
     echo "healthy. roughly $((LEFT / 60))h $((LEFT % 60))m of solving left."
 fi
 echo
