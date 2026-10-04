@@ -26,7 +26,7 @@ fi
 echo
 echo "progress:"
 TOTAL=0
-for s in hill_climbing hri fast_cma_es simulated_annealing vns grasp min_degree; do
+for s in hill_climbing hri fast_cma_es sa_front vns_front grasp_front simulated_annealing vns grasp min_degree; do
     f="$HERE/benchmark-$s.csv"
     want=30; [ "$s" = "min_degree" ] && want=10
     if [ -f "$f" ]; then
@@ -56,7 +56,7 @@ fi
 
 echo
 echo "latest line per solver:"
-for s in hill_climbing hri fast_cma_es simulated_annealing vns grasp min_degree; do
+for s in hill_climbing hri fast_cma_es sa_front vns_front grasp_front simulated_annealing vns grasp min_degree; do
     line=$(tail -n 1 "$HERE/logs/$s.log" 2>/dev/null)
     printf "  %s\n" "${line:-  ($s: no log yet)}"
 done
@@ -70,7 +70,7 @@ elif [ "$RUNNING" -eq 0 ]; then
     echo "NOTHING IS RUNNING and the run is incomplete."
     echo "Restart with ./run_mac.sh -- it skips whatever is already done."
 else
-    LEFT=$(( (190 - TOTAL) * 20 / (RUNNING > 0 ? RUNNING : 1) ))
+    LEFT=$(( (280 - TOTAL) * 20 / (RUNNING > 0 ? RUNNING : 1) ))
     echo "healthy. roughly $((LEFT / 60))h $((LEFT % 60))m of solving left."
 fi
 echo

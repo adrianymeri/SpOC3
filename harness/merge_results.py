@@ -9,6 +9,10 @@ one folder, and run this.
     python3 merge_results.py ~/Downloads/kaggle-results
 
 Prints the five columns for the sheet and writes merged.csv next to the inputs.
+
+Superseded by report.py, which regenerates every block of the results
+sheet rather than just this table. Kept because it is the simplest way to
+merge CSVs downloaded from separate machines.
 """
 
 from __future__ import annotations
@@ -21,11 +25,13 @@ import sys
 from collections import defaultdict
 
 COLS = ["fast_cma_es", "hri", "spacekangaroos", "hill_climbing",
-        "simulated_annealing", "vns", "grasp"]
+        "sa_front", "vns_front", "grasp_front"]
 LABEL = {"fast_cma_es": "fast-cma-es", "hri": "Team HRI",
          "spacekangaroos": "Spacekangaroos", "hill_climbing": "Hill Climbing",
          "min_degree": "min-degree", "simulated_annealing": "Sim. Annealing",
-         "vns": "VNS", "grasp": "GRASP"}
+         "vns": "VNS", "grasp": "GRASP",
+         "sa_front": "Sim. Annealing", "vns_front": "VNS",
+         "grasp_front": "GRASP"}
 ROWS = (["small-graph", "medium-graph", "large-graph"]
         + [f"synth-{i}" for i in range(1, 8)])
 
