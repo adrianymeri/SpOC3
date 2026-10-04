@@ -82,6 +82,21 @@ def solve(solver, graph, seconds, seed):
     if solver == "grasp":
         import grasp
         return grasp.solve(graph, seconds, seed=seed)[0]
+    # Front-aware variants: Hill Climbing's skeleton (eight target widths, a
+    # construction per width, the same four generic operators, minimise t at
+    # the target width) with exactly one thing swapped -- the acceptance rule
+    # for sa_front and vns_front, the construction for grasp_front. These are
+    # the controlled comparisons; the three above collapse the bi-objective
+    # score to a single point and are confounded against hill_climbing.
+    if solver == "sa_front":
+        import simulated_annealing
+        return simulated_annealing.solve_front(graph, seconds, seed=seed)[0]
+    if solver == "vns_front":
+        import vns
+        return vns.solve_front(graph, seconds, seed=seed)[0]
+    if solver == "grasp_front":
+        import grasp
+        return grasp.solve_front(graph, seconds, seed=seed)[0]
     raise ValueError(solver)
 
 
@@ -90,7 +105,7 @@ def main():
     ap.add_argument("--solver", required=True,
                     choices=["hill_climbing", "hri", "fast_cma_es",
                              "min_degree", "simulated_annealing", "vns",
-                             "grasp"])
+                             "grasp", "sa_front", "vns_front", "grasp_front"])
     ap.add_argument("--seconds", type=float, default=1200.0)
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--out", default="")
