@@ -111,12 +111,20 @@ class Starts:
 
 
 class HillClimber:
-    def __init__(self, graph, front, rng, verbose=True, ops=None):
-        """ops: operator names to draw from. None means all four."""
+    def __init__(self, graph, front, rng, verbose=True, ops=None,
+                 pool="generic"):
+        """ops: operator names to draw from. None means all four.
+
+        pool: "generic" uses those four. "bottleneck" swaps in meta.move_perm,
+        which adds two moves that can see the vertex holding max(deg[t:]) --
+        the one the width actually depends on. Everything else is unchanged,
+        so it isolates the move pool exactly as GRASP isolates construction.
+        """
         self.graph = graph
         self.front = front
         self.rng = rng
         self.verbose = verbose
+        self.pool = pool
         self.evaluations = 0
         self.accepts = 0
 
@@ -149,18 +157,31 @@ class HillClimber:
             shown = "unreachable" if current_cost >= self.graph.n else f"t={current_cost}"
             print(f"  width {target_width:>4}: {shown}", end="", flush=True)
 
+        rich = None
+        if self.pool == "bottleneck":
+            import meta as rich          # imported late: meta imports this file
+
         while time.time() < deadline:
-            name = self.rng.choice(self.op_names)
-            operator = Operators.BY_NAME[name]
-            self.tries_by_op[name] += 1
-            candidate = Solution(self.graph, operator(current.perm, self.rng))
+            if rich is not None:
+                name = "bottleneck_pool"
+                # the bottleneck moves need a threshold to locate max(deg[t:]);
+                # at a fixed target width the natural one is the current cost,
+                # clamped because an unreachable width reports n.
+                here = min(current_cost, self.graph.n - 1)
+                cand_perm = rich.move_perm(self.graph, current.perm, here,
+                                           self.rng, current)
+            else:
+                name = self.rng.choice(self.op_names)
+                cand_perm = Operators.BY_NAME[name](current.perm, self.rng)
+            self.tries_by_op[name] = self.tries_by_op.get(name, 0) + 1
+            candidate = Solution(self.graph, cand_perm)
             candidate_cost = self.cost(candidate, target_width)
             self.front.add_solution(candidate)
 
             if candidate_cost < current_cost:
                 current, current_cost = candidate, candidate_cost
                 self.accepts += 1
-                self.accepts_by_op[name] += 1
+                self.accepts_by_op[name] = self.accepts_by_op.get(name, 0) + 1
 
         if self.verbose:
             shown = "unreachable" if current_cost >= self.graph.n else f"t={current_cost}"
@@ -195,15 +216,18 @@ def target_widths(graph, front, count, start="min_degree"):
 
 
 def solve(graph, seconds, widths=8, seed=1, start="min_degree", verbose=False,
-          ops=None):
+          ops=None, pool="generic"):
     """Run the climber and return the front. Used by benchmark.py.
 
     ops restricts the move pool to the named operators; None uses all four.
+    pool="bottleneck" swaps the four generic operators for the bottleneck-aware
+    pool in meta.py, holding everything else fixed.
     """
     rng = random.Random(seed)
     front = Front(graph.n)
     targets = target_widths(graph, front, widths, start)
-    climber = HillClimber(graph, front, rng, verbose=verbose, ops=ops)
+    climber = HillClimber(graph, front, rng, verbose=verbose, ops=ops,
+                          pool=pool)
     per_width = seconds / len(targets)
     for width in targets:
         climber.climb(width, per_width, start=start)
@@ -248,8 +272,9 @@ def run(instance, seconds, widths, seed, start, out_path, self_check, ops=None):
     print(f"{climber.evaluations:,} evaluations, {climber.accepts:,} accepted, "
           f"{elapsed:.1f}s")
     print("  operator            tried      accepted     rate")
-    for nm in climber.op_names:
-        tried, acc = climber.tries_by_op[nm], climber.accepts_by_op[nm]
+    for nm in sorted(climber.tries_by_op, key=lambda x: -climber.tries_by_op[x]):
+        tried = climber.tries_by_op.get(nm, 0)
+        acc = climber.accepts_by_op.get(nm, 0)
         rate = acc / tried if tried else 0.0
         print(f"  {nm:<18} {tried:>9,}  {acc:>9,}  {rate:>7.3%}")
     print(f"front has {len(front.pareto())} points, submitting {len(points)}")
