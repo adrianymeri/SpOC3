@@ -18,7 +18,7 @@ grasp.py               build many starting points instead of one
 bound.py               a provable ceiling on the score
 generate.py            make instances
 validate.py            check an answer is legal and re-score it
-test_correctness.py    22 checks proving the above is right
+test_correctness.py    27 checks proving the above is right
 data/                  3 competition graphs, 7 synthetic, a toy
 harness/               run everything, merge results, the operator ablation
 leaderboard-references/ the winning entry, and a CPU port of it
@@ -29,6 +29,7 @@ answer is written down, how to solve a small instance **by hand**, how the
 score is computed, how everything is stored in the code, why the problem is
 hard, how the algorithm works, how to run it — and then, in Parts 12 to 15,
 **why** it performs the way it does, and how close to optimal anyone can get.
+Part 16 sets out what the chapter does *not* establish.
 
 A word on ambition: this branch is deliberately **primitive**. Plain hill
 climbing, plain data structures, no cleverness. It is meant to be read and
@@ -686,14 +687,21 @@ understand what the comparison does.
 runs **one** solver across all instances, pinned to a single core and
 resuming from its own CSV, so four of them launch side by side via
 `run_mac.sh` without contending; `status.sh` reports progress,
-`merge_results.py` combines the per-solver CSVs, and `make_report.py` builds
-the spreadsheet. `spoc3_benchmark.ipynb` runs Spacekangaroos' `cuda-torso`
-on a Kaggle GPU, since that entry needs one. The raw CSVs from the 130-run
-comparison are committed alongside them.
+`merge_results.py` combines the per-solver CSVs, and `report.py` regenerates
+every table in the results sheet from them. `spoc3_benchmark.ipynb` runs
+Spacekangaroos' `cuda-torso` on a Kaggle GPU, since that entry needs one. The
+raw CSVs from the comparison are committed alongside them.
+
+`report.py` is the rule that keeps the write-up honest: **if a number appears
+in the sheet or in this README and not in `report.py`'s output, it does not
+belong there.** Nothing in it is hardcoded — every figure is derived from the
+CSVs, and the Hill Climbing baseline is pinned in one place at the top of the
+file, so the sheet and the README cannot drift apart from each other. An
+earlier `make_report.py` hardcoded its numbers and was deleted for it.
 
 ### `test_correctness.py` — the proof
 
-22 checks that pin the evaluator and the scoring against independent ground
+27 checks that pin the evaluator and the scoring against independent ground
 truth. Run it first; if it passes, the numbers everything else prints can be
 trusted.
 
@@ -791,8 +799,15 @@ small ones.
 | 3 | hypervolume formula | brute-force count of covered grid squares |
 | 4 | every staircase point | re-evaluated directly at that `t` |
 | 5 | validator rejects bad input | five kinds of malformed decision vector |
+| 6 | the provable ceiling holds | `bound.py`, against every score ever recorded |
 
-All 22 pass.
+All 27 pass.
+
+Check 6 is the one that can fail retrospectively. It globs every
+`benchmark-*.csv` in `harness/` and re-derives the ceiling for each instance
+from scratch, so any run that scored past what Part 15 says is reachable
+would be caught the next time the suite is run — including runs added long
+after the bound was written.
 
 ---
 
@@ -905,6 +920,22 @@ a claim about the original entry: the learned-scoring-rule approach needs a
 large population to pay off, and a large population is exactly what the GPU
 was for. Any comparison here is a statement about **the methods at equal CPU
 budget**.
+
+One warning about reading the full comparison table. It names a best method
+on every row, but on **five of the ten rows the gap between first and second
+place is smaller than the amount the baseline differs from an independent run
+of itself on a single instance** (7,881 HV — Part 13.1 derives it).
+`small-graph`, `synth-1`, `synth-2`, `synth-3` and `synth-4` should be read
+as ties; only `medium-graph`, `large-graph`, `synth-5`, `synth-6` and
+`synth-7` separate the methods by more than the reference method separates
+from itself. `report.py` prints this split under the table so it cannot be
+quietly dropped.
+
+Note which floor that is. Part 13.1's **21,519 HV** is a sum over ten
+instances and belongs against Block 2's net-HV column, which is also a sum
+over ten instances. The per-instance margins here need the **per-instance**
+figure, 7,881 HV. Using the aggregate against a single row inflates the floor
+by roughly the instance count and manufactures ties that are not there.
 
 ## 10.4 Starting points, and why they decide the table
 
@@ -1135,33 +1166,117 @@ comparison uses the front-targeted ones.
 
 # Part 13 — The controlled experiment
 
-Four methods, one skeleton, one factor changed at a time.
+A local search has three moving parts: where it starts, what moves it tries,
+and which candidates it keeps. This part replaces them one at a time and
+measures nothing else.
 
-| method | construction | acceptance rule |
-|---|---|---|
-| Hill Climbing | min-degree | keep if better |
-| Simulated Annealing | min-degree | **Metropolis** |
-| VNS | min-degree | **shake ladder** |
-| GRASP | **randomised (RCL)** | keep if better |
+| method | construction | move pool | acceptance rule |
+|---|---|---|---|
+| Hill Climbing | min-degree | generic ×4 | keep if better |
+| Move pool | min-degree | **bottleneck-aware** | keep if better |
+| Simulated Annealing | min-degree | generic ×4 | **Metropolis** |
+| VNS | min-degree | generic ×4 | **shake ladder** |
+| GRASP | **randomised (RCL)** | generic ×4 | keep if better |
 
 Ten instances, 1,200 s per seed, three seeds, one CPU core, every answer
-re-scored through `esa_eval.py`. Differences smaller than the **1,528 HV**
-median seed spread are ties.
+re-scored through `esa_eval.py`. Reproduce with `python3 harness/report.py
+--block 2`.
 
-| method | net HV vs Hill Climbing | best single instance | W–T–L |
-|---|---:|---:|:---:|
-| Simulated Annealing | **+20,949** | +14,937 | 3–6–1 |
-| VNS | **−1,896** | +3,825 | 3–5–2 |
-| GRASP | **+319,744** | +127,819 | 3–4–3 |
+| method | component changed | net HV vs Hill Climbing | best single instance | W–T–L |
+|---|---|---:|---:|:---:|
+| Move pool | the moves | **+9,562** | +8,071 | 1–9–0 |
+| VNS | the acceptance rule | **+19,623** | +6,520 | 0–10–0 |
+| Simulated Annealing | the acceptance rule | **+42,468** | +20,819 | 2–8–0 |
+| GRASP | the construction | **+341,263** | +133,701 | 3–7–0 |
 
-Read that twice. **Two different acceptance rules, across ten instances,
-produce +20,949 and −1,896 — both inside the margin of nothing.** Change the
-construction instead and you get **+319,744**, winning large-graph by
-127,819, synth-6 by 115,787 and synth-7 by 94,109, with no loss above 11,128.
-GRASP wins large and loses small.
+W–T–L counts an instance as won only when it clears the 7,881 HV
+per-instance floor of §13.1. Note VNS: **+19,623 net with not one instance
+separated** — ten small gains in the same direction, none individually
+significant. That is also precisely what drift between sessions produces,
+which is why the ten-instance sum is judged against the aggregate floor
+rather than the seed spread.
 
-So the answer to *"just tune it"* is: tuning the acceptance rule is not what
-is wrong. Part 14 shows why.
+The three search components produce +9,562, +19,623 and +42,468. Change the
+construction instead and you get **+341,263** — eight times the best of them,
+thirty-six times the weakest. GRASP wins large-graph by 133,701, synth-6 by
+115,788 and synth-7 by 94,134, and its worst loss anywhere is 3,247.
+
+The move-pool row is the strongest of the three, not the weakest, which is
+the point. Those moves are built to grab the vertex holding `max(deg[t:])`
+— the one the width is a function of — and they demonstrably search better:
+in a 45-second probe they took 3 accepts where the generic four took 0.
+Better moves, measured as better, worth +9,562.
+
+## 13.1 How big does a difference have to be?
+
+Hill Climbing was run twice at full budget — ten instances, three seeds,
+1,200 s each, both times. The loop is bounded by wall-clock rather than by an
+iteration count, so the two runs are **two independent samples of the same
+method**, not a repeat. Both are kept in `harness/`.
+
+That accident is the most useful measurement in this part. Net-vs-baseline is
+linear in the baseline, so re-drawing it shifts every arm by the same amount:
+
+```
+baseline re-sample shifts every arm by   -21,519 HV   <- use against net HV
+worst single instance moves by             7,881 HV   <- use against a margin
+median within-run seed spread              1,528 HV   <- too generous; was used
+```
+
+**The baseline differs from itself by fourteen times the seed spread.** The
+seed spread is the floor this chapter used to quote, and it is far too
+generous: two seeds inside one run share a machine, a thermal state and a
+session, so their agreement measures much less than it appears to. Two runs
+share none of that.
+
+The first two figures are **not interchangeable.** The −21,519 is a sum over
+ten instances, so it belongs against a quantity that is also a sum over ten
+instances — the net-HV column below. A single row's margin needs the
+single-instance figure, 7,881. Holding one row up against the aggregate
+inflates the floor by about the instance count; it is an easy mistake and it
+invents ties.
+
+Judged against the figure that the baseline cannot be accused of flattering:
+
+| method | net HV | vs re-sample error | verdict |
+|---|---:|---:|---|
+| Move pool | +9,562 | 0.4× | indistinguishable from zero |
+| VNS | +19,623 | 0.9× | indistinguishable from zero |
+| Simulated Annealing | +42,468 | 2.0× | marginal |
+| GRASP | +341,263 | 15.9× | **real** |
+
+Measured against the old 1,528 floor, VNS and the move pool were wins.
+Measured honestly, both vanish — and against the *other* sample of the
+baseline both go negative. An effect that changes sign when you re-draw the
+control was never there.
+
+**Is the 21,519 just a bad run?** It would be a fair objection: if one of the
+two baselines was interrupted, the difference measures the interruption
+rather than the method. `harness/status.sh` flags any run whose wall-clock
+falls outside 1,150–1,400 s, since the climb loop is wall-clock-bounded and a
+machine stall costs it iterations. Across all 310 runs it finds four, and
+none of them affects the figure:
+
+| off-budget run | wall-clock | effect |
+|---|---:|---|
+| v1 `synth-6` seeds 1, 2 | 2,978 s, 4,435 s | synth-6 contributes **−1 HV** of the −21,519 |
+| `hri` `synth-7` seed 1 | 1,928 s | scored worse than its two clean seeds; best-of-3 discards it |
+| `fast_cma_es` `synth-7` seed 1 | 1,927 s | same |
+
+Drop synth-6 from the comparison entirely and the re-sample error over the
+nine clean instances is **−21,518 HV**. The figure is made on clean runs:
+medium-graph (−5,486), large-graph (−5,882), synth-4 (−7,881) and synth-5
+(−2,695), all inside budget.
+
+That synth-6 scored within **1 HV** across two runs — one of which lost half
+its budget to a stall — is itself worth noticing. It is one of the three
+instances whose treewidth is pinned at 499–500 (Part 15.3): min-degree
+essentially solves it on contact, and neither extra search nor lost search
+moves it.
+
+So the answer to *"just tune it"* is that there are only three things to
+tune, all three have now been tuned independently, and all three land inside
+the noise of the thing they were meant to beat. Part 14 shows why.
 
 ---
 
@@ -1293,6 +1408,78 @@ min-degree alone already reaches 87–99%.
 
 On the 2,426-vertex instances, where treewidth is a fifth of `n`, it does not
 collapse and the staircase genuinely earns its keep.
+
+---
+
+# Part 16 — What this chapter does not establish
+
+The claim defended here is narrow: **on these ten instances, at this budget,
+the construction dominates and the three search components do not.** Five
+things stand between that and anything more general, and each would be a fair
+question to ask of it.
+
+**Three seeds per cell, scored best-of-three.** `min()` over three samples is
+a biased estimator, and the bias is not neutral between methods: it rewards
+whichever one has the higher variance, because best-of-k climbs with spread.
+A method that is worse on average but noisier can print a better number here.
+Nothing in this chapter corrects for that. The only reason the headline
+survives it is size — GRASP's margin is 16× the baseline's own re-sample
+error, which no plausible estimator bias closes. The small rows are a
+different matter, and Part 13.1 is explicit that they are unresolved rather
+than zero.
+
+**The uncertainty figure is itself one sample.** 21,519 HV comes from exactly
+two runs of the baseline. It is a far better floor than the within-run seed
+spread it replaced, but it is a single difference, not a distribution, and the
+true spread could be larger. It is used as a lower bound on the noise, which
+is the direction that makes the chapter's claim harder rather than easier.
+
+**Runs are not reproducible.** The climb loop is bounded by wall-clock, so
+iteration counts differ between sessions and no run here can be reproduced
+exactly — only re-sampled. This was discovered the hard way: an attempt to
+verify a run by re-running it mismatched on 29 of 30 rows, and the check, not
+the harness, was wrong. It is also why two independent baselines existed to
+be compared at all.
+
+**Ten instances, three of them structurally alike.** `large-graph`, `synth-6`
+and `synth-7` all carry a planted 500-clique, and all three are where GRASP's
+margin is made:
+
+| | GRASP net HV |
+|---|---:|
+| the three 500-clique instances | **+343,623** |
+| the other seven | **−2,360** |
+| all ten | +341,263 |
+
+The construction lever's entire value sits on three instances, and on the
+other seven it is slightly **negative**. **The headline is a result about
+dense instances**; it is reported as a ten-instance net only because that is
+how the comparison table is built. Part 15.4 explains why the sparse
+instances cannot show much — their score collapses onto a single point and
+min-degree already reaches 87–99% of the reachable ceiling, so there is
+almost nothing left for any lever to win. Three instances is a thin base for
+the chapter's main claim, and they were not independently chosen: two of the
+three were generated by `generate.py` to resemble the first.
+
+**Half the comparison table is a tie.** Five of its ten rows separate first
+from second place by less than 7,881 HV — the most the baseline differs from
+an independent run of itself on a single instance — so the method named on
+those rows won by luck. This does not touch the construction result, which is
+made on rows that clear the floor comfortably, but it does mean the table
+supports fewer claims than it appears to. Part 10.3 says so where the table
+is introduced.
+
+**One budget.** Everything is 1,200 s. The construction lever is a one-off
+cost paid at the start, while the search levers are what the remaining budget
+buys, so the ratio between them is a function of the budget and nothing here
+measures how it moves. A much longer run is the obvious way for search to
+catch up, and this chapter does not rule it out — it only shows that at
+twenty minutes it has not.
+
+What would settle the open parts: more seeds per cell with the mean reported
+alongside the best, a spread of budgets, and more dense instances. In order of
+value, the dense instances matter most, because that is where the effect
+lives.
 
 ---
 

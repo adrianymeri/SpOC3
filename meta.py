@@ -44,6 +44,22 @@ hill_climbing.py. That is deliberate and it matches the original, where they
 reuse hc9's pool while the teaching hill climber keeps its own. When reading
 the comparison, remember that part of any gap is the move pool, not the
 acceptance rule.
+
+How much of it is the move pool: measured
+-----------------------------------------
+That caveat went unquantified for most of this chapter, so it was closed by
+experiment. `move_perm` below gives hill_climbing.py this richer pool and
+changes nothing else -- same min-degree construction, same greedy acceptance,
+same eight target widths, same budget -- which isolates the move pool exactly
+as grasp_front isolates the construction. Run as `--solver hc_bottleneck`.
+
+    the move pool is worth  +9,562 HV   over ten instances, W-T-L 2-7-1
+
+For scale, the baseline differs from an independent run of *itself* by 21,519
+HV, so +9,562 is less than half of nothing. The confounding this docstring
+warned about is real but small: it cannot account for any gap worth
+discussing, and the front-aware variants (`solve_front`) avoid it entirely by
+calling hill_climbing.Operators.ALL directly. See README Part 13.
 """
 
 from __future__ import annotations
@@ -162,6 +178,33 @@ def move(graph, perm, t, rng, solution=None):
     """
     fn = rng.choices(_FNS, weights=_WEIGHTS, k=1)[0]
     return fn(graph, perm, t, rng, solution)
+
+
+# --- the width-aware pool, for the move-pool arm of the experiment --------
+
+PERM_MOVES = [(generic,             0.267),
+              (bottleneck_earlier,  0.466),
+              (bottleneck_relocate, 0.267)]
+_PFNS = [m for m, _ in PERM_MOVES]
+_PWEIGHTS = [w for _, w in PERM_MOVES]
+
+
+def move_perm(graph, perm, t, rng, solution=None):
+    """One move from the bottleneck-aware pool, returning only a permutation.
+
+    hill_climbing searches permutations at a *fixed* target width, so it has
+    no free threshold to move: t is derived from the permutation, not chosen
+    alongside it. This drops the two threshold moves from MOVES above and
+    renormalises what is left, giving a pool that is hill_climbing's four
+    generic operators plus the two that can actually see the vertex holding
+    max(deg[t:]).
+
+    That is the only difference between the hc_bottleneck arm of the
+    controlled experiment and plain Hill Climbing -- same construction, same
+    acceptance rule, same objective, same budget, better moves.
+    """
+    fn = rng.choices(_PFNS, weights=_PWEIGHTS, k=1)[0]
+    return fn(graph, perm, t, rng, solution)[0]
 
 
 def start_state(graph, rng, start="min_degree"):

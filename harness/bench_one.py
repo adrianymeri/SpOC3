@@ -97,6 +97,15 @@ def solve(solver, graph, seconds, seed):
     if solver == "grasp_front":
         import grasp
         return grasp.solve_front(graph, seconds, seed=seed)[0]
+    # The third lever. Identical to hill_climbing in every respect -- same
+    # min-degree construction, same greedy acceptance, same eight target
+    # widths, same budget -- except that the four generic operators are
+    # replaced by the bottleneck-aware pool. sa_front and vns_front isolate
+    # the acceptance rule, grasp_front isolates the construction, and this
+    # isolates the move pool.
+    if solver == "hc_bottleneck":
+        return hill_climbing.solve(graph, seconds, seed=seed,
+                                   start="min_degree", pool="bottleneck")[0]
     raise ValueError(solver)
 
 
@@ -105,7 +114,8 @@ def main():
     ap.add_argument("--solver", required=True,
                     choices=["hill_climbing", "hri", "fast_cma_es",
                              "min_degree", "simulated_annealing", "vns",
-                             "grasp", "sa_front", "vns_front", "grasp_front"])
+                             "grasp", "sa_front", "vns_front", "grasp_front",
+                             "hc_bottleneck"])
     ap.add_argument("--seconds", type=float, default=1200.0)
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--out", default="")
