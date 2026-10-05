@@ -42,6 +42,7 @@ import time
 
 from torso import Graph, Solution, Front
 import meta
+import hill_climbing
 
 
 def construct(graph, rng, alpha):
@@ -124,6 +125,54 @@ def solve(graph, seconds, seed=1, alpha=None, restarts=8, verbose=False):
                   f"{front.score():,}")
 
     return front, done, steps
+
+
+# --- front-aware variant -------------------------------------------------
+#
+# Hill Climbing's skeleton with ONE substitution: the min-degree construction
+# is replaced by a greedy-randomised one drawn from a restricted candidate
+# list. Same eight target widths, same four operators, same greedy
+# acceptance, same objective. So GRASP against Hill Climbing isolates the
+# construction, exactly as this file's annealing and VNS counterparts isolate
+# the acceptance rule.
+
+def _grasp_at_width(graph, front, target_width, seconds, rng, alpha):
+    n = graph.n
+    perm = construct(graph, rng, alpha)
+    sol = Solution(graph, perm)
+    front.add_solution(sol)
+    cost = meta.cost_at(sol, target_width, n)
+    steps = 0
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        steps += 1
+        cand_perm = rng.choice(hill_climbing.Operators.ALL)(perm, rng)
+        cand = Solution(graph, cand_perm)
+        front.add_solution(cand)
+        c = meta.cost_at(cand, target_width, n)
+        if c < cost:
+            perm, cost = cand_perm, c
+    return steps
+
+
+def solve_front(graph, seconds, seed=1, widths=8, alpha=None, verbose=False):
+    """Front-aware GRASP: Hill Climbing's skeleton, RCL construction.
+    alpha=None rotates through ALPHAS across the widths; 0.0 is pure
+    min-degree, so at least one width reproduces the greedy construction.
+    Returns (front, constructions, descent_steps)."""
+    rng = random.Random(seed)
+    front = Front(graph.n)
+    targets = hill_climbing.target_widths(graph, front, widths, "min_degree")
+    per_width = seconds / len(targets)
+    steps = 0
+    for i, w in enumerate(targets):
+        a = ALPHAS[i % len(ALPHAS)] if alpha is None else alpha
+        s = _grasp_at_width(graph, front, w, per_width, rng, a)
+        steps += s
+        if verbose:
+            print(f"  width {w:>4}: alpha={a}, {s:,} steps, "
+                  f"{front.score():,}", flush=True)
+    return front, len(targets), steps
 
 
 def main():

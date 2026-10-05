@@ -55,6 +55,7 @@ import time
 
 from torso import Graph, Solution, Front
 import meta
+import hill_climbing
 
 
 def calibrate_t0(graph, perm, t, rng, samples=80):
@@ -133,6 +134,78 @@ def solve(graph, seconds, seed=1, t0=None, alpha=0.95, steps_per_t=200,
                   f"acc {accepts/max(iterations,1):5.1%}  {front.score():,}")
 
     return front, iterations, accepts
+
+
+# --- front-aware variant -------------------------------------------------
+#
+# Identical skeleton to hill_climbing.solve: eight target widths, a fresh
+# min-degree construction per width, the same four generic operators, and the
+# same objective (minimise t at the target width). The ONLY difference from
+# Hill Climbing is this file's acceptance rule. That is what makes the
+# comparison a controlled one.
+
+def _anneal_at_width(graph, front, target_width, seconds, rng, alpha,
+                     steps_per_t):
+    n = graph.n
+    perm = hill_climbing.Starts.min_degree(graph, rng)
+    current = Solution(graph, perm)
+    front.add_solution(current)
+    cur_cost = meta.cost_at(current, target_width, n)
+
+    # Calibrate T0 so a typical worsening move is accepted at p ~= 0.4.
+    worse = []
+    for _ in range(60):
+        cand = Solution(graph, rng.choice(hill_climbing.Operators.ALL)(perm, rng))
+        d = meta.cost_at(cand, target_width, n) - cur_cost
+        if d > 0:
+            worse.append(d)
+    typical = sum(worse) / len(worse) if worse else max(1.0, n / 100.0)
+    T = T0 = max(1.0, -typical / math.log(0.4))
+
+    iters = accepts = 0
+    win_att = win_acc = 0
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        for _ in range(steps_per_t):
+            if time.time() >= deadline:
+                break
+            iters += 1
+            cand_perm = rng.choice(hill_climbing.Operators.ALL)(perm, rng)
+            cand = Solution(graph, cand_perm)
+            front.add_solution(cand)
+            cand_cost = meta.cost_at(cand, target_width, n)
+            d = cand_cost - cur_cost
+            win_att += 1
+            if d <= 0 or rng.random() < math.exp(-d / max(T, 1e-9)):
+                perm, cur_cost = cand_perm, cand_cost
+                accepts += 1
+                win_acc += 1
+        T *= alpha
+        if win_att >= 5 * steps_per_t:
+            if win_acc / win_att < 0.05:
+                T = max(T, 0.5 * T0)          # reheat; a frozen walk stops
+            win_att = win_acc = 0             # feeding the front
+    return iters, accepts
+
+
+def solve_front(graph, seconds, seed=1, widths=8, alpha=0.95, steps_per_t=200,
+                verbose=False):
+    """Front-aware simulated annealing: Hill Climbing's skeleton, Metropolis
+    acceptance. Returns (front, iterations, accepts)."""
+    rng = random.Random(seed)
+    front = Front(graph.n)
+    targets = hill_climbing.target_widths(graph, front, widths, "min_degree")
+    per_width = seconds / len(targets)
+    iters = accepts = 0
+    for w in targets:
+        i, a = _anneal_at_width(graph, front, w, per_width, rng, alpha,
+                                steps_per_t)
+        iters += i
+        accepts += a
+        if verbose:
+            print(f"  width {w:>4}: {i:,} iters, {a:,} accepted, "
+                  f"{front.score():,}", flush=True)
+    return front, iters, accepts
 
 
 def main():

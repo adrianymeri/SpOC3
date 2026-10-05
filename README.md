@@ -11,21 +11,33 @@ you have `python3`, everything here runs.
 esa_eval.py            the official scoring, ported from the main project
 torso.py               graphs, solutions, the front we submit
 hill_climbing.py       the search: four operators, one accept rule
+meta.py                shared pieces for the three metaheuristics
+simulated_annealing.py sometimes keep a worse answer
+vns.py                 when stuck, kick harder
+grasp.py               build many starting points instead of one
+bound.py               a provable ceiling on the score
 generate.py            make instances
 validate.py            check an answer is legal and re-score it
 test_correctness.py    22 checks proving the above is right
 data/                  3 competition graphs, 7 synthetic, a toy
+harness/               run everything, merge results, the operator ablation
 leaderboard-references/ the winning entry, and a CPU port of it
 ```
 
 Read this file top to bottom and you will know: what the problem is, how an
 answer is written down, how to solve a small instance **by hand**, how the
 score is computed, how everything is stored in the code, why the problem is
-hard, how the algorithm works, and how to run it.
+hard, how the algorithm works, how to run it — and then, in Parts 12 to 15,
+**why** it performs the way it does, and how close to optimal anyone can get.
 
 A word on ambition: this branch is deliberately **primitive**. Plain hill
 climbing, plain data structures, no cleverness. It is meant to be read and
 understood, and to serve as the honest baseline — not to be competitive.
+
+But a baseline that only says "we lose" is not worth much. The second half of
+this file is about the obvious follow-up question — *so tune it, surely?* —
+and the answer turns out to be no, for a reason that is measurable and that
+points at what to do instead.
 
 ---
 
@@ -1037,6 +1049,253 @@ provably optimal answer there.
 
 ---
 
+# Part 12 — Three more ways to search
+
+Everyone's first reaction to Part 11 is the same: *hill climbing is the
+weakest thing you could have written — tune it.* Anneal it. Restart it. Add a
+kick. That objection is reasonable, and the only way to answer it is to
+actually run those methods. So this branch has three more.
+
+All three keep hill climbing's problem, its evaluator and its budget. They
+differ only in what they do with a candidate.
+
+## 12.1 Simulated annealing — `simulated_annealing.py`
+
+Hill climbing throws away anything worse, so once nothing nearby helps, it is
+finished. Simulated annealing keeps a worse answer **sometimes**: if a move
+makes things worse by `dE`, it is accepted with probability
+
+```
+exp(-dE / T)
+```
+
+`T` starts high and falls, so the walk roams early and hardens into plain
+hill climbing late. `T` is not guessed — the code samples 60 moves, measures
+how much a typical bad one hurts, and sets `T₀` so such a move is accepted
+about 40% of the time. It cools geometrically and **reheats** if the
+acceptance rate collapses below 5%, because a frozen walk stops contributing.
+
+## 12.2 VNS — `vns.py`
+
+Variable Neighbourhood Search keeps the small moves but adds a ladder. It
+holds a number `k`, and each round:
+
+1. **shake** — apply `k` random moves to the current answer
+2. **descend** — run a short local search from wherever that landed
+3. **decide** — if the result is better, adopt it and reset `k = 1`; if not,
+   keep the old answer and try `k + 1`
+
+So the kick grows exactly while progress stalls and collapses the moment
+something works.
+
+## 12.3 GRASP — `grasp.py`
+
+The opposite bet. Instead of improving one answer for the whole budget,
+**build several different ones**. The construction is min-degree elimination
+with one change: rather than always taking the lowest-degree vertex, take a
+random one from the **restricted candidate list** — everything whose degree
+falls in
+
+```
+[d_min,  d_min + α × (d_max − d_min)]
+```
+
+`α = 0` is exactly min-degree. `α = 1` is a random order. In between you get
+orderings that are min-degree-ish but all different. `α` rotates through
+`[0.0, 0.1, 0.2, 0.3, 0.5]`; the `0.0` matters, because without it no run
+reproduces plain min-degree and GRASP can finish *below* the baseline it is
+built on. That actually happened at a fixed `α = 0.3`.
+
+## 12.4 The mistake worth recording
+
+The first version of all three collapsed the score to a single number:
+
+```
+E = −(n − width) × (n − t)        the area of one point
+```
+
+They need one number because their acceptance rules compare two states. But
+the real score is the area under a staircase of up to 20 points, and **hill
+climbing never collapsed it** — it runs eight separate climbs at eight target
+widths, so it optimises eight places on that staircase.
+
+That made every comparison meaningless. A loss against hill climbing could
+have come from the acceptance rule, from building one ordering instead of
+eight, or from aiming at one point instead of eight — three differences at
+once, and no way to tell which mattered.
+
+`solve_front()` in each of the three files fixes it. All three now run hill
+climbing's skeleton: eight target widths, a construction per width, the same
+four generic operators, and `meta.cost_at` as the shared objective. Exactly
+one thing differs per method. The scalar versions are kept — they measure
+something real, namely what the collapse costs — but the controlled
+comparison uses the front-targeted ones.
+
+---
+
+# Part 13 — The controlled experiment
+
+Four methods, one skeleton, one factor changed at a time.
+
+| method | construction | acceptance rule |
+|---|---|---|
+| Hill Climbing | min-degree | keep if better |
+| Simulated Annealing | min-degree | **Metropolis** |
+| VNS | min-degree | **shake ladder** |
+| GRASP | **randomised (RCL)** | keep if better |
+
+Ten instances, 1,200 s per seed, three seeds, one CPU core, every answer
+re-scored through `esa_eval.py`. Differences smaller than the **1,528 HV**
+median seed spread are ties.
+
+| method | net HV vs Hill Climbing | best single instance | W–T–L |
+|---|---:|---:|:---:|
+| Simulated Annealing | **+20,949** | +14,937 | 3–6–1 |
+| VNS | **−1,896** | +3,825 | 3–5–2 |
+| GRASP | **+319,744** | +127,819 | 3–4–3 |
+
+Read that twice. **Two different acceptance rules, across ten instances,
+produce +20,949 and −1,896 — both inside the margin of nothing.** Change the
+construction instead and you get **+319,744**, winning large-graph by
+127,819, synth-6 by 115,787 and synth-7 by 94,109, with no loss above 11,128.
+GRASP wins large and loses small.
+
+So the answer to *"just tune it"* is: tuning the acceptance rule is not what
+is wrong. Part 14 shows why.
+
+---
+
+# Part 14 — Taking the climber apart
+
+`harness/ablation.py` runs hill climbing with its move pool restricted to a
+single operator, and `hill_climbing.py` counts which operator earns each
+accepted move when all four compete. Two independent routes, and they agree.
+
+## 14.1 Half the pool is dead
+
+Competing for one budget, over 5,968,899 attempted moves:
+
+| operator | tried | accepted | accept rate | share |
+|---|---:|---:|---:|---:|
+| `move_vertex` | 1,489,042 | 1,357 | 0.0911% | 78.6% |
+| `swap_any` | 1,495,576 | 358 | 0.0239% | 20.7% |
+| `reverse_segment` | 1,491,525 | 11 | 0.0007% | 0.6% |
+| `swap_neighbours` | 1,492,756 | **1** | 0.0001% | 0.1% |
+
+`swap_neighbours` accepted **one move in 1,492,756 attempts**. Two of the
+four operators do essentially nothing, and because the pool is drawn
+uniformly, half of every run is spent on them.
+
+The 78.6% / 20.7% split between the top two is *not* a result — 1,299 of the
+1,727 accepted moves come from three instances where `move_vertex` happens to
+dominate, and counted by instance `swap_any` leads 5 of the 9 instances that
+accepted anything to `move_vertex`'s 4. Read it as **two live operators and
+two dead ones**, not a four-way ranking.
+
+## 14.2 The score does not measure the search
+
+Now the per-instance table, which is the sharper finding:
+
+| instance | `move_vertex` | `swap_any` | `reverse_segment` | `swap_neighbours` | best score | its accepts |
+|---|---:|---:|---:|---:|---|---:|
+| medium-graph | 0.0774% | 0.0890% | none | none | **`reverse_segment`** | **0** |
+| synth-7 | none | none | none | none | `move_vertex` | **0** |
+
+On medium-graph the **best-scoring** operator accepted **nothing at all**,
+and the four scores differ by 9,116 HV with no search between them. On
+synth-7 none of the four ever accepts and the scores still differ by 1,841.
+
+The highest accept rate measured anywhere — four operators, ten instances —
+is **0.2327%**. The landscape is not rugged, it is **flat**. Torso width is
+`max(deg[t:])`, a maximum held by a single vertex, so a move that does not
+touch that vertex changes nothing at all.
+
+That is why no acceptance rule helps. There is nothing to climb. Most of what
+the climber produces comes from the orderings it constructs and from every
+evaluated permutation donating its whole staircase to the front — accepted or
+rejected. Only what you **build** matters.
+
+---
+
+# Part 15 — How good could any answer be
+
+The problem is NP-hard twice over, so the optimum is unreachable. A *bound*
+on it is not. Run `bound.py`.
+
+## 15.1 The argument
+
+Deleting a set `S` of `t` vertices with fill-in leaves the **torso** of `G`
+over `S` — and the torso depends only on `S`, not on the order `S` was
+deleted in. Whatever order is used for the rest, the reported width is an
+elimination width of that torso, and the smallest elimination width of any
+graph is exactly its **treewidth**. So the true optimum at threshold `t` is
+
+```
+min over all t-subsets S of   tw(torso(G, S))
+```
+
+which is hopeless. But take any tree decomposition of the torso and add `S`
+to every bag: the result is a valid tree decomposition of `G`. Therefore
+
+```
+tw(G) ≤ tw(torso(G, S)) + t          so      width ≥ tw(G) − t
+```
+
+Treewidth is itself NP-hard, but *lower bounds* are cheap — degeneracy, a
+greedy clique, and contraction degeneracy, all valid because treewidth is
+minor-monotone. Any lower bound `L` gives a wall, and the best a submission
+can do is the largest hypervolume 20 points can have on it.
+
+## 15.2 The numbers
+
+```
+python3 bound.py --all
+```
+
+| instance | n | tw ≥ | best possible | best known | gap |
+|---|---:|---:|---:|---:|---:|
+| small-graph | 1,357 | 5 | −1,841,434 | −1,829,919 | **0.63%** |
+| synth-1, 2, 3 | 1,357 | 5 | −1,841,434 | ≈ −1,820,000 | ~1.17% |
+| large-graph | 2,426 | 499 | −5,754,421 | −5,493,062 | 4.54% |
+| medium-graph | 1,399 | 63 | −1,955,110 | −1,745,122 | 10.74% |
+| synth-4, 5 | 1,399 | 72, 73 | ≈ −1,954,400 | ≈ −1,595,000 | ~18.4% |
+
+**small-graph is within 0.63% of a provable ceiling.** That one number
+explains something visible all over the comparison table: every method lands
+within 1% of every other on that instance because there is almost nothing
+left to win. It is effectively solved.
+
+## 15.3 What a gap does and does not mean
+
+A gap is two unknowns added together — how far the best result is from the
+optimum, *plus* how far the bound is from the optimum — and they cannot be
+separated. When the gap is small both must be small, so the reading is
+definite. When it is wide, suspect the bound: the ceiling behaves roughly as
+`n² − L²/2`, so on a 1,399-vertex graph a lower bound of 72 subtracts only
+about 2,600 from 1,957,201.
+
+The three 2,426-vertex instances are the exception. `large-graph` contains a
+**500-clique** (the same one Part 11 points at), so `tw ≥ 499`; and since
+feasible answers exist whose every step stays inside the 500 cap, `tw ≤ 500`.
+Their treewidth is pinned to 499 or 500 — essentially known exactly — so
+their 4.5–10% gaps are **real headroom**, not slack in the bound. That is
+exactly where GRASP wins, and exactly where a better construction would pay.
+
+## 15.4 One structural note
+
+Because `n` is in the thousands and widths in the tens, giving up a vertex of
+torso costs about `n` units of area while the width you save buys back almost
+nothing. A single point at `t = 0` carries **99.99%** of the score on
+small-graph and 97.7% on medium-graph. On the sparse instances the
+bi-objective problem collapses in practice to *minimise the width of the
+whole graph* — which is just treewidth minimisation, and explains why
+min-degree alone already reaches 87–99%.
+
+On the 2,426-vertex instances, where treewidth is a fifth of `n`, it does not
+collapse and the staircase genuinely earns its keep.
+
+---
+
 # Glossary
 
 | term | meaning |
@@ -1056,3 +1315,13 @@ provably optimal answer there.
 | **hypervolume** | the area the points dominate, measured to the corner `(n, n)` |
 | **score** | negative hypervolume — more negative is better |
 | **heuristic** | a method that finds good answers without proving they are best |
+| **treewidth** | the smallest width achievable over *all* elimination orders |
+| **degeneracy** | max over subgraphs of the minimum degree; a treewidth lower bound |
+| **minor** | a graph obtained by deleting and contracting; treewidth never increases |
+| **metaheuristic** | a general search strategy wrapped around a problem-specific move |
+| **acceptance rule** | how a method decides whether to keep a candidate |
+| **Metropolis** | accept a worse answer with probability `exp(−dE/T)` |
+| **RCL** | restricted candidate list — the near-greedy choices GRASP picks among |
+| **accept rate** | accepted moves ÷ moves evaluated; the measure of a flat landscape |
+| **seed-noise floor** | the spread between seeds; differences below it are ties |
+| **confounded** | two things changed at once, so a result cannot be attributed |

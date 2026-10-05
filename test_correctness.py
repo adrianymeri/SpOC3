@@ -228,6 +228,59 @@ def test_validator_catches_bad_input():
 
 # ===========================================================================
 
+def test_bound_is_never_beaten():
+    """6. the ceiling in bound.py holds against every score ever recorded.
+
+    This is the check that matters. The bound rests on an argument -- add S
+    to every bag of a tree decomposition of the torso and you have one for G,
+    so tw(G) <= tw(torso) + t. If that argument were wrong, some run in the
+    benchmark CSVs would have scored past the ceiling. None may.
+    """
+    import csv
+    import glob
+    import bound as B
+    from torso import Graph
+
+    print("\n6. the provable ceiling holds")
+
+    # cheap structural checks first
+    check("no constraint (L=0) gives the arithmetic maximum n^2",
+          B.ceiling(100, 0), 100 * 100)
+    check("a higher treewidth bound never raises the ceiling",
+          B.ceiling(1000, 40) <= B.ceiling(1000, 20), True)
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ["toy", "small-graph"]:
+        path = os.path.join(here, "data", f"{name}.gr")
+        if not os.path.exists(path):
+            continue
+        g = Graph.load(path)
+        lb = B.treewidth_lower_bound(g)
+        ceil = B.ceiling(g.n, lb)
+        check(f"{name}: ceiling is positive and at most n^2",
+              0 < ceil <= g.n * g.n, True)
+
+    # and against every run we have actually recorded
+    worst = {}
+    for f in glob.glob(os.path.join(here, "harness", "benchmark-*.csv")):
+        for r in csv.DictReader(open(f)):
+            if str(r.get("valid", "True")).lower() != "true":
+                continue
+            i, s = r["instance"], int(r["score"])
+            worst[i] = min(worst.get(i, s), s)
+    if worst:
+        beaten = []
+        for i, s in worst.items():
+            path = os.path.join(here, "data", f"{i}.gr")
+            if not os.path.exists(path):
+                continue
+            g = Graph.load(path)
+            if -s > B.ceiling(g.n, B.treewidth_lower_bound(g)):
+                beaten.append(i)
+        check(f"no recorded run beats the ceiling ({len(worst)} instances)",
+              beaten, [])
+
+
 def main():
     print("=" * 62)
     print("correctness checks")
@@ -238,6 +291,7 @@ def main():
     test_hypervolume_vs_brute_force()
     test_staircase_is_consistent()
     test_validator_catches_bad_input()
+    test_bound_is_never_beaten()
 
     print()
     print("=" * 62)

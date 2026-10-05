@@ -39,6 +39,7 @@ import time
 
 from torso import Graph, Solution, Front
 import meta
+import hill_climbing
 
 
 def shake(graph, perm, t, rng, moves):
@@ -97,6 +98,72 @@ def solve(graph, seconds, seed=1, k_max=5, strength=1, ls_steps=400,
         if verbose and rounds % 20 == 0:
             print(f"  round {rounds:>6,}  k={k}  {front.score():,}")
 
+    return front, rounds, improvements
+
+
+# --- front-aware variant -------------------------------------------------
+#
+# Hill Climbing's skeleton -- eight target widths, a min-degree construction
+# per width, the same four generic operators, minimise t at the target width
+# -- with the shake/descend/ladder acceptance rule in place of plain greedy
+# acceptance. That one substitution is the whole difference.
+
+def _vns_at_width(graph, front, target_width, seconds, rng, k_max, strength,
+                  ls_steps):
+    n = graph.n
+    perm = hill_climbing.Starts.min_degree(graph, rng)
+    best_sol = Solution(graph, perm)
+    front.add_solution(best_sol)
+    best = meta.cost_at(best_sol, target_width, n)
+
+    k = 1
+    rounds = improvements = 0
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        rounds += 1
+        # shake: k * strength random moves off the incumbent
+        kicked = list(perm)
+        for _ in range(max(1, k * strength)):
+            kicked = rng.choice(hill_climbing.Operators.ALL)(kicked, rng)
+        sol = Solution(graph, kicked)
+        front.add_solution(sol)
+        cost = meta.cost_at(sol, target_width, n)
+        # descend: accept only improvements
+        for _ in range(ls_steps):
+            if time.time() >= deadline:
+                break
+            cand_perm = rng.choice(hill_climbing.Operators.ALL)(kicked, rng)
+            cand = Solution(graph, cand_perm)
+            front.add_solution(cand)
+            c = meta.cost_at(cand, target_width, n)
+            if c < cost:
+                kicked, cost = cand_perm, c
+        if cost < best:
+            perm, best = kicked, cost      # the kick paid off
+            improvements += 1
+            k = 1
+        else:
+            k = k + 1 if k < k_max else 1  # kick harder next time
+    return rounds, improvements
+
+
+def solve_front(graph, seconds, seed=1, widths=8, k_max=5, strength=1,
+                ls_steps=400, verbose=False):
+    """Front-aware VNS: Hill Climbing's skeleton, shake-ladder acceptance.
+    Returns (front, rounds, improvements)."""
+    rng = random.Random(seed)
+    front = Front(graph.n)
+    targets = hill_climbing.target_widths(graph, front, widths, "min_degree")
+    per_width = seconds / len(targets)
+    rounds = improvements = 0
+    for w in targets:
+        r, i = _vns_at_width(graph, front, w, per_width, rng, k_max, strength,
+                             ls_steps)
+        rounds += r
+        improvements += i
+        if verbose:
+            print(f"  width {w:>4}: {r:,} rounds, {i} improved, "
+                  f"{front.score():,}", flush=True)
     return front, rounds, improvements
 
 

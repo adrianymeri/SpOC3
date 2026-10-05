@@ -66,6 +66,22 @@ def energy(solution, t, n):
     return -float((n - width) * (n - t))
 
 
+def cost_at(solution, target_width, n):
+    """Smallest t reaching `target_width`; n if that width is unreachable.
+
+    This is hill_climbing.HillClimber.cost. The front-aware variants of the
+    three metaheuristics use it instead of `energy` above, so that they
+    optimise the same thing Hill Climbing does -- one front region at a time,
+    eight regions per run -- rather than the area of a single point. The
+    score is the hypervolume of a staircase, so a method aimed at eight
+    places on that staircase is optimising what is measured; one aimed at a
+    single rectangle is optimising a proxy. Keeping the objective identical
+    is what makes the acceptance rule the only thing that differs.
+    """
+    t = solution.best_t_for_width(target_width)
+    return n if t is None else t
+
+
 def bottleneck_position(solution, t):
     """Where the vertex sitting on max(deg[t:]) is -- the one setting width."""
     deg = solution.degrees()
