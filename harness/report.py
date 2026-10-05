@@ -35,10 +35,17 @@ INSTANCES = (["small-graph", "medium-graph", "large-graph"]
              + [f"synth-{i}" for i in range(1, 8)])
 OPERATORS = ["move_vertex", "swap_any", "reverse_segment", "swap_neighbours"]
 
-# The three published ESA SpOC-3 leaderboard tops. The synthetic instances
-# have no leaderboard, so their "best known" is the best in the row.
+# The three published ESA SpOC-3 leaderboard tops, and who holds them. These
+# are external facts rather than measurements -- they are the only numbers in
+# this file not derived from the CSVs, and they are declared here so that the
+# sheet contains nothing this script cannot emit.
+#
+# The synthetic instances have no leaderboard, so their "best known" is the
+# best in the row and their holder is read off the row.
 PUBLISHED = {"small-graph": -1829919, "medium-graph": -1745122,
              "large-graph": -5493062}
+HELD_BY = {"small-graph": "Spacekangaroos", "medium-graph": "Team HRI",
+           "large-graph": "Spacekangaroos"}
 
 LEADERBOARD = [("fast_cma_es", "fast-cma-es"), ("hri", "Team HRI"),
                ("spacekangaroos", "Spacekangaroos")]
@@ -142,7 +149,7 @@ def block1(M, floor):
         row = {k: M[k].get(i) for k, _ in LEADERBOARD + STUDY}
         live = {k: v for k, v in row.items() if v is not None}
         bk = PUBLISHED.get(i, min(live.values()))
-        held = "" if i in PUBLISHED else next(
+        held = HELD_BY.get(i) or next(
             lbl for k, lbl in LEADERBOARD + STUDY if live.get(k) == bk)
         ours = {k: row[k] for k, _ in STUDY if row[k] is not None}
         bo = min(ours.values())

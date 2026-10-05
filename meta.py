@@ -53,13 +53,23 @@ changes nothing else -- same min-degree construction, same greedy acceptance,
 same eight target widths, same budget -- which isolates the move pool exactly
 as grasp_front isolates the construction. Run as `--solver hc_bottleneck`.
 
-    the move pool is worth  +9,562 HV   over ten instances, W-T-L 2-7-1
+    the move pool is worth  +9,562 HV   over ten instances, W-T-L 1-9-0
 
 For scale, the baseline differs from an independent run of *itself* by 21,519
 HV, so +9,562 is less than half of nothing. The confounding this docstring
 warned about is real but small: it cannot account for any gap worth
 discussing, and the front-aware variants (`solve_front`) avoid it entirely by
-calling hill_climbing.Operators.ALL directly. See README Part 13.
+calling hill_climbing.Operators.ALL directly.
+
+One correction to the paragraph above, which the experiment forced. "Less
+neutral" is not the same as "better". These moves do change the objective
+far more often than a generic swap -- that much holds -- but under greedy
+acceptance they change it for the worse, so they are *refused* more often.
+At matched budget on small-graph over three seeds the bottleneck pool
+accepted 0 moves where the generic four accepted 18, at an identical
+evaluation rate (425/s against 410/s). So a richer neighbourhood here buys
+more motion, not more progress, and the score is indifferent to both.
+See README Part 13.
 """
 
 from __future__ import annotations
