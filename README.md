@@ -1201,11 +1201,44 @@ construction instead and you get **+341,263** — eight times the best of them,
 thirty-six times the weakest. GRASP wins large-graph by 133,701, synth-6 by
 115,788 and synth-7 by 94,134, and its worst loss anywhere is 3,247.
 
-The move-pool row is the strongest of the three, not the weakest, which is
-the point. Those moves are built to grab the vertex holding `max(deg[t:])`
-— the one the width is a function of — and they demonstrably search better:
-in a 45-second probe they took 3 accepts where the generic four took 0.
-Better moves, measured as better, worth +9,562.
+The move-pool row repays a closer reading, because the arm is not simply a
+weaker search. Those moves relocate the vertex holding `max(deg[t:])` — the
+one the width is a function of — so unlike a generic swap they almost always
+*change* the objective instead of leaving it untouched. They are also not
+starved of budget: on small-graph at matched time they evaluate 425
+candidates per second against the generic pool's 410.
+
+What they do not do is change the objective in the useful direction. Under
+greedy acceptance they are refused far more often than the generic moves —
+over three seeds on small-graph the bottleneck pool accepted **nothing at
+all**, where the generic four accepted eighteen:
+
+```
+seed     generic ev/acc   bottleneck ev/acc
+   7        5,248/0            4,903/0
+  13        4,970/18           4,910/0
+  21        5,040/0            4,858/0
+```
+
+So this arm moves the objective constantly, is rejected constantly, and still
+lands within half a noise floor of the baseline. That is the sharpest
+statement available of how little the score depends on the search — but note
+what it is *not*: an earlier draft of this part claimed the bottleneck pool
+"demonstrably searches better" on the strength of a single 45-second probe
+that showed 3 accepts against 0. A wider probe reverses the direction. The
+claim was dropped; the score result never depended on it.
+
+Two small asymmetries are worth recording, since "exactly one component"
+should mean exactly. **Simulated annealing** spends 60 evaluations per target
+width calibrating its initial temperature, and unlike every other evaluation
+in the study those candidates are *not* donated to the front — 480 discarded
+staircases per run, about 0.1% of its evaluations. So sa_front is strictly
+"Metropolis acceptance plus a calibration phase", and the asymmetry costs it
+rather than flatters it, which is the safe direction here. **GRASP** rotates
+its RCL greediness through `ALPHAS = [0.0, 0.1, 0.2, 0.3, 0.5]`, and α = 0.0
+*is* pure min-degree, so one of its eight widths reproduces the baseline
+construction exactly — a deliberately conservative choice that understates
+the construction lever rather than inflating it.
 
 ## 13.1 How big does a difference have to be?
 
@@ -1254,7 +1287,7 @@ control was never there.
 two baselines was interrupted, the difference measures the interruption
 rather than the method. `harness/status.sh` flags any run whose wall-clock
 falls outside 1,150–1,400 s, since the climb loop is wall-clock-bounded and a
-machine stall costs it iterations. Across all 310 runs it finds four, and
+machine stall costs it iterations. Across all 370 benchmark runs it finds four, and
 none of them affects the figure:
 
 | off-budget run | wall-clock | effect |
