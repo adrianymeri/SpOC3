@@ -45,6 +45,7 @@ from bench_one import INSTANCES, THREAD_VARS, ROOT, score_vectors   # noqa: E402
 from torso import Graph                                             # noqa: E402
 import hill_climbing                                                # noqa: E402
 import operators_more                                               # noqa: E402
+import fast_degrees                                                  # noqa: E402
 
 # Must happen before OPS is read, so the new names are selectable.
 ADDED = operators_more.install()
@@ -66,6 +67,14 @@ def main():
     ap.add_argument("--data-dir", default="data")
     ap.add_argument("--list", action="store_true",
                     help="print the selectable operators and exit")
+    ap.add_argument("--fast", action="store_true",
+                    help="use the delta evaluator (exact, same deg[]); "
+                         "reaches more candidates in the same budget")
+    ap.add_argument("--speed", action="store_true",
+                    help="measure the delta evaluator instead of running an "
+                         "ablation: same operator, seed and wall-clock with "
+                         "and without it, so the ratio of candidates reached "
+                         "IS the speedup")
     ap.add_argument("--allow-threads", action="store_true",
                     help="skip the one-core check (results not comparable)")
     a = ap.parse_args()
@@ -93,6 +102,46 @@ def main():
               "the numbers will not be compared against other solvers.")
 
     ops = None if a.operator == "all" else [a.operator]
+
+    if a.speed:
+        print(f"[speed] {a.operator}: {a.seconds:.0f}s per arm per instance, "
+              f"seed 1, exact vs delta\n")
+        print(f"  {'instance':<14}{'n':>7}{'exact':>12}{'delta':>12}"
+              f"{'speedup':>10}")
+        ratios = []
+        for name in INSTANCES:
+            path = os.path.join(ROOT, a.data_dir, f"{name}.gr")
+            if not os.path.exists(path):
+                continue
+            graph = Graph.load(path)
+            got = {}
+            for fast in (False, True):
+                operators_more.bind(graph)
+                fast_degrees.reset()
+                if fast:
+                    fast_degrees.install()
+                else:
+                    fast_degrees.uninstall()
+                _, cl = hill_climbing.solve(graph, a.seconds, seed=1,
+                                            start="min_degree", ops=ops)
+                got[fast] = cl.evaluations
+            fast_degrees.uninstall()
+            r = got[True] / got[False] if got[False] else float("nan")
+            ratios.append(r)
+            print(f"  {name:<14}{graph.n:>7}{got[False]:>12,}"
+                  f"{got[True]:>12,}{r:>9.2f}x")
+        if ratios:
+            import math
+            gm = math.exp(sum(math.log(x) for x in ratios) / len(ratios))
+            print(f"\n  geometric mean over {len(ratios)} instances: "
+                  f"{gm:.2f}x")
+            print("  (both arms identical except the evaluator; deg[] is "
+                  "bit-exact either way)")
+        return
+
+    if a.fast:
+        fast_degrees.install()
+        print("[fast] delta evaluator installed (exact)", flush=True)
     family = ("all" if a.operator == "all"
               else operators_more.FAMILY.get(a.operator, "original"))
     out = a.out or os.path.join(HERE, f"ablation_more-{a.operator}.csv")
@@ -129,6 +178,7 @@ def main():
         # The structure-aware moves need the graph; rebinding also clears the
         # per-perm degree memo between instances.
         operators_more.bind(graph)
+        fast_degrees.reset()
         for seed in seeds:
             if (name, seed) in done:
                 continue
@@ -156,6 +206,8 @@ def main():
                   f"{'' if ok else '  INVALID'}", flush=True)
 
     f.close()
+    if a.fast:
+        print(f"[{a.operator}] {fast_degrees.report()}", flush=True)
     print(f"[{a.operator}] DONE -> {out}", flush=True)
 
 
