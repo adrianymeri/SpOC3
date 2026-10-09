@@ -98,7 +98,6 @@ echo "logs: $LOGS"
 echo "csv:  $OUT"
 echo
 
-running=0
 # Longest budget first, so the critical path starts immediately and the
 # short jobs backfill around it.
 for b in $(echo "$BUDGETS" | tr ' ' '\n' | sort -rn); do
@@ -115,11 +114,14 @@ for b in $(echo "$BUDGETS" | tr ' ' '\n' | sort -rn); do
           --seconds "$b" --seeds "$SEEDS" \
           --data-dir "data_one/$i" --out "$csv" \
           > "$LOGS/$tag.log" 2>&1 &
-      running=$(( running + 1 ))
-      if [ "$running" -ge "$PARALLEL" ]; then
-          wait -n 2>/dev/null || wait
-          running=$(( running - 1 ))
-      fi
+      # bash 3.2 (macOS /bin/bash) has no `wait -n`, and falling back
+      # to plain `wait` blocks on EVERY job -- which silently turns the
+      # queue serial: the first batch runs in parallel, then each
+      # remaining arm waits for the whole batch and runs alone. Poll the
+      # live job count instead; portable to bash 3.2 and 5.x alike.
+      while [ "$(jobs -r | wc -l | tr -d ' ')" -ge "$PARALLEL" ]; do
+          sleep 5
+      done
     done
   done
 done
