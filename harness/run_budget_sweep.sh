@@ -100,6 +100,7 @@ echo
 
 # Longest budget first, so the critical path starts immediately and the
 # short jobs backfill around it.
+pids=""
 for b in $(echo "$BUDGETS" | tr ' ' '\n' | sort -rn); do
   for s in $SOLVERS; do
     for i in $INSTANCES; do
@@ -114,14 +115,19 @@ for b in $(echo "$BUDGETS" | tr ' ' '\n' | sort -rn); do
           --seconds "$b" --seeds "$SEEDS" \
           --data-dir "data_one/$i" --out "$csv" \
           > "$LOGS/$tag.log" 2>&1 &
-      # bash 3.2 (macOS /bin/bash) has no `wait -n`, and falling back
-      # to plain `wait` blocks on EVERY job -- which silently turns the
-      # queue serial: the first batch runs in parallel, then each
-      # remaining arm waits for the whole batch and runs alone. Poll the
-      # live job count instead; portable to bash 3.2 and 5.x alike.
-      while [ "$(jobs -r | wc -l | tr -d ' ')" -ge "$PARALLEL" ]; do
-          sleep 5
-      done
+      # Throttle on explicit PIDs. `wait -n` does not exist in bash
+      # 3.2 (macOS), and `jobs -r` inside $(...) reports nothing in a
+      # non-interactive shell under nohup -- the numeric test then
+      # errors, a failing `while` condition is exempt from set -e, and
+      # the loop sprints through every job at once. `wait <pid>` is
+      # POSIX and behaves identically in bash 3.2 and 5.x.
+      pids="$pids $!"
+      n_live=$(echo $pids | wc -w | tr -d ' ')
+      if [ "$n_live" -ge "$PARALLEL" ]; then
+          oldest=$(echo $pids | cut -d' ' -f1)
+          wait "$oldest" 2>/dev/null || true
+          pids=$(echo $pids | cut -d' ' -f2-)
+      fi
     done
   done
 done
