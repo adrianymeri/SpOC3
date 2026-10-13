@@ -28,3 +28,19 @@ data/v3/
 # Superseded by kaggle/benchmark-*.csv and kaggle/merged.csv
 /benchmark.csv
 /results-for-sheet.csv
+
+# Logs behind the ablation_more CSVs, same reasoning as harness/logs/ above.
+harness/logs_ablation_more/
+harness/ablation_launch.log
+harness/speed.log
+tier1.log
+
+# 752 MB of submission JSONs from the separate GBDT/LNS line of experiments.
+# Nothing in this branch reads them and GitHub will not take the large ones.
+Torso Decompositions/
+
+# A working snapshot of this repo taken mid-review; the live tree supersedes it.
+_hc_readme/
+
+# Agent tooling config, machine-specific like .idea/
+.claude/
