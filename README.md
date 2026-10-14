@@ -821,9 +821,10 @@ unchanged, so it re-walks only the window. `harness/delta_check.py` compares
 it with a full `esa_eval` walk on 600 candidates drawn by all seventeen
 operators and chained the way a climb chains them, on all ten instances:
 identical `deg[]` every time (`harness/delta_check.log`). With the same
-operators, seed and 120 s it reaches **1.76×** as many candidates, the
-geometric mean over the ten instances — 1.63× on the sparse family, 1.80× on
-the medium, 1.92× on the dense (`harness/speed.log`).
+operators, seed and wall-clock it reaches **1.81×** as many candidates, the
+geometric mean over the ten instances — 1.70× on the sparse family, 1.88× on
+the medium, 1.89× on the dense (`harness/speed.log`). An independent re-run
+of the same command on another machine gave 1.76× (`harness/speed_cloud.log`).
 
 ## 9.3 What `test_correctness.py` checks
 
