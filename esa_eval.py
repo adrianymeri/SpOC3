@@ -14,11 +14,15 @@ Three things live here and nothing else touches them:
     ParetoArchive.top_k_by_hv_contribution(k, n)
                                      -> the optimal k-point subset (HSSP)
 
-A caveat worth stating plainly: this is not literally ESA's own source file,
-which was never published with the challenge materials. It is the evaluator
-the main project used and validated against the live leaderboard over
-several hundred submissions. If the official file ever becomes available,
-swapping it in here is the only change required.
+ESA publishes its own evaluation code on every problem page
+(graph_torso_udp, "Evaluation code" on optimise.esa.int), and
+harness/esa_crosscheck.py runs that file next to this one: identical fitness
+on 220 (perm, t) pairs across the ten instances, identical hypervolume on
+2,000 point sets, and the min-degree x8 column of the results sheet
+reproduced exactly (harness/esa_crosscheck.log). This port stays the
+evaluator because it is the one the main project validated against the live
+leaderboard over several hundred submissions, and because it needs neither
+torch nor pygmo.
 
 Keep this file boring. Everything else in the repository can be rewritten
 for clarity; this one exists to be identical to what it was ported from.

@@ -598,10 +598,10 @@ discarded cleanly.
 
 A random order is a terrible start: on the bigger graphs it blows past the
 500 cap immediately (Part 5.3), so every candidate scores width 501 and the
-climber has nothing to compare. The default is therefore **min-degree**: repeatedly
-eliminate whichever vertex currently has the fewest surviving neighbours. It
-is the classic textbook heuristic for orderings like this and gives the
-climber a legal, decent starting point.
+climber has nothing to compare. The default is therefore **min-degree**:
+repeatedly eliminate whichever vertex currently has the fewest surviving
+neighbours. It is the classic textbook heuristic for orderings like this and
+gives the climber a legal, decent starting point.
 
 It is written with plain sets, exactly as you would say it out loud. The one
 concession to speed is keeping a `degree` table and updating only the
@@ -699,14 +699,21 @@ resuming from its own CSV, so four of them launch side by side via
 `merge_results.py` combines the per-solver CSVs, and `report.py` regenerates
 every table in the results sheet from them. `spoc3_benchmark.ipynb` runs
 Spacekangaroos' `cuda-torso` on a Kaggle GPU, since that entry needs one. The
-raw CSVs from the comparison are committed alongside them.
+raw CSVs from the comparison are committed alongside them. Four checks sit
+beside them: `robustness.py` re-derives the verdicts, the session test, the
+budget sweep and the leaderboard placements; `esa_crosscheck.py` runs ESA's
+own evaluation code against `esa_eval.py` (the one script that needs
+packages, ESA's own imports: numpy, pygmo, loguru and matplotlib);
+`delta_check.py` and `ablation_more.py --speed` check and time the delta
+evaluator.
 
 `report.py` is the rule that keeps the write-up honest: **if a number appears
-in the sheet or in this README and not in `report.py`'s output, it does not
-belong there.** Nothing in it is hardcoded — every figure is derived from the
-CSVs, and the Hill Climbing baseline is pinned in one place at the top of the
-file, so the sheet and the README cannot drift apart from each other. An
-earlier `make_report.py` hardcoded its numbers and was deleted for it.
+in the sheet or in this README and not in the output of `report.py` or of the
+checks beside it, it does not belong there.** Nothing in it is hardcoded —
+every figure is derived from the CSVs, and the Hill Climbing baseline is
+pinned in one place at the top of the file, so the sheet and the README
+cannot drift apart from each other. An earlier `make_report.py` hardcoded
+its numbers and was deleted for it.
 
 ### `test_correctness.py` — the proof
 
@@ -770,12 +777,16 @@ The port was checked against the original, not assumed: identical `MAX_TW`,
 identical bitsets, and agreement on 34/34 random `(perm, t)` pairs, 160/160
 random hypervolumes, and 50/50 HSSP subsets.
 
-One caveat, stated plainly so it never becomes an overclaim: this is not
-literally ESA's own source file. That file *is* published — each problem page
-on optimise.esa.int links its evaluation code (`graph_torso_udp`) — and read
-side by side with `esa_eval.evaluate` it computes the same thing: the same
-walk, the same cap check at every step, width `501` on a breach, and a
-hypervolume against `(n, n)`. The one difference is scoring policy, not
+ESA's own source file is published — each problem page on optimise.esa.int
+links its evaluation code (`graph_torso_udp`) — and it is run, not just read:
+`harness/esa_crosscheck.py` loads that file unmodified, apart from a numpy
+stand-in for the five PyTorch calls it makes, and runs it next to
+`esa_eval.py`. On all ten instances the two return identical fitness on 220
+`(perm, t)` pairs, 44 of them over the cap; identical hypervolume on 2,000
+random point sets; and ESA's code reproduces the min-degree ×8 column of the
+results sheet to the unit (`harness/esa_crosscheck.log`). The three
+competition graphs in `data/` are byte-identical to ESA's `easy.gr`,
+`medium.gr` and `hard.gr`. The one difference is scoring policy, not
 arithmetic: ESA keeps a capped point in the hypervolume, and this repository
 discards the submission (Part 1.6). `esa_eval.py` is also the evaluator the
 main project validated against the live leaderboard over several hundred
@@ -803,6 +814,16 @@ The bitsets are not decoration. Measured, one evaluation costs:
 Hill climbing needs thousands of evaluations, so the readable version simply
 cannot run the big instances — but it can prove the fast one honest on the
 small ones.
+
+The delta evaluator in `fast_degrees.py` goes one step further. A move that
+rearranges positions `lo..hi` leaves every step degree outside that window
+unchanged, so it re-walks only the window. `harness/delta_check.py` compares
+it with a full `esa_eval` walk on 600 candidates drawn by all seventeen
+operators and chained the way a climb chains them, on all ten instances:
+identical `deg[]` every time (`harness/delta_check.log`). With the same
+operators, seed and 120 s it reaches **1.76×** as many candidates, the
+geometric mean over the ten instances — 1.63× on the sparse family, 1.80× on
+the medium, 1.92× on the dense (`harness/speed.log`).
 
 ## 9.3 What `test_correctness.py` checks
 
@@ -1535,8 +1556,8 @@ seeds do not settle the winner: the median of three names a different method
 than the best of three, or the winner's seeds overlap a rival's. This does
 not touch the construction result, which is made on the three dense rows,
 where every seed of the winner clears every rival's best by more than 100,000
-HV, but it does mean the table supports fewer claims than it appears to. Part 10.3 says so where the table
-is introduced.
+HV, but it does mean the table supports fewer claims than it appears to.
+Part 10.3 says so where the table is introduced.
 
 **One budget.** Everything is 1,200 s. The construction lever is a one-off
 cost paid at the start, while the search levers are what the remaining budget

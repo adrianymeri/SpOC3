@@ -1,0 +1,27 @@
+[speed] all: 120s per arm per instance, seed 1, exact vs delta
+
+  instance            n       exact       delta   speedup
+  small-graph      1357      24,923      41,313     1.66x
+  medium-graph     1399       3,138       6,220     1.98x
+  large-graph      2426         339         650     1.92x
+  synth-1          1357      26,647      43,058     1.62x
+  synth-2          1357      26,239      42,756     1.63x
+  synth-3          1357      26,859      43,508     1.62x
+  synth-4          1399       2,578       4,343     1.68x
+  synth-5          1399       2,632       4,615     1.75x
+  synth-6          2426         324         612     1.89x
+  synth-7          2426         313         610     1.95x
+
+  geometric mean over 10 instances: 1.76x
+  (both arms identical except the evaluator; deg[] is bit-exact either way)
+
+# Re-run 2026-10-14, one instance per invocation of the same command, each
+# pinned to one core:
+#   python3 -u harness/ablation_more.py --operator all --speed --seconds 120 \
+#       --data-dir <a directory holding that one instance>
+# Machine: cloud VM, Intel Xeon @ 2.10GHz, Linux, Python 3.13. The ratio is the
+# same code with and without the delta evaluator on the same machine, so it does
+# not depend on the machine's speed, but it does move a little between machines.
+# An earlier run logged only the header above; the 1.81x quoted before this
+# re-run has no saved rows. By family: sparse 1.63x, medium 1.80x, dense 1.92x.
+# Invocations: 2026-10-14T02:06:20Z .. 2026-10-14T02:49:02Z

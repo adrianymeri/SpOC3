@@ -1,0 +1,21 @@
+$ python3 harness/esa_crosscheck.py --esa-file spoc-3-torso-decompositions-small-graph-1711380312223.py
+# run 2026-10-14, Python 3.13.16, numpy 2.5.3, pygmo 2.20.0
+
+ESA evaluation file  spoc-3-torso-decompositions-small-graph-1711380312223.py
+  sha256 5d64ac5d67c003d96675ce8e85c02cb9d6aefa85ba3c51f55e4a16530b9163e6  -> small-graph (…-1711380312223.py)
+  instance files: data/small-, medium-, large-graph.gr are byte-identical to ESA's easy, medium, hard.gr
+
+  instance           n     fitness (at 501)   hypervolume    min-degree x8: CSV     harness         ESA      s
+  small-graph     1357       22/22        1       200/200            -1,814,518  -1,814,518  -1,814,518      3
+  medium-graph    1399       22/22        7       200/200            -1,606,387  -1,606,387  -1,606,387     21
+  large-graph     2426       22/22        9       200/200            -4,793,652  -4,793,652  -4,793,652    126
+  synth-1         1357       22/22        1       200/200            -1,818,533  -1,818,533  -1,818,533      4
+  synth-2         1357       22/22        1       200/200            -1,819,873  -1,819,873  -1,819,873      4
+  synth-3         1357       22/22        1       200/200            -1,819,873  -1,819,873  -1,819,873      4
+  synth-4         1399       22/22        7       200/200            -1,554,095  -1,554,095  -1,554,095     30
+  synth-5         1399       22/22        9       200/200            -1,558,465  -1,558,465  -1,558,465     29
+  synth-6         2426       22/22        9       200/200            -4,793,652  -4,793,652  -4,793,652    129
+  synth-7         2426       22/22        9       200/200            -4,793,652  -4,793,652  -4,793,652    130
+
+  identical fitness on 10/10 instances, identical hypervolume on 10/10, min-degree x8 column reproduced by ESA's code on 10/10
+  ALL IDENTICAL
