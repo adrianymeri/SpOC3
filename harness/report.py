@@ -180,6 +180,9 @@ def block1(M, floor):
         print(f"\n  The 'method' column names a best performer on every row, but on {len(tie)} of them")
         print(f"  it is naming the luckiest sample rather than a better method. Those rows")
         print(f"  should be read as ties.")
+        print(f"\n  Superseded: the results sheet (v4) judges each row on its own seeds")
+        print(f"  (harness/robustness.py, block A). This one-floor split is kept for")
+        print(f"  comparison; it misjudges four rows.")
 
 
 # Each arm is Hill Climbing with exactly one of the three components replaced.
@@ -212,7 +215,7 @@ def block2(M, floor):
 
     # W/T/L are per-instance counts, so they are thresholded with the
     # per-instance re-sample floor -- NOT the within-run seed spread, which
-    # is about fourteen times smaller and reports three of these four arms
+    # is about five times smaller and reports three of these four arms
     # as wins. The results sheet uses the same figure; keep them identical.
     re_ = resample_error(hc)
     wtl_floor = re_[1] if re_ else floor
@@ -255,10 +258,11 @@ def block2(M, floor):
     print(f"    baseline re-sample shifts every arm by   {shift:>+12,} HV")
     print(f"    worst single instance moves by           {per:>12,} HV")
     print(f"    median within-run seed spread            {floor:>12,.0f} HV")
-    print(f"\n  The first number is {abs(shift)/floor:.0f}x the third. The seed spread understates")
-    print("  the real uncertainty badly, because two seeds inside one run share a")
-    print("  machine and a session; two runs do not. Judge the column against the")
-    print(f"  re-sample figure:\n")
+    print("\n  The first number is a sum over ten instances, the other two are")
+    print("  per-instance figures, so they are not compared with each other (README")
+    print("  Part 13.1). Sessions do differ on the ten-instance total: reshuffling")
+    print("  seeds between them moves it that far in 4.6% of cases (robustness.py,")
+    print(f"  block B). Judge this ten-instance column against the re-sample figure:\n")
     print(f"  {'method':<22}{'net vs HC':>13}{'vs floor':>11}   verdict")
     for key, lbl, *_ in ARMS:
         if not M.get(key):

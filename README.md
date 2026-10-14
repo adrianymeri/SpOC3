@@ -231,8 +231,17 @@ job is to map it out.
 ## 1.6 The one hard rule
 
 If `deg[i] > 500` at **any** step — including the eliminated head, before
-`t` — the whole answer is **void**. Not penalised: void. The code marks this
-by returning a width of `501`.
+`t` — the vector is scored as if its width were `501`, however good its torso.
+That is ESA's published rule: the evaluation code linked from each problem
+page (`graph_torso_udp._perm2fitness`) stops the walk, sets the width to
+`501`, and still counts the point in the hypervolume against `(n, n)`.
+
+This repository is stricter. `harness/bench_one.py` discards a whole
+submission if any one of its vectors breaks the cap, and the search code never
+keeps such a point. Neither choice moves a comparison here: every method's
+output stays inside the cap, except on the three rows where Spacekangaroos
+found nothing legal at all — and scored ESA's way it would still rank last
+on those rows.
 
 This catches people out: it is tempting to think the head does not matter
 because it is not measured. It is not measured for *width*, but it still has
@@ -502,11 +511,11 @@ way to a good ordering. You have to search.
 ## 5.3 The 500 cap makes cliffs
 
 Most optimisation problems degrade gracefully: a slightly worse answer
-scores slightly worse. Not here. One elimination step at width 501 makes the
-**entire** answer void, no matter how good the other 2,425 steps were.
+scores slightly worse. Not here. One elimination step at width 501 scores the
+**entire** vector as width 501, no matter how good the other 2,425 steps were.
 
 So the search space has cliffs in it. A single swap can take a perfectly
-good ordering and make it worth nothing. This is also why a random starting
+good ordering and push it over one. This is also why a random starting
 order is useless on the big instances — it lands off the cliff immediately,
 every neighbouring order is also off the cliff, and hill climbing has no
 signal to follow.
@@ -588,11 +597,11 @@ discarded cleanly.
 ## 6.3 Where it starts
 
 A random order is a terrible start: on the bigger graphs it blows past the
-500 cap immediately (Part 5.3), so every candidate is void and the climber
-has nothing to compare. The default is therefore **min-degree**: repeatedly
-eliminate whichever vertex currently has the fewest surviving neighbours. It
-is the classic textbook heuristic for orderings like this and gives the
-climber a legal, decent starting point.
+500 cap immediately (Part 5.3), so every candidate scores width 501 and the
+climber has nothing to compare. The default is therefore **min-degree**:
+repeatedly eliminate whichever vertex currently has the fewest surviving
+neighbours. It is the classic textbook heuristic for orderings like this and
+gives the climber a legal, decent starting point.
 
 It is written with plain sets, exactly as you would say it out loud. The one
 concession to speed is keeping a `degree` table and updating only the
@@ -690,14 +699,21 @@ resuming from its own CSV, so four of them launch side by side via
 `merge_results.py` combines the per-solver CSVs, and `report.py` regenerates
 every table in the results sheet from them. `spoc3_benchmark.ipynb` runs
 Spacekangaroos' `cuda-torso` on a Kaggle GPU, since that entry needs one. The
-raw CSVs from the comparison are committed alongside them.
+raw CSVs from the comparison are committed alongside them. Four checks sit
+beside them: `robustness.py` re-derives the verdicts, the session test, the
+budget sweep and the leaderboard placements; `esa_crosscheck.py` runs ESA's
+own evaluation code against `esa_eval.py` (the one script that needs
+packages, ESA's own imports: numpy, pygmo, loguru and matplotlib);
+`delta_check.py` and `ablation_more.py --speed` check and time the delta
+evaluator.
 
 `report.py` is the rule that keeps the write-up honest: **if a number appears
-in the sheet or in this README and not in `report.py`'s output, it does not
-belong there.** Nothing in it is hardcoded — every figure is derived from the
-CSVs, and the Hill Climbing baseline is pinned in one place at the top of the
-file, so the sheet and the README cannot drift apart from each other. An
-earlier `make_report.py` hardcoded its numbers and was deleted for it.
+in the sheet or in this README and not in the output of `report.py` or of the
+checks beside it, it does not belong there.** Nothing in it is hardcoded —
+every figure is derived from the CSVs, and the Hill Climbing baseline is
+pinned in one place at the top of the file, so the sheet and the README
+cannot drift apart from each other. An earlier `make_report.py` hardcoded
+its numbers and was deleted for it.
 
 ### `test_correctness.py` — the proof
 
@@ -761,11 +777,20 @@ The port was checked against the original, not assumed: identical `MAX_TW`,
 identical bitsets, and agreement on 34/34 random `(perm, t)` pairs, 160/160
 random hypervolumes, and 50/50 HSSP subsets.
 
-One caveat, stated plainly so it never becomes an overclaim: this is not
-literally ESA's own source file, which was never published with the challenge
-materials. It is the evaluator the main project validated against the live
-leaderboard over several hundred submissions. If the official file turns up,
-dropping it into `esa_eval.py` is the only change needed.
+ESA's own source file is published — each problem page on optimise.esa.int
+links its evaluation code (`graph_torso_udp`) — and it is run, not just read:
+`harness/esa_crosscheck.py` loads that file unmodified, apart from a numpy
+stand-in for the five PyTorch calls it makes, and runs it next to
+`esa_eval.py`. On all ten instances the two return identical fitness on 220
+`(perm, t)` pairs, 44 of them over the cap; identical hypervolume on 2,000
+random point sets; and ESA's code reproduces the min-degree ×8 column of the
+results sheet to the unit (`harness/esa_crosscheck.log`). The three
+competition graphs in `data/` are byte-identical to ESA's `easy.gr`,
+`medium.gr` and `hard.gr`. The one difference is scoring policy, not
+arithmetic: ESA keeps a capped point in the hypervolume, and this repository
+discards the submission (Part 1.6). `esa_eval.py` is also the evaluator the
+main project validated against the live leaderboard over several hundred
+submissions.
 
 `validate.py` scores with `esa_eval.py` and *also* re-walks every vector with
 a plain set-based implementation written separately. If those two ever
@@ -789,6 +814,16 @@ The bitsets are not decoration. Measured, one evaluation costs:
 Hill climbing needs thousands of evaluations, so the readable version simply
 cannot run the big instances — but it can prove the fast one honest on the
 small ones.
+
+The delta evaluator in `fast_degrees.py` goes one step further. A move that
+rearranges positions `lo..hi` leaves every step degree outside that window
+unchanged, so it re-walks only the window. `harness/delta_check.py` compares
+it with a full `esa_eval` walk on 600 candidates drawn by all seventeen
+operators and chained the way a climb chains them, on all ten instances:
+identical `deg[]` every time (`harness/delta_check.log`). With the same
+operators, seed and 120 s it reaches **1.76×** as many candidates, the
+geometric mean over the ten instances — 1.63× on the sparse family, 1.80× on
+the medium, 1.92× on the dense (`harness/speed.log`).
 
 ## 9.3 What `test_correctness.py` checks
 
@@ -922,20 +957,30 @@ was for. Any comparison here is a statement about **the methods at equal CPU
 budget**.
 
 One warning about reading the full comparison table. It names a best method
-on every row, but on **five of the ten rows the gap between first and second
-place is smaller than the amount the baseline differs from an independent run
-of itself on a single instance** (7,881 HV — Part 13.1 derives it).
-`small-graph`, `synth-1`, `synth-2`, `synth-3` and `synth-4` should be read
-as ties; only `medium-graph`, `large-graph`, `synth-5`, `synth-6` and
-`synth-7` separate the methods by more than the reference method separates
-from itself. `report.py` prints this split under the table so it cannot be
-quietly dropped.
+on every row from the best of three seeds, but **five of the ten rows do not
+survive a look at the seeds themselves.** A row counts as resolved only when
+the median of three names the same winner as the best of three *and* every
+seed of the winner beats every seed of every rival — with three seeds a
+side, an exact rank test at p = 0.05. `small-graph`, `synth-1`, `synth-2`,
+`medium-graph` and `synth-5` fail it: on `small-graph` and `synth-5` the
+median names a different winner, and Team HRI's lead on `medium-graph` rests
+on seeds that span 80,376 HV. `synth-3`, `synth-4`, `large-graph`, `synth-6`
+and `synth-7` pass — `synth-3` by 71 HV, which is consistent but negligible.
+`harness/robustness.py` prints the split, and the results sheet (v4) carries
+it in its Verdict column.
 
-Note which floor that is. Part 13.1's **21,519 HV** is a sum over ten
-instances and belongs against Block 2's net-HV column, which is also a sum
-over ten instances. The per-instance margins here need the **per-instance**
-figure, 7,881 HV. Using the aggregate against a single row inflates the floor
-by roughly the instance count and manufactures ties that are not there.
+An earlier version of this section judged every row against one floor:
+7,881 HV, the most Hill Climbing moved between two sessions on one instance
+(Part 13.1). That lent one method's noise on one instance to every method on
+every row, while the methods' own seed spreads run from 9 HV to 281,976 HV.
+It got four rows wrong — it called `synth-3` and `synth-4` ties and
+`medium-graph` and `synth-5` separated — even though the count of unresolved
+rows happened to stay at five. (`report.py` still prints the floor-based
+split, for comparison.)
+
+Part 13.1's **21,519 HV** is a different kind of figure: a sum over ten
+instances, which belongs against Block 2's net-HV column, also a sum over ten
+instances, and never against a single row.
 
 ## 10.4 Starting points, and why they decide the table
 
@@ -968,12 +1013,14 @@ points its staircase yields:
 | synth-6 | 2426 | **0** | 500 |
 | synth-7 | 2426 | **0** | 500 |
 
-On six of the ten, a random ordering scores **nothing at all** -- every
-prefix busts the 500 cap, so there is not one legal point to stand on. And
-a solver with no legal point has nothing to climb: every candidate costs
-`n`, no candidate is ever an improvement, and the search degenerates into a
-random walk. Measured on medium-graph, 25 s from a random start: Team HRI's
-LNS ran 193 iterations and accepted **zero** of them, final score **0**.
+On six of the ten, a random ordering yields **no legal point at all** --
+somewhere in every such elimination a vertex breaks the 500 cap. ESA scores
+those vectors as width 501 and this harness discards them (Part 1.6); either
+way a solver standing there has nothing to climb: every neighbouring
+candidate breaks the cap too, no candidate is ever an improvement, and the
+search degenerates into a random walk. Measured on medium-graph, 25 s from a
+random start: Team HRI's LNS ran 193 iterations and accepted **zero** of
+them, final score **0** under this harness's rule.
 
 The weight-space solvers never face this, because they never see a random
 ordering. Their *first* candidate is already sorted by a degree-and-spectral
@@ -989,7 +1036,7 @@ or from a saved solution -- each run begins from the graph and nothing else.
 
 ```bash
 python3 benchmark.py --start min_degree      # the default: same start for both
-python3 benchmark.py --start random          # literal random; void on 6 of 10
+python3 benchmark.py --start random          # literal random; no legal point on 6 of 10
 ```
 
 This matters enough to state plainly, because it is easy to fool yourself
@@ -1007,7 +1054,7 @@ it to the front. So `--start random` was quietly handing hill climbing a
 free min-degree solution and reporting -1,607,522 on medium-graph for a run
 that had accepted zero moves. The probe now follows whatever start it was
 asked for, and an honest from-scratch run on medium-graph reports what it
-actually earned, which is 0.
+actually earned: no legal point at all.
 
 The general lesson is worth more than the table: **when a comparison shows a
 large gap, check the starting conditions before believing the algorithm
@@ -1045,11 +1092,14 @@ product -- far too small to parallelise -- so the BLAS threads spend their
 time spin-waiting instead of working. That is a configuration pathology, not
 a flaw in the method, and it means this column is a slight underestimate.
 
-The benchmark therefore lets every library thread as its authors intended
-and holds wall-clock equal. That is the standard protocol, and the important
-point for reading the table is the direction of the bias: **the handicap
-runs against hill climbing, not for it.** Where hill climbing wins a row, it
-wins it on one core against opponents using nine.
+`benchmark.py`, the single-process runner, therefore lets every library
+thread as its authors intended and holds wall-clock equal; there the handicap
+runs against hill climbing, which wins its rows on one core against opponents
+using nine. **The results sheet does not come from it.** It comes from the
+harness — `harness/bench_one.py`, launched by `run_mac.sh` — which pins every
+CPU solver to one core and refuses to run otherwise. On the published table
+every CPU method therefore has exactly one core, and the fast-cma-es column
+carries the 20% pinning cost measured above.
 
 ---
 
@@ -1252,22 +1302,29 @@ linear in the baseline, so re-drawing it shifts every arm by the same amount:
 
 ```
 baseline re-sample shifts every arm by   -21,519 HV   <- use against net HV
-worst single instance moves by             7,881 HV   <- use against a margin
-median within-run seed spread              1,528 HV   <- too generous; was used
+worst single instance moves by             7,881 HV   <- one method, one instance
+median within-run seed spread              1,528 HV   <- a per-instance figure
 ```
 
-**The baseline differs from itself by fourteen times the seed spread.** The
-seed spread is the floor this chapter used to quote, and it is far too
-generous: two seeds inside one run share a machine, a thermal state and a
-session, so their agreement measures much less than it appears to. Two runs
-share none of that.
+**These three cannot be compared with one another, and an earlier version of
+this section compared them anyway**: "the baseline differs from itself by
+fourteen times the seed spread" set a ten-instance sum against a one-instance
+median. Like for like, the picture is narrower. Per instance, the session
+change is exactly what each instance's own seed scatter predicts: reshuffle
+Hill Climbing's six seeds per instance between the two sessions, and some
+instance moves by 7,881 HV or more in every reshuffle — it is synth-4's own
+13,214 HV spread. On the ten-instance total the sessions *do* differ: only
+4.6% of reshuffles move it as far as 21,519 HV (`harness/robustness.py`,
+block B). Sessions matter for aggregates, so a control that was actually run
+again is the right yardstick for a ten-instance net — which is how the table
+below uses it.
 
-The first two figures are **not interchangeable.** The −21,519 is a sum over
-ten instances, so it belongs against a quantity that is also a sum over ten
-instances — the net-HV column below. A single row's margin needs the
-single-instance figure, 7,881. Holding one row up against the aggregate
-inflates the floor by about the instance count; it is an easy mistake and it
-invents ties.
+The first two figures are **not interchangeable** either. The −21,519 is a
+sum over ten instances, so it belongs against a quantity that is also a sum
+over ten instances — the net-HV column below. A single row is judged on its
+own seeds (Part 10.3), not on either figure. Holding one row up against the
+aggregate inflates the floor by about the instance count; it is an easy
+mistake and it invents ties.
 
 Judged against the figure that the baseline cannot be accused of flattering:
 
@@ -1494,13 +1551,13 @@ almost nothing left for any lever to win. Three instances is a thin base for
 the chapter's main claim, and they were not independently chosen: two of the
 three were generated by `generate.py` to resemble the first.
 
-**Half the comparison table is a tie.** Five of its ten rows separate first
-from second place by less than 7,881 HV — the most the baseline differs from
-an independent run of itself on a single instance — so the method named on
-those rows won by luck. This does not touch the construction result, which is
-made on rows that clear the floor comfortably, but it does mean the table
-supports fewer claims than it appears to. Part 10.3 says so where the table
-is introduced.
+**Half the comparison table is unresolved.** On five of its ten rows the
+seeds do not settle the winner: the median of three names a different method
+than the best of three, or the winner's seeds overlap a rival's. This does
+not touch the construction result, which is made on the three dense rows,
+where every seed of the winner clears every rival's best by more than 100,000
+HV, but it does mean the table supports fewer claims than it appears to.
+Part 10.3 says so where the table is introduced.
 
 **One budget.** Everything is 1,200 s. The construction lever is a one-off
 cost paid at the start, while the search levers are what the remaining budget
@@ -1543,5 +1600,5 @@ lives.
 | **Metropolis** | accept a worse answer with probability `exp(−dE/T)` |
 | **RCL** | restricted candidate list — the near-greedy choices GRASP picks among |
 | **accept rate** | accepted moves ÷ moves evaluated; the measure of a flat landscape |
-| **seed-noise floor** | the spread between seeds; differences below it are ties |
+| **seed spread** | worst seed minus best seed of one method on one instance; a row is resolved only when the winner's seeds clear every rival's |
 | **confounded** | two things changed at once, so a result cannot be attributed |
