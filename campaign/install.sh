@@ -6,7 +6,7 @@
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$DIR")"
-PY="${CAMPAIGN_PYTHON:-python3}"
+PY="$(command -v "${CAMPAIGN_PYTHON:-python3}")" || { echo "python3 not found"; exit 1; }
 cd "$REPO"
 mkdir -p "$DIR/state" "$DIR/runs" "$DIR/results"
 ok()   { echo "  [ok]   $*"; }
@@ -52,7 +52,7 @@ elif ! command -v nvidia-smi >/dev/null || ! nvidia-smi >/dev/null 2>&1; then
   echo "no working nvidia-smi" > "$DIR/state/NO_GPU"; warn "no GPU visible: cuda-torso will not run"
 else
   GPY=""
-  if $PY -c 'import torch, scipy; assert torch.cuda.is_available()' 2>/dev/null; then
+  if "$PY" -c 'import torch, scipy; assert torch.cuda.is_available()' 2>/dev/null; then
     GPY="$PY"; ok "system python has torch with CUDA"
   else
     if [ ! -x "$DIR/venv-gpu/bin/python" ]; then
@@ -61,9 +61,12 @@ else
     fi
     "$DIR/venv-gpu/bin/pip" install -q --upgrade pip >/dev/null 2>&1
     "$DIR/venv-gpu/bin/pip" install -q numpy scipy torch || { echo "pip install torch failed" > "$DIR/state/NO_GPU"; warn "torch install failed: cuda-torso will not run"; }
-    "$DIR/venv-gpu/bin/python" -c 'import torch; assert torch.cuda.is_available()' 2>/dev/null && GPY="$DIR/venv-gpu/bin/python"
+    "$DIR/venv-gpu/bin/python" -c 'import torch, scipy; assert torch.cuda.is_available()' 2>/dev/null && GPY="$DIR/venv-gpu/bin/python"
   fi
-  if [ -n "$GPY" ]; then
+  if [ -z "$GPY" ]; then
+    [ -f "$DIR/state/NO_GPU" ] || echo "torch cannot see the GPU" > "$DIR/state/NO_GPU"
+    warn "torch with CUDA not available: cuda-torso will not run (see campaign/README.md)"
+  else
     echo "export CAMPAIGN_GPU_PYTHON=$GPY" >> "$DIR/state/env.sh"
     if command -v nvcc >/dev/null || [ -x /usr/local/cuda/bin/nvcc ]; then
       export PATH="$PATH:/usr/local/cuda/bin"

@@ -8,9 +8,12 @@ structure.py -- per-instance structure the problem-aware methods use, cached.
     blocks            connected components of the graph without the big-clique
                       vertices (the low-treewidth pieces attached to them)
     core numbers      k-core decomposition
-    spectral coords   2 smallest non-trivial eigenvectors of the normalised
+    spectral coords   the 8 smallest non-trivial eigenvectors of the normalised
                       Laplacian, standardised
-    static features   (n, 6) float32 for the neural decoder
+    static features   (n, 12) float32 for the neural decoder: original degree,
+                      core number, twin-class size, big-clique size, and the 8
+                      spectral coordinates (the decoder uses the first
+                      4 + n_spectral columns)
 
 Computed once per instance and cached as cache/<instance>.npz next to this
 file (rebuilt if the .gr file is newer).
@@ -164,7 +167,7 @@ def load(eng):
     if os.path.exists(path) and os.path.getmtime(path) >= os.path.getmtime(eng.path):
         try:
             d = dict(np.load(path))
-            if int(d["n"]) == eng.n:
+            if int(d["n"]) == eng.n and d["stat"].shape[1] == 12:
                 return d
         except Exception:
             pass
@@ -172,7 +175,7 @@ def load(eng):
     twin, twin_size = _twins(eng)
     clique, clique_size = _big_cliques(eng)
     block, block_size = _blocks(eng, clique)
-    spec = _spectral(eng, 2)
+    spec = _spectral(eng, 8)
     dmax = max(1, int(eng.deg0.max()))
     cmax = max(1, int(core.max()))
     stat = np.stack([
@@ -180,9 +183,7 @@ def load(eng):
         core / cmax,
         np.log2(twin_size.astype(np.float64)) / 4.0,
         clique_size / 500.0,
-        spec[:, 0],
-        spec[:, 1],
-    ], 1).astype(np.float32)
+    ] + [spec[:, k] for k in range(spec.shape[1])], 1).astype(np.float32)
     d = {"n": np.int64(eng.n), "core": core, "twin": twin, "twin_size": twin_size,
          "clique": clique, "clique_size": clique_size, "block": block, "block_size": block_size,
          "spec": spec, "stat": stat}

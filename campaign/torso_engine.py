@@ -473,3 +473,13 @@ def ls_endpoint(eng, inc, arch, iters, rng, window=24, p_side=0.3):
     arch.stamp += iters
     eng.evaluations += iters
     return int(w.value), int(better)
+
+
+def _front_hv(self):
+    """Hypervolume of the archive's whole Pareto front (no 20-point cap)."""
+    w, t = self.pareto()
+    return int(lib.te_hssp(as_perm(w), as_perm(t), len(w), self.n, max(1, len(w)),
+                           np.zeros(max(1, len(w)), dtype=np.int32), ctypes.byref(_int(0)))) if len(w) else 0
+
+
+Archive.front_hv = _front_hv

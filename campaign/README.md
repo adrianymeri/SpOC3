@@ -59,11 +59,17 @@ or earlier with `stop.sh`.
 
 ## One-time setup on the server
 
+Use a clone of its own, so no other checkout of the repository is touched:
+
 ```
-git clone <repo> SpOC3 && cd SpOC3 && git checkout ola2027-evolutionary
+git clone <repo> ~/SpOC3-ola2027 && cd ~/SpOC3-ola2027 && git checkout ola2027-evolutionary
 campaign/install.sh          # checks, builds, tests, sets up the GPU, installs the cron entries
 campaign/start.sh            # starts the supervisor
 ```
+
+Everything the campaign writes stays inside that clone. The only things
+outside it are the two cron lines and the usual pip/CuPy download caches
+under `~/.cache` and `~/.cupy`.
 
 `install.sh` does the following:
 
@@ -121,8 +127,8 @@ Use a systemd user unit, `~/.config/systemd/user/ola2027.service`:
 [Unit]
 Description=OLA 2027 campaign supervisor
 [Service]
-WorkingDirectory=%h/SpOC3
-ExecStart=/usr/bin/python3 %h/SpOC3/campaign/supervisor.py
+WorkingDirectory=%h/SpOC3-ola2027
+ExecStart=/usr/bin/python3 %h/SpOC3-ola2027/campaign/supervisor.py
 Restart=always
 [Install]
 WantedBy=default.target
@@ -161,5 +167,6 @@ python3 campaign/tests/test_engine.py --full   # engine vs esa_eval, all 33 inst
 campaign/tests/test_campaign.sh                # miniature campaign: crashes, orphans, rounds, stop
 campaign/tests/test_power_loss.sh              # power cut: everything killed at once, a torn checkpoint, restart
 campaign/tests/smoke_all.sh 8                  # every CPU method on every instance, with a resume
+SMOKE_METHODS="ea2 hri" campaign/tests/smoke_all.sh 8   # the same for some methods only
 campaign/gpu/smoke_test.sh                     # cuda-torso on the GPU
 ```

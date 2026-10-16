@@ -2,6 +2,7 @@
 # Every CPU method on every instance: a short slice, then a resumed slice, and
 # the submission re-scored. Parallel over the machine's cores.
 #   campaign/tests/smoke_all.sh [seconds per slice, default 8] [parallel jobs]
+#   SMOKE_METHODS="ea2 hri" campaign/tests/smoke_all.sh ...   only those methods
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(dirname "$DIR")"
@@ -14,9 +15,11 @@ export PY S T DIR
 jobs=$("$PY" -c "
 import sys; sys.path.insert(0, '$DIR')
 import config as C
+only = '${SMOKE_METHODS:-}'.split()
 for i in C.INSTANCES:
     for m in C.CPU_METHODS:
-        print(i, m)")
+        if not only or m in only:
+            print(i, m)")
 echo "$jobs" | xargs -P "$J" -L 1 bash -c '
   inst=$0; m=$1; rd="$T/$inst/$m"; mkdir -p "$rd"
   "$PY" "$DIR/run_method.py" --method $m --instance data/$inst.gr --run-dir "$rd" --until-budget $S --quiet > "$rd/out1.txt" 2>&1 || { echo "FAIL first slice $inst/$m"; exit 0; }

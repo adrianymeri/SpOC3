@@ -67,7 +67,7 @@ def min_degree_policy(ns, hidden=HIDDEN):
 class _Neuro(Method):
     def _setup(self):
         S = structure.load(self.eng)
-        self.stat = S["stat"]
+        self.stat = np.ascontiguousarray(S["stat"][:, : 4 + self.p["n_spectral"]])
         self.ns = self.stat.shape[1]
         self.dim = te.policy_nweights(self.ns, HIDDEN)
 
@@ -91,7 +91,7 @@ class _Neuro(Method):
 
 class ANE(_Neuro):
     name = "ne1"
-    defaults = {"sigma0": 0.3, "targets": 4, "rescore_every": 64, "stall_generations": 150}
+    defaults = {"sigma0": 0.3, "targets": 4, "rescore_every": 64, "stall_generations": 150, "n_spectral": 2}
 
     def init(self):
         self.g = np.random.default_rng(self.ctx.seed)
@@ -174,7 +174,7 @@ class ANE(_Neuro):
 
 class AQDNE(_Neuro):
     name = "ne2"
-    defaults = {"rescore_every": 64, "mut_sigma": 0.3, "mut_prob": 0.5, "flow_prob": 0.2,
+    defaults = {"rescore_every": 64, "mut_sigma": 0.3, "mut_prob": 0.5, "flow_prob": 0.2, "n_spectral": 2,
                 "emitters": 2, "p_emit": 0.3, "offspring_per_step": 8, "emitter_patience": 20,
                 "p_selected": 0.75, "span": 6}
 

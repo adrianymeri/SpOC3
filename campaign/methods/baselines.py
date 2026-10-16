@@ -34,9 +34,15 @@ class HRI(Method):
     Operator set B: neighbour destroy (seed + neighbours, capped at 220) and
     balanced repair (median placement, Biedl et al. 2005 §5). Operator set A:
     6 random removals reinserted at random. Switch sets after 3,000 iterations
-    without improvement. Accept a candidate when it improves the whole capped-20
-    front (every candidate is banked first), exactly as hri_lns.py.
+    without improvement. Every candidate is banked; it becomes the current
+    ordering when it improves the archive's capped 20-point score, exactly as
+    hri_lns.py.
 
+    Acceptance: Limmer's description gives the operators, not the acceptance
+    rule. The other reading, accepting any improvement of the archive's whole
+    Pareto front (accept="front"), was measured much weaker (medium-graph,
+    240 CPU-s: -1,601,073 against -1,678,877), so the baseline keeps the
+    stronger rule.
     Changes: evaluation, destroy and repair run in C (same logic, checked by
     tests/test_engine.py); random streams differ; the state is checkpointed.
     Start: min-degree with random tie-breaks, as benchmark.py gave it, because a
@@ -44,14 +50,14 @@ class HRI(Method):
     """
 
     name = "hri"
-    defaults = {"destroy_cap": 220, "small_k": 6, "stall": 3000, "iters_per_step": 64}
+    defaults = {"destroy_cap": 220, "small_k": 6, "stall": 3000, "iters_per_step": 64, "accept": "capped"}
 
     def init(self):
         self.rng = te.Rng(self.ctx.seed * 7919 + 1)
         perm, deg, bad = self.eng.greedy(self.rng, 0)
         self.current = perm
         self.bank_deg(perm, deg)
-        self.best = self.ctx.arch.score()
+        self.best = self.ctx.arch.front_hv() if self.p["accept"] == "front" else -self.ctx.arch.score()
         self.mode = "B"
         self.since = 0
         self.iterations = 0
@@ -69,8 +75,10 @@ class HRI(Method):
                 cand = te.hri_random_destroy_repair(self.eng, self.current, p["small_k"], self.rng)
             self.bank(cand)
             self.since += 1
-            score = self.ctx.arch.score()
-            if score < self.best:
+            # accept on improvement of the capped 20-point score (or, with
+            # accept="front", of the archive's whole Pareto front)
+            score = self.ctx.arch.front_hv() if p["accept"] == "front" else -self.ctx.arch.score()
+            if score > self.best:
                 self.best = score
                 self.current = cand
                 self.accepts += 1

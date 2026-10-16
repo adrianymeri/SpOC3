@@ -66,16 +66,19 @@ def read_anytime(path):
 
 
 def wall_epoch(s):
+    """UTC timestamp string -> epoch seconds (independent of the server's time zone and DST)."""
+    import calendar
     try:
-        return time.mktime(time.strptime(s, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        return calendar.timegm(time.strptime(s, "%Y-%m-%dT%H:%M:%SZ"))
     except ValueError:
         return None
 
 
-def score_at_budget(rows, b):
+def score_at_budget(rows, b, tol=0.0):
+    """Best score recorded at a budget <= b + tol."""
     best = None
     for bud, _, sc, _ in rows:
-        if bud <= b + 1e-6:
+        if bud <= b + tol + 1e-6:
             best = sc if best is None else min(best, sc)
     return best
 
@@ -276,7 +279,7 @@ def build(final=False):
     hdr = (["#", "Instance name", "family", "n", "Best Known (ESA board)", "Team",
             "fcmaes", "Team HRI", "Spacekangaroos", "Hill Climbing"]
            + [C.LABEL[m] for m in ours] + ["Best of ours", "Best method of ours", "Best of all methods",
-                                           "Gap of ours to best known (%)"])
+                                           "Gap of ours to best known (%, negative = better)"])
     table = []
     for k, inst in enumerate(C.INSTANCES, 1):
         n = next((read_json(os.path.join(C.run_dir(inst, m), "status.json"), {}).get("n")
@@ -288,7 +291,8 @@ def build(final=False):
         allv = [v for v in sc.values() if v is not None]
         best_all = min(allv) if allv else None
         ref = bk[0] if bk[0] is not None else best_all
-        gap = (abs(best_ours[0] - ref) / abs(ref) * 100) if (best_ours[0] is not None and ref) else None
+        # signed: positive = ours below the reference, negative = ours better
+        gap = ((best_ours[0] - ref) / abs(ref) * 100) if (best_ours[0] is not None and ref) else None
         table.append([k, inst, C.FAMILY[inst], n, bk[0] if bk[0] is not None else "", bk[1],
                       sc.get("fcmaes"), sc.get("hri"), sc.get("cuda_torso"), sc.get("hc")] + [sc.get(m) for m in ours]
                      + [best_ours[0], C.LABEL.get(best_ours[1], ""), best_all,
@@ -302,12 +306,17 @@ def build(final=False):
     ranks = {m: [] for m in C.CPU_METHODS}
     if L is not None:
         for inst in C.SYNTHETIC:
-            vals = {m: score_at_budget(by[(inst, m)]["rows"], L * 3600) for m in C.CPU_METHODS}
+            # a slice stops at the first step past the level, so its closing
+            # checkpoint row sits a few seconds above it: count it
+            tol = max(60.0, 0.002 * L * 3600)
+            vals = {m: score_at_budget(by[(inst, m)]["rows"], L * 3600, tol) for m in C.CPU_METHODS}
             got = sorted((v, m) for m, v in vals.items() if v is not None)
             for pos, (v, m) in enumerate(got, 1):
                 ranks[m].append(sum(1 for w, _ in got if w < v) + 1)
-            if got:
-                wins[got[0][1]] += 1
+            # a tie for the best score is a win for every tied method
+            for v, m in got:
+                if v == got[0][0]:
+                    wins[m] += 1
             fair.append([inst, C.FAMILY[inst], L] + [vals[m] for m in C.CPU_METHODS])
         write_csv(os.path.join(C.RESULTS, "fair_synthetic.csv"),
                   ["instance", "family", "level_h"] + [C.LABEL[m] for m in C.CPU_METHODS], fair)
@@ -506,7 +515,13 @@ def main():
     ap.add_argument("--final", action="store_true", help="check every submission with esa_eval")
     ap.add_argument("--print", action="store_true", help="print STATUS.txt afterwards")
     a = ap.parse_args()
-    build(final=a.final)
+    # one aggregation at a time (the supervisor's pass, status.sh --refresh,
+    # snapshot.sh and stop.sh can overlap); a second caller waits
+    import fcntl
+    os.makedirs(C.STATE, exist_ok=True)
+    with open(os.path.join(C.STATE, "aggregate.lock"), "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        build(final=a.final)
     if a.print:
         print(open(os.path.join(C.RESULTS, "STATUS.txt")).read())
 

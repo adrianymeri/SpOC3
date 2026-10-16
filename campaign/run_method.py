@@ -68,11 +68,21 @@ def main():
     ap.add_argument("--until-budget", type=float, default=None)
     ap.add_argument("--deadline", default="")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--param", action="append", default=[],
+                    help="override a method parameter, key=value (value parsed as JSON); tests only")
     a = ap.parse_args()
+    import json
+    params = {}
+    for kv in a.param:
+        k, v = kv.split("=", 1)
+        try:
+            params[k] = json.loads(v)
+        except ValueError:
+            params[k] = v
     reg = registry()
     if a.method not in reg:
         raise SystemExit(f"unknown method {a.method}; known: {', '.join(sorted(reg))}")
-    r = Runner(reg[a.method], a.run_dir, a.instance, seed=a.seed,
+    r = Runner(reg[a.method], a.run_dir, a.instance, seed=a.seed, params=params,
                until_budget=a.until_budget, deadline_epoch=parse_deadline(a.deadline), quiet=a.quiet)
     reason = r.run()
     print(f"{a.method} on {os.path.basename(a.instance)}: {reason}, budget {r.budget():.0f}s, "

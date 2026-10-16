@@ -124,6 +124,9 @@ class MemeticPerm(Method):
             for k in range(1, len(self.pop)):
                 for ind in self.pop[k]:
                     ind["fit"] = self._fit(k, ind)
+                if hasattr(self, "best_fit"):
+                    # the band moved: the island's record restarts on the new scale
+                    self.best_fit[k] = min(i["fit"] for i in self.pop[k])
 
     def _tournament(self, k):
         isl = self.pop[k]

@@ -92,6 +92,9 @@ def load_kernel(backend):
         import cupy
         code = open(src).read()
         kern = code[code.index("__global__"):code.index('extern "C"')]
+        # NVRTC compiles without system headers: spell the integer types out
+        # (same widths as on the x86-64 host: size_t is 64-bit unsigned)
+        kern = kern.replace("size_t", "unsigned long long")
         code = ("typedef unsigned short uint16_t;\n"
                 "extern \"C\" " + kern)
         fn = cupy.RawKernel(code, "_evaluate")
