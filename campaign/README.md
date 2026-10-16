@@ -159,6 +159,7 @@ campaign/
 ```
 python3 campaign/tests/test_engine.py --full   # engine vs esa_eval, all 33 instances
 campaign/tests/test_campaign.sh                # miniature campaign: crashes, orphans, rounds, stop
+campaign/tests/test_power_loss.sh              # power cut: everything killed at once, a torn checkpoint, restart
 campaign/tests/smoke_all.sh 8                  # every CPU method on every instance, with a resume
 campaign/gpu/smoke_test.sh                     # cuda-torso on the GPU
 ```
