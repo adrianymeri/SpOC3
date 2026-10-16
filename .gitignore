@@ -43,3 +43,13 @@ _hc_readme/
 
 # Agent tooling config, machine-specific like .idea/
 .claude/
+
+# OLA 2027 campaign: run-time state, results and builds live on the server
+campaign/runs/
+campaign/results/
+campaign/state/
+campaign/snapshots/
+campaign/cache/
+campaign/venv-gpu/
+campaign/engine/libtorso.so
+campaign/gpu/libeval_fixed.so
