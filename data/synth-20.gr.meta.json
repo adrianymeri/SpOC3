@@ -1,0 +1,14 @@
+{
+  "source": "rewire_preserving",
+  "seed": 8,
+  "twin_classes": 507,
+  "vertices_in_twins": 1024,
+  "cliques": [],
+  "quotient_swaps": 101916,
+  "template": "medium-graph.gr",
+  "swaps_per_edge": 12,
+  "edge_overlap_with_template": 0.0147,
+  "n": 1399,
+  "edges": 13799,
+  "min_degree_width": 330
+}

@@ -19,7 +19,7 @@ bound.py               a provable ceiling on the score
 generate.py            make instances
 validate.py            check an answer is legal and re-score it
 test_correctness.py    27 checks proving the above is right
-data/                  3 competition graphs, 7 synthetic, a toy
+data/                  3 competition graphs, 30 synthetic, a toy
 harness/               run everything, merge results, the operator ablation
 leaderboard-references/ the winning entry, and a CPU port of it
 ```
@@ -849,11 +849,15 @@ after the bound was written.
 
 # Part 10 — The instances, and comparing against the winners
 
-## 10.1 The seven extra instances
+## 10.1 The thirty extra instances
 
-`data/` holds the three competition graphs plus seven synthetic ones,
-`synth-1` to `synth-7`: three in the small family, two medium, two large.
-They exist so a solver can be tested on something it was not tuned on.
+`data/` holds the three competition graphs plus thirty synthetic ones,
+`synth-1` to `synth-30`, ten in each family. `synth-1` to `synth-7` are the
+original set (three small, two medium, two large). `synth-8` to `synth-30`
+extend it for the OLA 2027 experiments with the same constructions, the same
+swap rates and new seeds: `synth-8`…`14` small, `synth-15`…`22` medium,
+`synth-23`…`30` large. They exist so a solver can be tested on something it
+was not tuned on.
 
 The obvious way to make them would be to keep the degree sequence and rewire
 the edges — a double edge swap preserves every vertex's degree exactly. That
@@ -876,9 +880,9 @@ against the template's measured width rather than its degree list:
 
 | family | construction | count |
 |---|---|---|
-| small | grid + pendant vertices — sparse, triangle-free, small separators | 3 |
-| medium | dense blocks joined by a controlled number of cross edges | 2 |
-| large | the template's cliques kept, vertices relabelled, periphery rewired | 2 |
+| small | grid + pendant vertices — sparse, triangle-free, small separators | 10 (synth-1…3, 8…14) |
+| medium | medium-graph relabelled and rewired between its 507 twin classes, 12 swaps per quotient edge | 10 (synth-4, 5, 15…22) |
+| large | the template's cliques kept, vertices relabelled, the rest rewired between twin classes at 0.05 swaps per edge | 10 (synth-6, 7, 23…30) |
 
 Large keeps its cliques deliberately. A K500 forces width ≥ 499 whatever you
 do, so an instance in that family without it would be a different problem.
@@ -893,31 +897,73 @@ with a few edges moved.
 | **synth-1** | small | 1357 | 2282 | 18 | −1,818,560 |
 | **synth-2** | small | 1357 | 2282 | 18 | −1,817,317 |
 | **synth-3** | small | 1357 | 2282 | 16 | −1,819,889 |
+| **synth-8** | small | 1357 | 2282 | 19 | — |
+| **synth-9** | small | 1357 | 2282 | 15 | — |
+| **synth-10** | small | 1357 | 2282 | 16 | — |
+| **synth-11** | small | 1357 | 2282 | 18 | — |
+| **synth-12** | small | 1357 | 2282 | 18 | — |
+| **synth-13** | small | 1357 | 2282 | 17 | — |
+| **synth-14** | small | 1357 | 2282 | 15 | — |
 | medium-graph | — *template* | 1399 | 13799 | 276 | −1,607,564 |
-| **synth-4** | medium | 1399 | 14056 | 282 | −1,600,724 |
-| **synth-5** | medium | 1399 | 14055 | 328 | −1,608,658 |
+| **synth-4** | medium | 1399 | 13799 | 329 | −1,600,724 |
+| **synth-5** | medium | 1399 | 13799 | 328 | −1,608,658 |
+| **synth-15** | medium | 1399 | 13799 | 324 | — |
+| **synth-16** | medium | 1399 | 13799 | 323 | — |
+| **synth-17** | medium | 1399 | 13799 | 336 | — |
+| **synth-18** | medium | 1399 | 13799 | 336 | — |
+| **synth-19** | medium | 1399 | 13799 | 333 | — |
+| **synth-20** | medium | 1399 | 13799 | 330 | — |
+| **synth-21** | medium | 1399 | 13799 | 324 | — |
+| **synth-22** | medium | 1399 | 13799 | 334 | — |
 | large-graph | — *template* | 2426 | 253895 | 499 | −4,794,427 |
 | **synth-6** | large | 2426 | 253895 | 499 | −4,795,089 |
 | **synth-7** | large | 2426 | 253895 | 499 | −4,795,246 |
+| **synth-23** | large | 2426 | 253895 | 499 | — |
+| **synth-24** | large | 2426 | 253895 | 499 | — |
+| **synth-25** | large | 2426 | 253895 | 499 | — |
+| **synth-26** | large | 2426 | 253895 | 499 | — |
+| **synth-27** | large | 2426 | 253895 | 499 | — |
+| **synth-28** | large | 2426 | 253895 | 499 | — |
+| **synth-29** | large | 2426 | 253895 | 499 | — |
+| **synth-30** | large | 2426 | 253895 | 499 | — |
+
+The hill-climbing column was measured for the original ten instances only;
+the OLA runs will supply the numbers for synth-8…30. synth-4's edge count
+and min-degree width, and synth-5's edge count, were re-measured from the
+committed files on 15 October 2026 (13,799 edges, width 329). The figures
+they replace (14,056 / 282 and 14,055) match neither file and look like
+leftovers from the constructive generator that preceded twin-preserving
+rewiring, so the hill-climbing values in those two rows may date from it too.
 
 Each `synth-N.gr` has a `synth-N.gr.meta.json` beside it recording how it
-was made: the seed, and for synth-4…7 the template, the swap rate, the twin
-classes preserved and the edge overlap with the original.
+was made: the seed, and for the medium and large families the template, the
+swap rate, the twin classes preserved and the edge overlap with the
+original. synth-8…30 also record n, the edge count and the min-degree width.
 
-They match their templates on every structural measure that matters —
-synth-4 and synth-5 carry medium-graph's 507 twin classes, 13,799 edges and
-maximum degree 92; synth-6 and synth-7 carry large-graph's 117 classes, its
-253,895 edges and its three planted cliques — while sharing only 1.5% and
-~9% of its edges respectively. Different graphs, hard in the same way.
+They match their templates on every structural measure that matters. The
+medium family carries medium-graph's 507 twin classes, 13,799 edges and
+maximum degree 92. The large family carries large-graph's 117 classes, its
+253,895 edges and its three planted cliques. They share only 1.2–1.6% and
+8.6–9.4% of their template's edges respectively. Every one of the thirty is
+connected, with no loops or repeated edges, and the small family is
+triangle-free like small-graph. Different graphs, hard in the same way. One
+difference to keep in mind: rewiring between classes breaks most of
+medium-graph's triangles (about 28,000 per instance against 81,732), so the
+medium family is less clustered than its template, and its min-degree widths
+(323–336) sit above the template's 276.
 
-Rebuild the whole set, byte for byte:
+Rebuild the whole set; every `.gr` comes out byte for byte (re-checked for
+synth-1…7 on 15 October 2026). `--all` rewrites synth-1…7's `.meta.json`
+in the current format.
 
 ```bash
 python3 generate.py --all
 ```
 
-Adding an eighth instance means adding a line to `PLAN` in `generate.py`.
-Pick a template and a seed; the swap rate is 12 for a medium-family instance
+Adding an instance means adding a line to `PLAN` in `generate.py`, then
+`python3 generate.py --only synth-31 --width` builds just that one and
+records its min-degree width. Pick a template and a seed; the swap rate is
+12 for a medium-family instance
 and 0.05 for a large-family one, because large-graph's periphery is only
 ~4,500 of its 253,895 edges and tolerates almost no perturbation.
 

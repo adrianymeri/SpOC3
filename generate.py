@@ -3,17 +3,25 @@
 generate.py -- build the synthetic instances.
 
     python3 generate.py --all          # reproduce every file in data/
+    python3 generate.py --only synth-8 synth-9 --width
+                                       # build named instances; --width also
+                                       # records min-degree width in the meta
     python3 generate.py --kind toy --out data/toy.gr
 
 small-graph, medium-graph and large-graph are ESA's and are not generated
 here. Everything else in data/ comes out of this file, and `--all`
-reproduces it byte for byte.
+reproduces every .gr byte for byte (re-checked for synth-1..7 on 15 Oct
+2026). The .meta.json of synth-1..7 predate the current meta format, so
+`--all` rewrites those; use `--only` to build just the new entries.
 
     instance        made by                              from
     toy             make_toy                             --
     synth-1..3      make_small(seed 1..3)                --
     synth-4, 5      rewire_preserving(seed 1,2, 12)      medium-graph
     synth-6, 7      rewire_preserving(seed 1,2, 0.05)    large-graph
+    synth-8..14     make_small(seed 4..10)               --              } OLA 2027
+    synth-15..22    rewire_preserving(seed 3..10, 12)    medium-graph    } extension:
+    synth-23..30    rewire_preserving(seed 3..10, 0.05)  large-graph     } 10 per family
 
 What has to be preserved, and why
 ---------------------------------
@@ -340,8 +348,18 @@ PLAN = [
     ("synth-7", "data/large-graph.gr", 2, 0.05),
 ]
 
+# OLA 2027 extension: ten instances per family, thirty in all. Same
+# constructions and swap rates as synth-1..7; only the seeds are new, so the
+# per-family seeds continue where the originals stopped.
+PLAN += [(f"synth-{7 + i}", None, 3 + i, None)                    # synth-8..14
+         for i in range(1, 8)]                                    #   seeds 4..10
+PLAN += [(f"synth-{14 + i}", "data/medium-graph.gr", 2 + i, 12)   # synth-15..22
+         for i in range(1, 9)]                                    #   seeds 3..10
+PLAN += [(f"synth-{22 + i}", "data/large-graph.gr", 2 + i, 0.05)  # synth-23..30
+         for i in range(1, 9)]                                    #   seeds 3..10
 
-def build(name, template_path, seed, swaps, out_dir="data"):
+
+def build(name, template_path, seed, swaps, out_dir="data", width=False):
     """One instance, plus the .meta.json recording how it was made."""
     if template_path is None:
         graph, meta = make_small(seed)
@@ -355,6 +373,8 @@ def build(name, template_path, seed, swaps, out_dir="data"):
     meta["seed"] = seed
     meta["n"] = graph.n
     meta["edges"] = graph.edge_count
+    if width:
+        meta["min_degree_width"] = min_degree_width(graph)
     path = os.path.join(out_dir, f"{name}.gr")
     graph.save(path)
     with open(path + ".meta.json", "w") as f:
@@ -369,7 +389,30 @@ def main():
     ap.add_argument("--kind", default="", choices=["", "toy"])
     ap.add_argument("--out", default="")
     ap.add_argument("--out-dir", default="data")
+    ap.add_argument("--only", nargs="+", default=[], metavar="NAME",
+                    help="build only these PLAN entries, e.g. synth-8 synth-9")
+    ap.add_argument("--width", action="store_true",
+                    help="also record min-degree width in each .meta.json")
     a = ap.parse_args()
+
+    if a.only:
+        known = {entry[0]: entry for entry in PLAN}
+        missing = [x for x in a.only if x not in known]
+        if missing:
+            raise SystemExit(f"not in PLAN: {', '.join(missing)}")
+        print(f"{'instance':<10}{'n':>6}{'edges':>8}{'twins':>8}"
+              f"{'overlap':>9}{'mindeg w':>9}")
+        print("-" * 50)
+        for x in a.only:
+            name, template, seed, swaps = known[x]
+            g, m = build(name, template, seed, swaps, a.out_dir, a.width)
+            ov = m.get("edge_overlap_with_template")
+            ov = f"{ov:.1%}" if ov is not None else "-"
+            twins = m.get("twin_classes", "-")
+            w = m.get("min_degree_width", "-")
+            print(f"{name:<10}{g.n:>6}{g.edge_count:>8}{twins:>8}{ov:>9}{w:>9}",
+                  flush=True)
+        return
 
     if a.all:
         print(f"{'instance':<10}{'n':>6}{'edges':>8}{'twins':>8}{'overlap':>9}")
@@ -380,7 +423,7 @@ def main():
             json.dump(meta, f, indent=2)
         print(f"{'toy':<10}{graph.n:>6}{graph.edge_count:>8}{'-':>8}{'-':>9}")
         for name, template, seed, swaps in PLAN:
-            g, m = build(name, template, seed, swaps, a.out_dir)
+            g, m = build(name, template, seed, swaps, a.out_dir, a.width)
             ov = m.get("edge_overlap_with_template")
             ov = f"{ov:.1%}" if ov is not None else "-"
             twins = m.get("twin_classes", "-")
