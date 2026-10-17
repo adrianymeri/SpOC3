@@ -18,7 +18,15 @@ t = sys.argv[1]
 for k in ("small", "large"):
     d = json.load(open(f"{t}/{k}/status.json"))
     print(k, "generations", d["generation"], "budget", d["budget_s"], "score", d["score"], "own selection", d["own_selection_score"])
-    assert d["generation"] > 0 and d["score"] < 0
+    assert d["generation"] > 0 and d["state"] == "slice-done", f"{k}: no complete slice"
+    # small-graph: every random starting policy is valid, so the archive has a score
+    # at once. large-graph: none of the 1,024 random starting policies is valid, so a
+    # minute can end with nothing valid banked (score 0); the kernel itself passed
+    # its self-check at the start of the session.
+    if k == "small":
+        assert d["score"] < 0, "small-graph: nothing valid banked"
+    elif d["score"] == 0:
+        print("large: no valid ordering yet after a minute (expected; none of the random starting policies is valid)")
 PYEOF
 rm -rf "$T"
 echo "GPU smoke test passed"

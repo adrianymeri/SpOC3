@@ -197,6 +197,11 @@ def collect(final=False):
                 continue
             rows = read_anytime(os.path.join(rd, "anytime.csv"))
             score = st.get("score")
+            no_valid = score == 0
+            if no_valid:
+                # nothing valid banked yet (cuda-torso on the large family can take a
+                # while: none of its 1,024 random starting policies is valid there)
+                score = None
             s24 = score_at_wall(rows, now - 86400)
             last_imp = None
             prev = None
@@ -207,7 +212,7 @@ def collect(final=False):
             hb = os.path.join(rd, "heartbeat")
             runs.append({
                 "instance": inst, "method": m, "family": C.FAMILY[inst],
-                "official": inst in C.OFFICIAL, "state": st.get("state"),
+                "official": inst in C.OFFICIAL, "state": st.get("state"), "no_valid": no_valid,
                 "score": score, "budget_h": round(st.get("budget_s", 0) / 3600, 3),
                 "budget_s": float(st.get("budget_s", 0)),
                 "evaluations": st.get("evaluations"),
@@ -266,8 +271,9 @@ def build(final=False):
     rows = []
     for r in runs:
         if r.get("score") is None:
+            state = (r.get("state") or "") + (", no valid ordering yet" if r.get("no_valid") else "")
             rows.append([r["instance"], C.FAMILY[r["instance"]], r["method"], C.LABEL[r["method"]],
-                         r.get("state")] + [""] * 10)
+                         state] + [""] * 10)
             continue
         rows.append([r["instance"], r["family"], r["method"], C.LABEL[r["method"]], r["state"], r["score"],
                      r["budget_h"], r["evaluations"], r["change_24h"], r["last_improvement_utc"],
@@ -357,7 +363,7 @@ def status_txt(runs, B, sup, L, wins, ranks):
         line = inst.ljust(w0)
         for m in cols:
             r = by.get((inst, m), {})
-            line += (fmt(r.get("score")) or "-").rjust(15)
+            line += (fmt(r.get("score")) or ("no valid yet" if r.get("no_valid") else "-")).rjust(15)
         b1 = B.get(inst, [(None, "")])[0]
         line += f"   {fmt(b1[0])} {b1[1]}"
         out.append(line)
@@ -458,7 +464,8 @@ td.best{background:var(--hi);font-weight:600} .up{color:var(--good)} .bad{color:
                 sub.append(f"#{rk}")
             if ch:
                 sub.append(f"<span class='up'>{ch:+,}</span>")
-            out.append(f"<td{cls}>{fmt(v) or '–'}<div class='muted'>{' · '.join(sub)}</div></td>")
+            out.append(f"<td{cls}>{fmt(v) or ('no valid yet' if r.get('no_valid') else '–')}"
+                       f"<div class='muted'>{' · '.join(sub)}</div></td>")
         b1 = B.get(inst, [(None, "")])[0]
         out.append(f"<td>{fmt(b1[0])}<div class='muted'>{e(b1[1])}</div></td></tr>")
     out.append("</table></div><div class='muted'>Score (lower is better), virtual rank on the ESA board, change in the last 24 h.</div>")

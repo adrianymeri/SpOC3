@@ -128,7 +128,10 @@ if [ -z "$BACKEND" ]; then
     ok "kernel compiled at run time (CuPy/NVRTC); it matches the CPU emulation"
   fi
 fi
-[ -n "$BACKEND" ] || fail "no build of the kernel matches the CPU emulation (campaign/state/gpu_setup.log)"
+if [ -z "$BACKEND" ]; then
+  tail -n 15 "$LOG" | sed 's/^/         | /'
+  fail "no build of the kernel matches the CPU emulation (the end of campaign/state/gpu_setup.log is above)"
+fi
 
 # ------------------------------------------------------- 3. the smoke test
 echo "$BACKEND" > "$DIR/state/cuda_backend"
@@ -137,7 +140,8 @@ if CAMPAIGN_GPU_PYTHON="$GPY" CAMPAIGN_PYTHON="$PY" $PIN bash "$DIR/gpu/smoke_te
   ok "cuda-torso runs, checkpoints and resumes on the GPU (campaign/state/gpu_smoke.log)"
 else
   rm -f "$DIR/state/cuda_backend"
-  fail "GPU smoke test failed (campaign/state/gpu_smoke.log)"
+  tail -n 15 "$DIR/state/gpu_smoke.log" | sed 's/^/         | /'
+  fail "GPU smoke test failed (the end of campaign/state/gpu_smoke.log is above)"
 fi
 
 # --------------------------------------------------------------- 4. enable

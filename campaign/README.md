@@ -23,6 +23,10 @@ Nine methods are compared:
 How each one works, and every change made to a baseline, is written at the
 top of its file.
 
+cuda-torso starts from random policies, as published. On the large family
+none of its 1,024 starting policies gives a valid ordering (on medium-graph,
+60 do), so there it can show "no valid yet" for many hours.
+
 ### Instances
 
 There are 33: the 3 official graphs and 30 synthetic ones.
