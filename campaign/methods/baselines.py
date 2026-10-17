@@ -29,20 +29,28 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 # ============================================================== Team HRI
 
 class HRI(Method):
-    """Team HRI's MO-LNS (hri_lns.solve, start="min_degree").
+    """Team HRI's MO-LNS (hri_lns.solve, start="min_degree"), multi-start.
 
     Operator set B: neighbour destroy (seed + neighbours, capped at 220) and
     balanced repair (median placement, Biedl et al. 2005 §5). Operator set A:
     6 random removals reinserted at random. Switch sets after 3,000 iterations
-    without improvement. Every candidate is banked; it becomes the current
-    ordering when it improves the archive's capped 20-point score, exactly as
-    hri_lns.py.
+    without improvement. A candidate becomes the current ordering when it
+    improves its run's capped 20-point score, exactly as hri_lns.py.
+
+    Multi-start: a single run stops improving within about 15 CPU-minutes (on
+    the server, no change for hours on all three official graphs). From a
+    fixed ordering, set B offers about one move per vertex, because the repair
+    is deterministic. So after 24,000 iterations (eight set switches) without
+    an accepted move, a new independent run starts from a fresh min-degree
+    ordering, with a front of its own for acceptance. Every candidate of every
+    run is banked in the method's archive, which gives the submission. Each
+    run is hri_lns.py's procedure; restarts only let the baseline use a
+    budget of weeks instead of minutes.
 
     Acceptance: Limmer's description gives the operators, not the acceptance
-    rule. The other reading, accepting any improvement of the archive's whole
-    Pareto front (accept="front"), was measured much weaker (medium-graph,
-    240 CPU-s: -1,601,073 against -1,678,877), so the baseline keeps the
-    stronger rule.
+    rule. The other reading, accepting any improvement of the whole Pareto
+    front (accept="front"), was measured much weaker (medium-graph, 240 CPU-s:
+    -1,601,073 against -1,678,877), so the baseline keeps the stronger rule.
     Changes: evaluation, destroy and repair run in C (same logic, checked by
     tests/test_engine.py); random streams differ; the state is checkpointed.
     Start: min-degree with random tie-breaks, as benchmark.py gave it, because a
@@ -50,19 +58,31 @@ class HRI(Method):
     """
 
     name = "hri"
-    defaults = {"destroy_cap": 220, "small_k": 6, "stall": 3000, "iters_per_step": 64, "accept": "capped"}
+    defaults = {"destroy_cap": 220, "small_k": 6, "stall": 3000, "iters_per_step": 64, "accept": "capped",
+                "restart_after": 24000}
 
-    def init(self):
-        self.rng = te.Rng(self.ctx.seed * 7919 + 1)
+    def _new_run(self):
         perm, deg, bad = self.eng.greedy(self.rng, 0)
         self.current = perm
         self.bank_deg(perm, deg)
-        self.best = self.ctx.arch.front_hv() if self.p["accept"] == "front" else -self.ctx.arch.score()
+        self.run_arch = te.Archive(self.n)
+        self.run_arch.add_deg(perm, deg)
+        self.best = self._run_score()
         self.mode = "B"
         self.since = 0
+        self.idle = 0
+        self.runs += 1
+
+    def _run_score(self):
+        return self.run_arch.front_hv() if self.p["accept"] == "front" else -self.run_arch.score()
+
+    def init(self):
+        self.rng = te.Rng(self.ctx.seed * 7919 + 1)
         self.iterations = 0
         self.accepts = 0
         self.switches = 0
+        self.runs = 0
+        self._new_run()
 
     def step(self):
         p = self.p
@@ -73,25 +93,31 @@ class HRI(Method):
                 cand = te.hri_balanced_repair(self.eng, self.current, hole, self.rng)
             else:
                 cand = te.hri_random_destroy_repair(self.eng, self.current, p["small_k"], self.rng)
-            self.bank(cand)
+            imp, deg, w, t = self.bank(cand)
+            self.run_arch.add_deg(cand, deg)
             self.since += 1
-            # accept on improvement of the capped 20-point score (or, with
-            # accept="front", of the archive's whole Pareto front)
-            score = self.ctx.arch.front_hv() if p["accept"] == "front" else -self.ctx.arch.score()
+            self.idle += 1
+            # accept on improvement of the run's capped 20-point score (or, with
+            # accept="front", of the run's whole Pareto front)
+            score = self._run_score()
             if score > self.best:
                 self.best = score
                 self.current = cand
                 self.accepts += 1
                 self.since = 0
+                self.idle = 0
             if self.since >= p["stall"]:
                 self.mode = "A" if self.mode == "B" else "B"
                 self.since = 0
                 self.switches += 1
+            if self.idle >= p["restart_after"]:
+                self._new_run()
 
     def get_state(self):
         return {"rng": self.rng.state, "current": self.current, "best": self.best,
                 "mode": self.mode, "since": self.since, "iterations": self.iterations,
-                "accepts": self.accepts, "switches": self.switches}
+                "accepts": self.accepts, "switches": self.switches,
+                "run_arch": self.run_arch.export(), "idle": self.idle, "runs": self.runs}
 
     def set_state(self, d):
         self.rng = te.Rng(0)
@@ -103,10 +129,15 @@ class HRI(Method):
         self.iterations = d["iterations"]
         self.accepts = d["accepts"]
         self.switches = d["switches"]
+        # checkpoints from before multi-start: the run so far is run 1, and its
+        # front is the archive (the old acceptance)
+        self.run_arch = te.Archive.restore(d["run_arch"] if "run_arch" in d else self.ctx.arch.export())
+        self.idle = d.get("idle", 0)
+        self.runs = d.get("runs", 1)
 
     def extra_status(self):
         return {"iterations": self.iterations, "accepts": self.accepts, "mode": self.mode,
-                "switches": self.switches}
+                "switches": self.switches, "runs": self.runs}
 
 
 # ========================================================= Hill Climbing
@@ -126,10 +157,15 @@ class HC(Method):
     B/8 -- the same split, available at any stopping time. Moves are evaluated
     with the windowed incremental evaluator (exact; the moves only rearrange a
     window). Random streams differ; state is checkpointed.
+    Multi-start: a hill climber stops at its first local optimum (on the
+    server, no change for hours on all three official graphs). So a climb
+    with 200,000 tries since its last improvement starts again from a fresh
+    min-degree ordering, same target. The archive keeps every climb's
+    orderings, which lets the baseline use a budget of weeks.
     """
 
     name = "hc"
-    defaults = {"widths": 8, "iters_per_step": 400}
+    defaults = {"widths": 8, "iters_per_step": 400, "restart_after": 200000}
 
     def init(self):
         self.rng = random.Random(self.ctx.seed)
@@ -154,7 +190,8 @@ class HC(Method):
             perm, deg, _ = self.eng.greedy(self.crng, 0)
             self.bank_deg(perm, deg)
             cost = self.eng.best_t_for_width(deg, tw)
-            self.climbs.append({"target": tw, "perm": perm, "cost": cost, "tries": 0, "accepts": 0})
+            self.climbs.append({"target": tw, "perm": perm, "cost": cost, "tries": 0, "accepts": 0,
+                                "stale": 0, "restarts": 0})
         self.turn = 0
         self.inc = te.Inc(self.eng, 32)
         self.inc_owner = -1
@@ -201,7 +238,19 @@ class HC(Method):
                 c["perm"] = new
                 c["cost"] = cost
                 c["accepts"] += 1
+                c["stale"] = 0
                 self.inc.accept(new, lo, hi)
+            else:
+                c["stale"] += 1
+        if c["stale"] >= self.p["restart_after"]:
+            # local optimum: the same target from a fresh min-degree ordering
+            perm, deg, _ = self.eng.greedy(self.crng, 0)
+            self.bank_deg(perm, deg)
+            c["perm"] = perm
+            c["cost"] = self.eng.best_t_for_width(deg, tw)
+            c["stale"] = 0
+            c["restarts"] += 1
+            self.inc_owner = -1
         self.turn = (self.turn + 1) % len(self.climbs)
 
     def get_state(self):
@@ -215,6 +264,9 @@ class HC(Method):
         self.crng.state = d["crng"]
         self.targets = d["targets"]
         self.climbs = d["climbs"]
+        for c in self.climbs:               # checkpoints from before multi-start
+            c.setdefault("stale", 0)
+            c.setdefault("restarts", 0)
         self.turn = d["turn"]
         self.inc = te.Inc(self.eng, 32)
         self.inc_owner = -1
@@ -222,7 +274,8 @@ class HC(Method):
     def extra_status(self):
         return {"targets": self.targets, "costs": [c["cost"] for c in self.climbs],
                 "tries": sum(c["tries"] for c in self.climbs),
-                "accepts": sum(c["accepts"] for c in self.climbs)}
+                "accepts": sum(c["accepts"] for c in self.climbs),
+                "restarts": sum(c.get("restarts", 0) for c in self.climbs)}
 
 
 # ============================================================ fcmaes stand-in
@@ -264,12 +317,12 @@ def build_features(eng, eigenvectors=8):
 class SepCMAES:
     """Separable CMA-ES (Ros & Hansen 2008), as leaderboard-references/cmaes.py."""
 
-    def __init__(self, dim, sigma0, rng, mean=None):
+    def __init__(self, dim, sigma0, rng, mean=None, lam=None):
         self.dim = dim
         self.rng = rng
         self.mean = rng.normal(0, 0.1, dim) if mean is None else np.array(mean, dtype=np.float64)
         self.sigma = sigma0
-        self.lam = 4 + int(3 * math.log(dim))
+        self.lam = int(lam) if lam else 4 + int(3 * math.log(dim))
         self.mu = self.lam // 2
         w = np.log(self.mu + 0.5) - np.log(np.arange(1, self.mu + 1))
         self.w = w / w.sum()

@@ -19,8 +19,12 @@ NE-1  ANE: one generalist policy, trained by separable CMA-ES. A candidate is
       selected widths (always including the endpoint, stratified over the
       rest; the same targets for a whole generation) and summing, over those
       widths w_j, strip_j * (n - t_j): the hypervolume the candidate would
-      earn on the strips the score keeps. Restarts from the best policy found
-      when the search stalls.
+      earn on the strips the score keeps. When a run stalls, it restarts
+      BIPOP-style (Hansen 2009), so weeks of search do not stay in one basin.
+      Local restarts start around the best policy so far, with a smaller step
+      size. Global restarts start from a perturbed min-degree policy, with
+      the population doubled each time (up to 16x). Whichever regime has used
+      fewer evaluations runs next.
 
 NE-2  AQD-NE: quality diversity over widths, the per-threshold-elite recipe of
       the small and large tops (cuda-torso) made adaptive. A policy archive
@@ -91,7 +95,8 @@ class _Neuro(Method):
 
 class ANE(_Neuro):
     name = "ne1"
-    defaults = {"sigma0": 0.3, "targets": 4, "rescore_every": 64, "stall_generations": 150, "n_spectral": 2}
+    defaults = {"sigma0": 0.3, "targets": 4, "rescore_every": 64, "stall_generations": 150, "n_spectral": 2,
+                "max_doublings": 4}
 
     def init(self):
         self.g = np.random.default_rng(self.ctx.seed)
@@ -99,12 +104,18 @@ class ANE(_Neuro):
         self._setup()
         self._seed_archive()
         self.theta0 = min_degree_policy(self.ns)
-        self.es = SepCMAES(self.dim, self.p["sigma0"], self.g, mean=self.theta0.copy())
-        self.best_theta = self.theta0.copy()
-        self.best_fit = math.inf
+        self.lam0 = 4 + int(3 * math.log(self.dim))
+        self.lam = self.lam0
+        self.regime = "global"                # the first run starts at the min-degree policy
+        self.es = SepCMAES(self.dim, self.p["sigma0"], self.g, mean=self.theta0.copy(), lam=self.lam)
+        self.best_theta = self.theta0.copy()  # incumbent across runs: the centre of local restarts
+        self.run_best_theta = None
+        self.best_fit = math.inf              # this run's best (per-generation evidence)
         self.gen = 0
         self.restarts = 0
         self.stall = 0
+        self.n_global = 0
+        self.spent = {"local": 0, "global": 0}
 
     def _targets(self):
         ws, strip = self._strips()
@@ -121,55 +132,95 @@ class ANE(_Neuro):
                     picks.append(int(part[self.g.integers(len(part))]))
         return picks, strip
 
+    def _fitness(self, theta, targets, strip):
+        val = 0.0
+        for w in targets:
+            perm, deg, sw, st = self._decode(theta, w)
+            tw = staircase_t_at(sw, st, w, self.n)
+            val += strip.get(w, 1) * (self.n - tw)
+        return -val / (self.n * self.n)
+
     def step(self):
         targets, strip = self._targets()
         if not targets:
             return
         pop = self.es.ask()
-        fits = np.zeros(len(pop))
-        for i, theta in enumerate(pop):
-            val = 0.0
-            for w in targets:
-                perm, deg, sw, st = self._decode(theta, w)
-                tw = staircase_t_at(sw, st, w, self.n)
-                val += strip.get(w, 1) * (self.n - tw)
-            fits[i] = -val / (self.n * self.n)
+        fits = np.array([self._fitness(theta, targets, strip) for theta in pop])
         self.es.tell(fits)
         self.gen += 1
+        self.spent[self.regime] += len(pop)
         b = int(np.argmin(fits))
         # the targets move with the archive, so "best" is per-generation evidence
         if fits[b] < self.best_fit - 1e-12:
             self.best_fit = float(fits[b])
-            self.best_theta = pop[b].copy()
+            self.run_best_theta = pop[b].copy()
             self.stall = 0
         else:
             self.stall += 1
-        if self.stall >= self.p["stall_generations"] or self.es.sigma < 1e-4:
-            self.restarts += 1
-            self.es = SepCMAES(self.dim, self.p["sigma0"], self.g, mean=self.best_theta.copy())
-            self.stall = 0
-            self.best_fit = math.inf      # re-measure against the current targets
+        # a larger population needs fewer generations to show a stall
+        limit = max(20, math.ceil(self.p["stall_generations"] * self.lam0 / self.lam))
+        if self.stall >= limit or self.es.sigma < 1e-4:
+            self._restart()
+
+    def _restart(self):
+        """BIPOP-style restarts (Hansen 2009): the regime that has used fewer
+        evaluations runs next. Local: around the incumbent, default population,
+        sigma0 * 10^(-2U). Global: from a perturbed min-degree policy, sigma0,
+        population doubled at each global restart (up to 2^max_doublings)."""
+        if self.run_best_theta is not None:
+            # the finished run's best against the incumbent, on the same fresh targets
+            targets, strip = self._targets()
+            if targets and (self._fitness(self.run_best_theta, targets, strip)
+                            <= self._fitness(self.best_theta, targets, strip)):
+                self.best_theta = self.run_best_theta
+        self.restarts += 1
+        if self.spent["local"] < self.spent["global"]:
+            self.regime = "local"
+            self.lam = self.lam0
+            sigma = self.p["sigma0"] * 10.0 ** (-2.0 * self.g.random())
+            mean = self.best_theta.copy()
+        else:
+            self.regime = "global"
+            self.n_global += 1
+            self.lam = self.lam0 * 2 ** min(self.n_global, self.p["max_doublings"])
+            sigma = self.p["sigma0"]
+            mean = self.theta0 + self.g.normal(0.0, self.p["sigma0"], self.dim)
+        self.es = SepCMAES(self.dim, sigma, self.g, mean=mean, lam=self.lam)
+        self.stall = 0
+        self.best_fit = math.inf
+        self.run_best_theta = None
 
     def get_state(self):
         return {"g": np_rng_state(self.g), "crng": self.crng.state, "es": self.es.get_state(),
-                "best_theta": self.best_theta, "best_fit": self.best_fit, "gen": self.gen,
-                "restarts": self.restarts, "stall": self.stall}
+                "best_theta": self.best_theta, "run_best_theta": self.run_best_theta,
+                "best_fit": self.best_fit, "gen": self.gen, "restarts": self.restarts, "stall": self.stall,
+                "lam": self.lam, "regime": self.regime, "n_global": self.n_global, "spent": dict(self.spent)}
 
     def set_state(self, d):
         self.g = np_rng_from_state(d["g"])
         self.crng = te.Rng(0)
         self.crng.state = d["crng"]
         self._setup()
-        self.es = SepCMAES(self.dim, self.p["sigma0"], self.g, mean=d["best_theta"])
+        self.theta0 = min_degree_policy(self.ns)
+        self.lam0 = 4 + int(3 * math.log(self.dim))
+        self.lam = int(d.get("lam", self.lam0))
+        self.es = SepCMAES(self.dim, self.p["sigma0"], self.g, mean=d["best_theta"], lam=self.lam)
         self.es.set_state(d["es"])
-        self.best_theta = d["best_theta"]
+        self.best_theta = np.asarray(d["best_theta"], dtype=np.float64)
+        rb = d.get("run_best_theta", d["best_theta"])     # checkpoints from before the restart strategy
+        self.run_best_theta = None if rb is None else np.asarray(rb, dtype=np.float64)
         self.best_fit = d["best_fit"]
         self.gen = d["gen"]
         self.restarts = d["restarts"]
         self.stall = d["stall"]
+        self.regime = d.get("regime", "local")
+        self.n_global = d.get("n_global", 0)
+        self.spent = dict(d.get("spent", {"local": 0, "global": 0}))
 
     def extra_status(self):
-        return {"generations": self.gen, "restarts": self.restarts, "sigma": self.es.sigma}
+        return {"generations": self.gen, "restarts": self.restarts, "sigma": self.es.sigma,
+                "regime": self.regime, "population": self.lam, "global_restarts": self.n_global,
+                "spent": self.spent}
 
 
 class AQDNE(_Neuro):

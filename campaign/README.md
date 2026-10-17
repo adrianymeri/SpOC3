@@ -13,10 +13,10 @@ Nine methods are compared:
 | EA-1 MEMETIC-PERM | memetic island GA on elimination orderings (`methods/memetic.py`) | ours |
 | EA-2 TORSO-QD | width-indexed quality-diversity EA over head sets (`methods/torso_qd.py`) | ours |
 | EA-3 NSGA-II | textbook NSGA-II on (ordering, threshold) (`methods/nsga2.py`) | ours |
-| NE-1 ANE | adaptive neural decoder, one generalist, sep-CMA-ES (`methods/neuro.py`) | ours |
+| NE-1 ANE | adaptive neural decoder, one generalist, sep-CMA-ES with BIPOP-style restarts (`methods/neuro.py`) | ours |
 | NE-2 AQD-NE | adaptive neural decoders, one specialist per width, QD + emitters (`methods/neuro.py`) | ours |
-| Team HRI | multi-objective LNS (`methods/baselines.py`) | baseline |
-| Hill Climbing | this group's AlbShkenca method (`methods/baselines.py`) | baseline |
+| Team HRI | multi-objective LNS as in `hri_lns.py`, multi-start (`methods/baselines.py`) | baseline |
+| Hill Climbing | this group's AlbShkenca method, multi-start (`methods/baselines.py`) | baseline |
 | fcmaes | CMA-ES stand-in on static features (`methods/baselines.py`) | baseline |
 | Spacekangaroos | cuda-torso on the V100, as published (`gpu/cuda_torso.py`) | baseline |
 
@@ -139,6 +139,16 @@ there, and it can read it.
 - **A run that dies** is restarted within seconds.
 - **A run whose heartbeat is older than 15 minutes** is killed and restarted.
 - **A run that crashes more than 6 times in an hour** is parked for an hour and listed in STATUS.txt.
+- **After `git pull`**, `campaign/restart.sh` restarts the supervisor so that every run continues from its checkpoint with the new code.
+
+**Nothing ends early.** No method has a generation or evaluation limit. The
+official runs search until the end date. The synthetic and GPU runs work in
+rounds whose levels go beyond what the campaign reaches. Methods that
+converge restart instead of idling:
+
+- NE-1, the fcmaes stand-in and NE-2's emitters restart their CMA-ES;
+- EA-1 re-seeds a stalled island;
+- Team HRI and Hill Climbing start new runs or climbs.
 
 ### Without cron
 
@@ -168,6 +178,7 @@ loginctl enable-linger $USER
 campaign/
   config.py            instances, methods, rounds, end date
   supervisor.py        scheduling, pinning, restarts, rounds, stop
+  start.sh stop.sh restart.sh status.sh snapshot.sh   the commands
   run_method.py        one CPU run (resumes automatically)
   common.py            budget clock, checkpoints, logs, heartbeat
   torso_engine.py      bindings for engine/libtorso.so
