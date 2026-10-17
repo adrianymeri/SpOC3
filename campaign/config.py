@@ -94,7 +94,9 @@ if os.environ.get("CAMPAIGN_TEST"):
     SYNTHETIC = os.environ.get("CAMPAIGN_TEST_SYNTHETIC", "synth-1,synth-4").split(",")
     INSTANCES = OFFICIAL + SYNTHETIC
     CPU_METHODS = os.environ.get("CAMPAIGN_TEST_METHODS", "hri,ne1").split(",")
-    GPU_METHODS = []
+    # CAMPAIGN_TEST_GPU=1 adds cuda-torso (tests/test_gpu_setup.sh runs it on the CPU emulation)
+    GPU_METHODS = ["cuda_torso"] if os.environ.get("CAMPAIGN_TEST_GPU") else []
+    GPU_LEVELS_H = [float(x) / 3600 for x in os.environ.get("CAMPAIGN_TEST_GPU_LEVELS_S", "15,30").split(",")]
     METHODS = CPU_METHODS + GPU_METHODS
     OFFICIAL_SLOTS = len(OFFICIAL) * len(CPU_METHODS)
     SYNTH_LEVELS_H = [float(x) / 3600 for x in os.environ.get("CAMPAIGN_TEST_LEVELS_S", "10,20").split(",")]

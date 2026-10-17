@@ -14,7 +14,9 @@ if [ -f "$DIR/state/STOP" ]; then
   exit 0
 fi
 if flock -n "$DIR/state/supervisor.lock" true 2>/dev/null; then
-  cd "$REPO" && nohup setsid "${CAMPAIGN_PYTHON:-python3}" "$DIR/supervisor.py" >> "$DIR/state/supervisor.out" 2>&1 < /dev/null &
+  # exec: the supervisor replaces the background subshell, so no shell is
+  # left waiting on it (and none reports "Killed" when it is replaced)
+  (cd "$REPO" && exec nohup setsid "${CAMPAIGN_PYTHON:-python3}" "$DIR/supervisor.py" >> "$DIR/state/supervisor.out" 2>&1 < /dev/null) &
   [ -t 1 ] && echo "supervisor started (log: campaign/state/supervisor.log)"
 else
   [ -t 1 ] && echo "supervisor already running (pid $(cat "$DIR/state/supervisor.lock" 2>/dev/null))"

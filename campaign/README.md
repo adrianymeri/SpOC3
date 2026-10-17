@@ -76,11 +76,28 @@ under `~/.cache` and `~/.cupy`.
 - builds the engine for the server's CPU (AVX-512);
 - runs the engine test;
 - caches each instance's structure;
-- prepares cuda-torso: torch from pip if needed, then nvcc, or CuPy/NVRTC when the CUDA toolkit is missing;
-- runs a 3-minute GPU smoke test, including a resume;
+- prepares cuda-torso with `gpu/setup.sh` (below);
 - adds two cron lines: start at boot, and a check every 5 minutes.
 
-`campaign/install.sh --no-gpu` skips cuda-torso.
+`campaign/install.sh --no-gpu` skips cuda-torso. `campaign/gpu/setup.sh`
+adds it later, also while the campaign is running:
+
+- **Python:** the campaign's own Python if its torch runs on the GPU;
+  otherwise `campaign/venv-gpu`, inheriting that torch and adding scipy, or
+  with PyTorch's CUDA 12.6 build (the last one with code for Volta GPUs such
+  as the V100).
+- **Kernel:** built for the GPU's own architecture (`nvcc -arch=sm_XY`, from
+  the PATH, then `/usr/local/cuda`), with CuPy/NVRTC as the fallback. CUDA 13
+  compilers cannot build for Volta.
+- **Self-check:** the build is kept only if its results equal an exact CPU
+  emulation of the kernel (including its +1 self-loop) on small-graph and
+  large-graph. Every cuda-torso session repeats this check before it
+  searches. The published code never checks for CUDA errors, so a kernel
+  that does not run would otherwise go unnoticed.
+- **Smoke test:** about 4 minutes, including a resume.
+- **Enable:** on success the supervisor is restarted with the GPU enabled.
+  Its runs checkpoint and continue. On failure `state/NO_GPU` holds the
+  reason; details are in `state/gpu_setup.log` and `state/gpu_smoke.log`.
 
 ## Daily
 
@@ -152,7 +169,7 @@ campaign/
   torso_engine.py      bindings for engine/libtorso.so
   engine/              the C engine
   methods/             the eight CPU methods
-  gpu/                 cuda-torso (kernel with the int32 fix only) + smoke test
+  gpu/                 cuda-torso (kernel with the int32 fix only), setup.sh, smoke test
   structure.py         twins, cliques, blocks, cores, spectral coordinates (cached)
   seeding.py           structure-aware starting orderings (designed methods)
   aggregate.py         results, checks, dashboard
@@ -169,4 +186,6 @@ campaign/tests/test_power_loss.sh              # power cut: everything killed at
 campaign/tests/smoke_all.sh 8                  # every CPU method on every instance, with a resume
 SMOKE_METHODS="ea2 hri" campaign/tests/smoke_all.sh 8   # the same for some methods only
 campaign/gpu/smoke_test.sh                     # cuda-torso on the GPU
+python3 campaign/gpu/cuda_torso.py --instance data/small-graph.gr --run-dir /tmp/chk --self-check-only
+                                               # the kernel against the CPU emulation
 ```

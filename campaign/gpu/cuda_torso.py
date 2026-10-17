@@ -30,9 +30,20 @@ Changes, all outside the search:
      the same post-processing every other method gets. Both scores are logged.
   6. Seeds: numpy and torch are seeded explicitly (the original is unseeded).
 
-Backends for the kernel: "nvcc" builds libeval_fixed.so exactly like run.sh;
-"nvrtc" compiles the same __global__ source at run time with CuPy, for
-servers without the CUDA toolkit. Same launch configuration (<<<128, B/128>>>).
+Backends for the kernel: "nvcc" builds libeval_fixed.so like run.sh, for the
+GPU's own architecture (-arch=sm_XY from nvidia-smi; the toolkits of CUDA 13
+and later cannot target Volta, and a library built without code for the GPU
+never runs); "nvrtc" compiles the same __global__ source at run time with
+CuPy, for servers without the CUDA toolkit. Same launch configuration
+(<<<128, B/128>>>).
+
+Kernel self-check, at the start of every session (setup, not counted in the
+budget): the kernel's fitnesses for three feasible min-degree orderings, in
+batch slots 0, B/2 and B-1, must equal an exact CPU emulation of the same
+kernel code (emulate_kernel, which reproduces its +1 self-loop). The published
+code never checks for CUDA errors, so a kernel that does not run would
+otherwise go unnoticed; here the session stops with exit code 4 instead.
+`--self-check-only` runs just the check (gpu/setup.sh uses it).
 
     python3 campaign/gpu/cuda_torso.py --instance data/large-graph.gr \
         --run-dir campaign/runs/large-graph/cuda_torso --until-budget 3600
@@ -70,13 +81,51 @@ FORMAT_VERSION = 1
 
 # --------------------------------------------------------------- kernel loading
 
+def gpu_arch():
+    """sm_XY of GPU 0 from nvidia-smi, or None."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=60).stdout.split()
+        return "sm_" + out[0].replace(".", "") if out else None
+    except Exception:
+        return None
+
+
+def emulate_kernel(adj, orderings):
+    """Exact CPU emulation of libeval_fixed.cu's _evaluate for the given
+    orderings (no early stop, so meant for orderings below the cap): the
+    kernel's fitnesses, i.e. the suffix maxima of its step degrees. Its fill
+    loop starts at j = i and so marks every filled vertex adjacent to itself;
+    a later row scan counts that self-loop, which this reproduces."""
+    out = np.zeros((len(orderings), adj.shape[0]), dtype=np.int64)
+    for b, order in enumerate(orderings):
+        A = adj.copy()
+        deg = np.empty(len(order), dtype=np.int64)
+        for s, v in enumerate(order):
+            nz = np.flatnonzero(A[v])
+            deg[s] = len(nz)
+            A[np.ix_(nz, nz)] = True
+            A[nz, v] = False
+            A[v, nz] = False
+        pen = 0
+        for d in deg:
+            if d > 500:
+                pen = 501 if pen == 0 else pen + int(d) - 500
+        if pen:
+            deg = deg + pen
+        out[b] = np.maximum.accumulate(deg[::-1])[::-1]
+    return out
+
+
 def load_kernel(backend):
     """Return evaluate(adjs, perms, degrees, fitnesses, B, N) on torch tensors."""
     src = os.path.join(HERE, "libeval_fixed.cu")
     if backend == "nvcc":
         so = os.path.join(HERE, "libeval_fixed.so")
         if not os.path.exists(so) or os.path.getmtime(so) < os.path.getmtime(src):
-            subprocess.run(["nvcc", "-Xcompiler", "-fPIC", "-shared", "-o", so, src], check=True)
+            arch = gpu_arch()
+            subprocess.run(["nvcc"] + ([f"-arch={arch}"] if arch else []) +
+                           ["-Xcompiler", "-fPIC", "-shared", "-o", so, src], check=True)
         lib = ctypes.CDLL(so, mode=ctypes.RTLD_GLOBAL)
         ev = lib.evaluate
         ev.argtypes = [POINTER(c_bool), POINTER(c_uint16), POINTER(c_uint16), POINTER(c_int), c_size_t, c_size_t]
@@ -256,7 +305,12 @@ class Run:
         a = self.a
         torch.set_grad_enabled(False)
         device = a.device
-        evaluate = load_kernel(a.backend) if device == "cuda" else None
+        if device == "cuda":
+            evaluate = load_kernel(a.backend)
+        else:
+            # tests without a GPU: the exact CPU emulation stands in for the kernel
+            def evaluate(adjs_, perms_, degrees_, fitnesses_, B_, N_):
+                self._cpu_kernel(adj, perms_, fitnesses_)
         B = a.batch_size
         N = self.N
         E = feature_count(a.eigenvectors)
@@ -299,6 +353,15 @@ class Run:
         perms = torch.empty((B, N), dtype=torch.uint16).to(device)
         degrees = torch.empty((B, N), dtype=torch.uint32).to(device)
         fitnesses = torch.full((B, N), 999999, dtype=torch.int).to(device)
+        if not a.no_self_check:
+            if not self._self_check(evaluate, adj, adjs, bkup_adjs, perms, degrees, fitnesses, B, N):
+                print(f"cuda_torso on {self.instance}: kernel self-check FAILED (see {self.run_dir}/log.txt)",
+                      file=sys.stderr, flush=True)
+                sys.exit(4)
+            print(f"cuda_torso on {self.instance}: kernel self-check passed", flush=True)
+            self.t0 = time.time()               # the check is setup, not search time
+        if a.self_check_only:
+            return
         elite_range = torch.ones((N, ), dtype=torch.float32, device=device) / B
         ts = torch.arange(N).to(device)
         logits = torch.empty((B, N), dtype=torch.float32).to(device)
@@ -317,10 +380,7 @@ class Run:
             logits[:] = population @ nodes
             perms[:] = logits.argsort(axis=1).to(torch.uint16)
             adjs[:, :, :] = bkup_adjs[:, :, :]
-            if evaluate is not None:
-                evaluate(adjs, perms, degrees, fitnesses, B, N)
-            else:
-                self._cpu_kernel(adj, perms, fitnesses)
+            evaluate(adjs, perms, degrees, fitnesses, B, N)
 
             # Save the best from the population
             best = fitnesses.min(axis=0)
@@ -365,25 +425,45 @@ class Run:
     def _cpu_kernel(self, adj, perms, fitnesses):
         torch = self.torch
         P = perms.cpu().numpy().astype(np.int64)
-        out = np.zeros(P.shape, dtype=np.int32)
-        for b in range(P.shape[0]):
-            A = adj.copy()
-            deg = []
-            for v in P[b]:
-                nz = np.flatnonzero(A[v])
-                deg.append(len(nz))
-                A[np.ix_(nz, nz)] = True
-                A[nz, v] = False
-                A[v, nz] = False
-            deg = np.array(deg, dtype=np.int64)
-            pen = 0
-            for d in deg:
-                if d > 500:
-                    pen = 501 if pen == 0 else pen + d - 500
-            if pen:
-                deg = deg + pen
-            out[b] = np.maximum.accumulate(deg[::-1])[::-1]
-        fitnesses[:] = torch.from_numpy(out)
+        fitnesses[:] = torch.from_numpy(emulate_kernel(adj, list(P)).astype(np.int32))
+
+    def _self_check(self, evaluate, adj, adjs, bkup_adjs, perms, degrees, fitnesses, B, N):
+        """The kernel against emulate_kernel on feasible min-degree orderings
+        in batch slots 0, B/2 and B-1 (the last one exercises the 64-bit
+        offsets). True when every fitness matches."""
+        torch = self.torch
+        rng = te.Rng(20261017)              # its own stream: the search's are untouched
+        tests = []
+        for slack in range(8):
+            p, d, bad = self.eng.greedy(rng, slack % 4)
+            if bad < 0 and int(d.max()) <= 499:     # the kernel reads up to +1: stay below its cap
+                tests.append(p.astype(np.int64))
+            if len(tests) == 3:
+                break
+        if not tests:
+            self.log("kernel self-check skipped: no min-degree ordering below the cap")
+            return True
+        rows = sorted({0, B // 2, B - 1})
+        P = np.empty((B, N), dtype=np.int64)
+        P[:] = tests[0]
+        want = []
+        for j, r in enumerate(rows):
+            P[r] = tests[j % len(tests)]
+            want.append(tests[j % len(tests)])
+        perms[:] = torch.from_numpy(P).to(perms.device).to(torch.uint16)
+        adjs[:, :, :] = bkup_adjs[:, :, :]
+        fitnesses.fill_(999999)
+        evaluate(adjs, perms, degrees, fitnesses, B, N)
+        got = fitnesses[rows].cpu().numpy().astype(np.int64)
+        exp = emulate_kernel(adj, want)
+        for i, r in enumerate(rows):
+            if not np.array_equal(got[i], exp[i]):
+                k = int(np.flatnonzero(got[i] != exp[i])[0])
+                self.log(f"kernel self-check FAILED: batch slot {r}, threshold {k}: kernel {int(got[i][k])}, "
+                         f"emulation {int(exp[i][k])} ({int((got[i] != exp[i]).sum())} of {N} thresholds differ)")
+                return False
+        self.log(f"kernel self-check passed: slots {rows}, {N} thresholds each (endpoint as the kernel reads it: {int(exp[0][0])})")
+        return True
 
     # ------------------------------------------------------------- bookkeeping
     def _load(self):
@@ -467,6 +547,9 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--backend", default=os.environ.get("CUDA_TORSO_BACKEND", "nvcc"), choices=["nvcc", "nvrtc"])
     ap.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+    ap.add_argument("--self-check-only", action="store_true",
+                    help="check the kernel against the CPU emulation and exit (no search, no checkpoint)")
+    ap.add_argument("--no-self-check", action="store_true", help="skip the kernel self-check (tests)")
     # the published defaults (run.py)
     ap.add_argument("--eigenvectors", type=int, default=32)
     ap.add_argument("--init_stdev", type=float, default=0.3)
