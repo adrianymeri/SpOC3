@@ -53,3 +53,5 @@ campaign/cache/
 campaign/venv-gpu/
 campaign/engine/libtorso.so
 campaign/gpu/libeval_fixed.so
+# snapshots copied from the server to the Mac (campaign/snapshot.sh)
+campaign-results/
