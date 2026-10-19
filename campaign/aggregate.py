@@ -26,6 +26,7 @@ import csv
 import html
 import json
 import os
+import re
 import sys
 import time
 
@@ -74,11 +75,40 @@ def wall_epoch(s):
         return None
 
 
-def score_at_budget(rows, b, tol=0.0):
-    """Best score recorded at a budget <= b + tol."""
+SLICE_END = re.compile(r"session end \(slice-done\) at budget (\d+)s, score (-?[\d,]+)")
+
+
+def slice_ends(path):
+    """(budget s, score) of every slice that stopped at its level, from a CPU run's log.txt."""
+    out = []
+    try:
+        with open(path) as f:
+            for line in f:
+                m = SLICE_END.search(line)
+                if m:
+                    out.append((float(m.group(1)), int(m.group(2).replace(",", ""))))
+    except OSError:
+        pass
+    return out
+
+
+def score_at_budget(rows, b, tol=0.0, ends=()):
+    """Best score when the run had used b seconds.
+
+    A run whose slice stopped at b: the score it logged when it stopped (ends,
+    from log.txt). Its closing checkpoint row cannot be used: the run deletes it
+    when it resumes, because the row is stamped a moment after the checkpoint's
+    budget. Nothing the next slice logged counts either: a resumed run logs its
+    first improvement at once, so "budget <= b + tol" let up to tol seconds of
+    the next slice into this level. Otherwise: the best row logged at or
+    before b."""
+    win = max(tol, 0.05 * b)
+    for bud, sc in ends:
+        if b - 0.5 <= bud <= b + win:
+            return sc
     best = None
     for bud, _, sc, _ in rows:
-        if bud <= b + tol + 1e-6:
+        if bud <= b + 1e-6:
             best = sc if best is None else min(best, sc)
     return best
 
@@ -196,6 +226,7 @@ def collect(final=False):
                 runs.append({"instance": inst, "method": m, "state": "not started"})
                 continue
             rows = read_anytime(os.path.join(rd, "anytime.csv"))
+            ends = slice_ends(os.path.join(rd, "log.txt"))
             score = st.get("score")
             no_valid = score == 0
             if no_valid:
@@ -222,6 +253,7 @@ def collect(final=False):
                 "esa_rank": virtual_rank(score, B.get(inst)) if inst in C.OFFICIAL else None,
                 "endpoint": (st.get("front") or [[None]])[-1][0],
                 "rows": rows,
+                "ends": ends,
             })
     order = sorted([r for r in runs if "score" in r and r.get("score") is not None],
                    key=lambda r: os.path.getmtime(os.path.join(C.run_dir(r["instance"], r["method"]), "best.json"))
@@ -312,10 +344,11 @@ def build(final=False):
     ranks = {m: [] for m in C.CPU_METHODS}
     if L is not None:
         for inst in C.SYNTHETIC:
-            # a slice stops at the first step past the level, so its closing
-            # checkpoint row sits a few seconds above it: count it
+            # a slice stops at the first step past the level and logs its score
+            # then; nothing the next slice logged counts (see score_at_budget)
             tol = max(60.0, 0.002 * L * 3600)
-            vals = {m: score_at_budget(by[(inst, m)]["rows"], L * 3600, tol) for m in C.CPU_METHODS}
+            vals = {m: score_at_budget(by[(inst, m)]["rows"], L * 3600, tol, by[(inst, m)]["ends"])
+                    for m in C.CPU_METHODS}
             got = sorted((v, m) for m, v in vals.items() if v is not None)
             for pos, (v, m) in enumerate(got, 1):
                 ranks[m].append(sum(1 for w, _ in got if w < v) + 1)
